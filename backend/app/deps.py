@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 
 from . import models, security
 from .database import get_db
+from .logging_config import tenant_id_var, user_id_var
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/login", auto_error=False)
 
@@ -29,6 +30,7 @@ def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(
     user = db.query(models.User).filter_by(id=payload.get("sub")).first()
     if not user:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Utilisateur introuvable")
+    user_id_var.set(user.id)
     return user
 
 
@@ -40,6 +42,7 @@ def get_tenant(tid: str, db: Session = Depends(get_db), user: models.User = Depe
     membership = db.query(models.Member).filter_by(tenant_id=tid, user_id=user.id).first()
     if not membership and tenant.owner_id != user.id:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Accès refusé à cet espace")
+    tenant_id_var.set(tenant.id)
     return tenant
 
 

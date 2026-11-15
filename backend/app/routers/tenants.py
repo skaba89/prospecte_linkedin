@@ -2,12 +2,13 @@
 import uuid
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, Response, status
 from sqlalchemy.orm import Session
 
 from .. import models, schemas
 from ..database import get_db
 from ..deps import get_current_user, get_tenant, require_permission
+from ..pagination import Page, page_dep, set_total
 
 router = APIRouter(prefix="/api/tenants", tags=["tenants"])
 
@@ -29,14 +30,17 @@ def _serialize(t: models.Tenant, db: Session, user_id: str) -> schemas.TenantOut
 
 
 @router.get("", response_model=list[schemas.TenantOut])
-def list_tenants(db: Session = Depends(get_db), user: models.User = Depends(get_current_user)):
-    """Tous les espaces où l'utilisateur est membre ou propriétaire."""
+def list_tenants(response: Response, page: Page = Depends(page_dep),
+                 db: Session = Depends(get_db), user: models.User = Depends(get_current_user)):
+    """Tous les espaces où l'utilisateur est membre ou propriétaire (paginé)."""
     owned = db.query(models.Tenant).filter_by(owner_id=user.id).all()
     member_of = (db.query(models.Tenant)
                  .join(models.Member, models.Member.tenant_id == models.Tenant.id)
                  .filter(models.Member.user_id == user.id, models.Tenant.owner_id != user.id).all())
-    tenants = {t.id: t for t in owned + member_of}.values()
-    return [_serialize(t, db, user.id) for t in tenants]
+    tenants = list({t.id: t for t in owned + member_of}.values())
+    set_total(response, len(tenants))
+    page_items = tenants[page.skip: page.skip + page.limit]
+    return [_serialize(t, db, user.id) for t in page_items]
 
 
 @router.post("", response_model=schemas.TenantOut, status_code=status.HTTP_201_CREATED)

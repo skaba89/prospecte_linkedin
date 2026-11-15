@@ -70,6 +70,10 @@ class Settings(BaseSettings):
     smtp_from: str = "no-reply@revpulse.io"
     smtp_use_tls: bool = True
 
+    # Logging structuré — JSON (prod) ou texte (dev/test). Niveau configurable.
+    log_level: str = "INFO"
+    log_format: str = "json"  # json | text
+
     @model_validator(mode="after")
     def _fail_fast_secrets(self):
         validate_jwt_secret(self.env, self.jwt_secret)

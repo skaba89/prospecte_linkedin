@@ -196,6 +196,63 @@ peut relancer). Config SMTP via `REVPULSE_SMTP_*`. `POST /members/invite`
 renvoie `InviteResult` (`MemberOut` + `email_sent`). Lien d'expiration vérifié
 dans `accept` (410 Gone si expirée).
 
+## P2 — Sécurité applicative + durcissement Docker
+
+Trois axes vérifiés en CI par `tests/test_frontend.py` (21 checks statiques) +
+le job Docker (`compose config` + `build` + `nginx -t` dans l'image construite).
+
+**Headers de sécurité nginx** — `frontend/nginx.conf` émet une CSP stricte
+(`default-src 'none'`, `script-src 'self'`, `connect-src 'self'`,
+`frame-ancestors 'none'`), `X-Frame-Options DENY`,
+`X-Content-Type-Options nosniff`, `Referrer-Policy strict-origin-when-cross-origin`,
+`Permissions-Policy` (désactive caméra/géo/micro/paiement), `Strict-Transport-Security`
+(HSTS 1 an) et `server_tokens off`. Les routes internes `/docs` et `/openapi.json`
+ne sont **pas** proxyées (OpenAPI masqué en production). `listen 8080` (port non
+privilégié, compatible `nginx-unprivileged`).
+
+**Frontend durci** — `esc()` (helper d'échappement HTML, ~309 occurrences) est
+attribut-safe : il échappe `&`, `<`, `>`, `"` (`&quot;`) et `'` (`&#39;`), couvrant
+les contextes texte et attributs (`data-cat="${esc(c)}"`). `apiFetch` intercepte
+les `401` : purge le JWT `revpulse_jwt` du `localStorage` et redirige vers le login
+(fini les appels en cascade avec un token mort). Aucun `eval()` ni `document.write()`
+(vérifié statiquement sur `index.html` + `app-enhancements.js`).
+
+**Conteneurs non-root + healthchecks** — `backend/Dockerfile` : `useradd -r -u 10001
+app`, `USER app`, `HEALTHCHECK` sur `/api/health`. `frontend/Dockerfile` : image
+`nginx-unprivileged`, `EXPOSE 8080`, `HEALTHCHECK` sur `/`. `docker-compose.yml` :
+CORS strict (pas de `*`) par défaut, port `8080:8080`, `depends_on: backend
+(condition: service_healthy)` — le frontend ne démarre qu'une fois l'API saine.
+
+## P3 — Observabilité + scalabilité
+
+Production-readiness : pagination, logging structuré, healthcheck approfondi.
+Vérifié par `tests/test_p3.py` (22 checks) ajouté au job CI `test-api`.
+
+**Pagination** — `backend/app/pagination.py` expose une dépendance `Page`
+(`?skip=0&limit=100`, `limit` plafonné à 200, validation `ge`/`le` → 422 hors
+bornes). Appliquée aux 4 endpoints liste : `/api/tenants`,
+`/api/tenants/{tid}/members`, `/api/tenants/{tid}/approvals`,
+`/api/tenants/{tid}/approvals/history`. Le total est exposé via l'en-tête
+`X-Total-Count` (déclaré au navigateur par `expose_headers` CORS). Rétro-compatible :
+sans paramètres, retourne jusqu'à 100 lignes (couvre le volume démo sans tronquer
+les listes existantes ; tous les counts de `test_api.py` restent verts).
+
+**Logging structuré + request-ID** — `backend/app/logging_config.py` :
+`configure_logging(level, fmt)` branche un formateur JSON (prod) ou texte lisible
+(dev/test), émettant `ts/level/logger/msg` + `request_id/user_id/tenant_id`
+(contextvars) + les champs extra (`method/path/status/duration_ms`). Le middleware
+`RequestLoggingMiddleware` (outermost) génère/propage un `X-Request-ID` (header
+entrant sinon uuid4), logge chaque requête et renvoie l'ID en réponse — correlable
+dans tout agrégateur de logs. `user_id_var`/`tenant_id_var` sont positionnés par
+`get_current_user`/`get_tenant` pour que les logs métier incluent le contexte.
+Config : `REVPULSE_LOG_LEVEL` (défaut `INFO`), `REVPULSE_LOG_FORMAT` (`json`|`text`).
+
+**Healthcheck approfondi** — `/api/health` exécute un vrai `SELECT 1` sur la DB
+(via la dépendance `get_db`) et renvoie `{"status":"ok"|"degraded", "db_ok": bool,
+"detail": str, "db": <nom>, "env": <env>}`. Code `200` si DB up, `503` si down —
+exploitable par les healthchecks Docker et les sondes Liveness/Readiness d'un
+orchestrateur (Kubernetes).
+
 ## API
 
 | Méthode | Route | Rôle | Description |
@@ -204,18 +261,18 @@ dans `accept` (410 Gone si expirée).
 | POST | `/api/auth/login` | public | Login → JWT + user (répare le compte démo si besoin) |
 | POST | `/api/auth/demo` | public | Accès démo 1 clic → JWT Alex Démo |
 | GET | `/api/auth/me` | auth | Utilisateur courant |
-| GET | `/api/tenants` | auth | Espaces de l'utilisateur (avec profil + nb membres + rôle) |
+| GET | `/api/tenants` | auth | Espaces de l'utilisateur (avec profil + nb membres + rôle) — **paginé** (`?skip`/`?limit`, `X-Total-Count`) |
 | POST | `/api/tenants` | auth | Créer un espace |
 | GET/PATCH/DELETE | `/api/tenants/{tid}` | membre/Owner | Détail, renommage, suppression |
 | POST | `/api/tenants/{tid}/profile` | Owner | Profil LinkedIn/native |
-| GET | `/api/tenants/{tid}/members` | membre | Liste des membres |
+| GET | `/api/tenants/{tid}/members` | membre | Liste des membres — **paginé** |
 | POST | `/api/tenants/{tid}/members/invite` | manage | Invitation (token, quota sièges) |
 | POST | `/api/tenants/{tid}/members/{mid}/accept` | manage | Accepter une invitation |
 | PATCH/DELETE | `/api/tenants/{tid}/members/{mid}` | manage | Rôle, retrait |
-| GET | `/api/tenants/{tid}/approvals` | membre | File d'approbation (status='pending') |
+| GET | `/api/tenants/{tid}/approvals` | membre | File d'approbation (status='pending') — **paginé** |
 | POST | `/api/tenants/{tid}/approvals/{aid}/approve` | approvals.manage | Approuver |
 | POST | `/api/tenants/{tid}/approvals/{aid}/reject` | approvals.manage | Refuser (sort de la file) |
-| GET | `/api/tenants/{tid}/approvals/history` | membre | Approuvés + refusés (hors file) |
+| GET | `/api/tenants/{tid}/approvals/history` | membre | Approuvés + refusés (hors file) — **paginé** |
 | POST | `/api/tenants/{tid}/content` | content.publish | Composer → soumet en file (authoring) |
 | GET | `/api/tenants/{tid}/linkedin/auth` | workspace.manage | URL d'autorisation OAuth (ou mock) |
 | GET | `/api/tenants/{tid}/linkedin/status` | membre | État de la connexion LinkedIn |
@@ -308,11 +365,11 @@ chargé en `defer` et n'altère pas le rendu existant.
 
 ## Vérifications effectuées
 
-- **Backend (26/26 checks)** : auth (demo/login/register/me), multi-tenant
-  (list/create/rename/delete/switch), members (invite/accept/role/remove +
-  quota sièges), approvals (list/approve décrément), dashboard (34 modules),
-  billing (plans/usage/change + blocage downgrade), RBAC (isolation 403),
-  wrong password 401 — voir `scripts/revpulse_api_test.py`.
+- **Backend (49/49 checks, `tests/test_api.py`)** : auth (demo/login/register/me),
+  multi-tenant (list/create/rename/delete/switch), members (invite/accept/role/remove +
+  quota sièges), approvals (list/approve/reject/history), dashboard (34 modules),
+  billing (plans/usage/change + blocage downgrade), content/authoring, LinkedIn mock
+  (auth/connect/status/publish), RBAC (isolation 403), wrong password 401, rate-limit 429.
 - **Intégration navigateur (zéro erreur)** : login démo via API → token JWT →
   dashboard rendu avec données API (nav counts, 6 KPIs overview) → notif
   badge 7 → approve via panneau (mutation API, badge 7→6, file 6→5) →
@@ -329,7 +386,14 @@ chargé en `defer` et n'altère pas le rendu existant.
   SMTP dry-run + rate-limit 429 + fail-fast prod) ; `make test-local` passe ;
   `make help` rend les 22 cibles ; `docker-compose.dev.yml`
   merge valide (`--reload` + volumes `./backend/app` et `./frontend/public`,
-  db héritée) ; `.github/workflows/ci.yml` valide (jobs lint/test-api/docker).
+  db héritée) ; `.github/workflows/ci.yml` valide (jobs lint/frontend/test-api/docker).
+- **P2 (sécurité)** : `tests/test_frontend.py` → 21/21 (headers nginx, CSP, non-root,
+  esc attribut-safe, handler 401, no eval) ; job Docker → `nginx -t` dans l'image
+  frontend construite.
+- **P3 (observabilité)** : `tests/test_p3.py` → 22/22 (pagination skip/limit +
+  `X-Total-Count` + cap 422, `X-Request-ID` echoé, health `db_ok` via `SELECT 1`) ;
+  `ruff check backend/app` → 0 erreur. **Suite totale : 10 (config) + 21 (frontend) +
+  49 (api) + 22 (p3) = 102 checks verts.**
 
 ## Compte démo
 

@@ -2,7 +2,7 @@
 import uuid
 from datetime import datetime, timedelta
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Response, status
 from sqlalchemy.orm import Session
 
 from .. import models, schemas
@@ -10,6 +10,7 @@ from ..config import settings
 from ..database import get_db
 from ..deps import get_tenant, require_permission
 from ..mailer import send_invitation_email
+from ..pagination import Page, page_dep, set_total
 
 router = APIRouter(prefix="/api/tenants/{tid}/members", tags=["members"])
 
@@ -17,8 +18,11 @@ VALID_ROLES = {"Owner", "Admin", "Editor", "Contributor", "Viewer"}
 
 
 @router.get("", response_model=list[schemas.MemberOut])
-def list_members(tid: str, db: Session = Depends(get_db), _t: models.Tenant = Depends(get_tenant)):
-    return db.query(models.Member).filter_by(tenant_id=tid).order_by(models.Member.added_at).all()
+def list_members(tid: str, response: Response, page: Page = Depends(page_dep),
+                 db: Session = Depends(get_db), _t: models.Tenant = Depends(get_tenant)):
+    q = db.query(models.Member).filter_by(tenant_id=tid).order_by(models.Member.added_at)
+    set_total(response, q.count())
+    return q.offset(page.skip).limit(page.limit).all()
 
 
 @router.post("/invite", response_model=schemas.InviteResult, status_code=status.HTTP_201_CREATED)
