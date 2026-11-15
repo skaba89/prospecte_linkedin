@@ -1,0 +1,8 @@
+__pycache__/
+*.pyc
+*.pyo
+revpulse.db
+revpulse.db-journal
+.venv/
+__APP_DATA__*
+*.log

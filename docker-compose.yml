@@ -1,0 +1,42 @@
+name: revpulse
+
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: revpulse
+      POSTGRES_PASSWORD: revpulse
+      POSTGRES_DB: revpulse
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U revpulse -d revpulse"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+  backend:
+    build: ./backend
+    environment:
+      REVPULSE_DATABASE_URL: postgresql+psycopg2://revpulse:revpulse@db:5432/revpulse
+      REVPULSE_JWT_SECRET: ${REVPULSE_JWT_SECRET:-change-me-in-production}
+      REVPULSE_FRONTEND_DIR: /nonexistent
+      REVPULSE_CORS_ORIGINS: "*"
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "8000:8000"
+    restart: unless-stopped
+
+  frontend:
+    build: ./frontend
+    depends_on:
+      - backend
+    ports:
+      - "8080:80"
+    restart: unless-stopped
+
+volumes:
+  pgdata:

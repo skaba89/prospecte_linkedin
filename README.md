@@ -1,0 +1,224 @@
+# RevPulse — Stack modulaire dockerisée
+
+Architecture **multi-service** du LinkedIn Command Center : backend API FastAPI + frontend statique (nginx) + Postgres, orchestrés par Docker Compose. Fonctionne **bout en bout** (auth JWT → multi-tenant → RBAC → dashboard data), vérifié localement.
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│  Navigateur (http://localhost:8080)                          │
+│   └─ frontend (nginx) : sert index.html (dashboard dual-mode)│
+│      └─ proxy /api/* ─────────────────┐                      │
+└───────────────────────────────────────┼──────────────────────┘
+                                        ▼
+┌─────────────────────────────────────────────────────────────┐
+│  backend (FastAPI :8000)  app/                                │
+│   routers: auth · tenants · members · approvals · dashboard ·│
+│            billing                                            │
+│   security: JWT (HS256) + bcrypt · deps RBAC (require_perm)  │
+│   seed: idempotent (Alex Démo / RevPulse Demo / 34 modules)  │
+└───────────────┬─────────────────────────────────────────────┘
+                ▼  SQLAlchemy 2.x (JSONB sous Postgres)
+┌─────────────────────────────────────────────────────────────┐
+│  db (Postgres 16)  — tables multi-tenant (tenant_id)         │
+│   users · tenants · profiles · members · approvals ·         │
+│   dashboard_modules                                          │
+└─────────────────────────────────────────────────────────────┘
+```
+
+## Structure
+
+```
+revpulse-stack/
+├── docker-compose.yml          # orchestration 3 services
+├── .env.example                # variables (JWT secret, BDD, CORS…)
+├── README.md
+├── backend/
+│   ├── Dockerfile
+│   ├── requirements.txt
+│   └── app/
+│       ├── main.py             # FastAPI : CORS, routers, static, seed@startup
+│       ├── config.py           # pydantic-settings (REVPULSE_* env)
+│       ├── database.py         # engine SQLAlchemy + Base + get_db + init_db
+│       ├── models.py           # User, Tenant, Profile, Member, Approval, DashboardModule
+│       ├── schemas.py          # Pydantic (validation + sérialisation)
+│       ├── security.py         # bcrypt direct + JWT
+│       ├── deps.py             # get_current_user, get_tenant, require_permission (RBAC)
+│       ├── seed.py             # ensure_demo() idempotent + 34 modules
+│       ├── seed_data.json      # données de dashboard (188 ko, générées par GLM)
+│       └── routers/
+│           ├── auth.py         # /api/auth : register, login, demo, me
+│           ├── tenants.py      # /api/tenants : CRUD, rename, delete, switch, profile
+│           ├── members.py      # /api/tenants/{tid}/members : invite, accept, role, remove
+│           ├── approvals.py    # /api/tenants/{tid}/approvals : list, approve
+│           ├── dashboard.py    # /api/tenants/{tid}/dashboard/modules
+│           └── billing.py      # /api/tenants/{tid}/billing : plans, usage, change
+└── frontend/
+    ├── Dockerfile              # nginx:alpine
+    ├── nginx.conf              # static + proxy /api → backend:8000
+    └── public/index.html       # dashboard dual-mode (430 ko)
+```
+
+## Lancer en Docker
+
+```bash
+cd revpulse-stack
+cp .env.example .env          # adapter REVPULSE_JWT_SECRET
+docker compose up --build
+```
+
+- Frontend : <http://localhost:8080>
+- API : <http://localhost:8000/api/health>
+- Docs API (Swagger) : <http://localhost:8000/docs>
+
+Au démarrage, le backend crée les tables (`init_db`) et sème le compte démo
+(`ensure_demo`). Cliquez **« Essayer la démo »** → le frontend appelle
+`POST /api/auth/demo`, récupère un JWT, charge les tenants et les 34 modules,
+et rend le command center.
+
+## Lancer en local (sans Docker)
+
+```bash
+cd backend
+pip install -r requirements.txt
+# SQLite (par défaut) — ou pointer vers un Postgres local via REVPULSE_DATABASE_URL
+REVPULSE_FRONTEND_DIR=../frontend/public python -m uvicorn app.main:app --port 8000
+```
+Ouvrir <http://localhost:8000/> (le backend sert alors API + frontend sur le même port).
+
+## Makefile
+
+Toutes les opérations courantes sont exposées via `make` (lancé depuis la racine
+de la stack) :
+
+| Cible | Rôle |
+|---|---|
+| `make help` | Liste toutes les cibles |
+| `make up` | Démarre la stack en arrière-plan (build + db + backend + frontend) |
+| `make down` / `make logs` / `make ps` | Arrêt / logs / état |
+| `make rebuild` | Rebuild sans cache + redémarre |
+| `make health` | Vérifie `/api/health` |
+| `make lint` / `make fmt` | Lint (ruff) / auto-fix du backend |
+| `make test-api` | Test l'API contre une stack démarrée (`BACKEND_URL=http://localhost:8000`) |
+| `make test-local` | Test l'API **sans docker** : démarre uvicorn sqlite, joue `tests/test_api.py`, arrête |
+| `make test` | Lint + test (auto : test-local si docker absent, sinon invite à faire `up` + `test-api`) |
+| `make dev` | Mode développement (hot-reload, voir ci-dessous) |
+| `make db-shell` | Shell SQL dans Postgres |
+| `make backend-shell` / `make backend-logs` | Shell / logs du conteneur backend |
+| `make clean` | ⚠️ Arrête + supprime les volumes (efface la BDD) |
+
+## Développement (hot-reload)
+
+`docker-compose.dev.yml` est un **override** fusionné avec le compose de base :
+
+- **backend** : `uvicorn --reload` + `./backend/app` monté → une édition Python
+  est rechargée automatiquement.
+- **frontend** : `./frontend/public` monté en lecture seule → une édition de
+  `index.html` est servie immédiatement par nginx.
+- **db** : héritée du compose de base (Postgres + volume persistant).
+
+```bash
+make dev            # docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build
+# ou en arrière-plan :
+make dev-up
+```
+Frontend : <http://localhost:8080> · API : <http://localhost:8000/docs>
+
+## CI (GitHub Actions)
+
+`.github/workflows/ci.yml` — 3 jobs sur push/PR (déclenchés sur
+`backend/**`, `frontend/**`, `tests/**`, compose, Makefile) :
+
+1. **lint** — `ruff check backend/app` (Python 3.12).
+2. **test-api** — installe les deps, démarre uvicorn **avec SQLite** (sans
+   docker), joue `tests/test_api.py` (28 scénarios), arrête uvicorn.
+3. **docker** — `docker compose config -q` (valide base **+** dev merge) puis
+   `docker compose build`.
+
+Le job `test-api` ne dépend pas de Docker : il prouve que l'API passe ses tests
+en isolation (SQLite), exactement comme `make test-local` en local.
+
+## API
+
+| Méthode | Route | Rôle | Description |
+|---|---|---|---|
+| POST | `/api/auth/register` | public | Inscription → JWT + user |
+| POST | `/api/auth/login` | public | Login → JWT + user (répare le compte démo si besoin) |
+| POST | `/api/auth/demo` | public | Accès démo 1 clic → JWT Alex Démo |
+| GET | `/api/auth/me` | auth | Utilisateur courant |
+| GET | `/api/tenants` | auth | Espaces de l'utilisateur (avec profil + nb membres + rôle) |
+| POST | `/api/tenants` | auth | Créer un espace |
+| GET/PATCH/DELETE | `/api/tenants/{tid}` | membre/Owner | Détail, renommage, suppression |
+| POST | `/api/tenants/{tid}/profile` | Owner | Profil LinkedIn/native |
+| GET | `/api/tenants/{tid}/members` | membre | Liste des membres |
+| POST | `/api/tenants/{tid}/members/invite` | manage | Invitation (token, quota sièges) |
+| POST | `/api/tenants/{tid}/members/{mid}/accept` | manage | Accepter une invitation |
+| PATCH/DELETE | `/api/tenants/{tid}/members/{mid}` | manage | Rôle, retrait |
+| GET | `/api/tenants/{tid}/approvals` | membre | File d'approbation (non approuvés) |
+| POST | `/api/tenants/{tid}/approvals/{aid}/approve` | approvals.manage | Approuver |
+| GET | `/api/tenants/{tid}/dashboard/modules` | membre | 34 modules de données (JSON) |
+| GET | `/api/tenants/{tid}/dashboard/modules/{key}` | membre | Un module |
+| GET | `/api/tenants/{tid}/billing` | membre | Plan, sièges, usage |
+| PATCH | `/api/tenants/{tid}/billing` | billing.manage | Changement de plan (quota vérifié) |
+
+### RBAC
+Rôles : `Owner · Admin · Editor · Contributor · Viewer`. Permissions par rôle
+(`members.manage`, `billing.manage`, `workspace.manage`, `approvals.manage`,
+`content.publish`) appliquées via `require_permission(...)` dans `deps.py`.
+Un utilisateur non-membre d'un tenant reçoit **403** sur toutes ses routes
+(isolation par espace).
+
+## Frontend dual-mode
+
+`index.html` est le **même** fichier que le dashboard autonome
+(`linkedin_command_center.html`). Un adaptateur interne s'active selon le
+protocole :
+
+- `file://` (double-clic) → **mode standalone** : données inline + localStorage
+  (comportement d'origine, inchangé).
+- `http(s)://` (nginx / uvicorn) → **mode API** : auth, multi-tenant, membres,
+  approbations, facturation, modules → appels `fetch` vers `/api/*` avec JWT.
+  Les mutations persistent côté serveur ; le cache mémoire se rafraîchit après
+  chaque action.
+
+Aucune réécriture du rendu : l'adaptateur ne remplace que la **couche stockage**
+(`loadDB`/`saveDB`/`loadSess`/…), le **boot**, l'**auth** et les **mutations**.
+Les 20 vues consomment `D` et `loadDB()` de façon synchrone, inchangées.
+
+## Variables d'environnement
+
+| Variable | Défaut | Rôle |
+|---|---|---|
+| `REVPULSE_DATABASE_URL` | `sqlite:///./revpulse.db` | SQLAlchemy URL (sqlite ou postgresql+psycopg2) |
+| `REVPULSE_JWT_SECRET` | `change-me…` | Secret HS256 — **à changer en prod** |
+| `REVPULSE_JWT_EXPIRY_HOURS` | `24` | Durée de validité du JWT |
+| `REVPULSE_CORS_ORIGINS` | `*` | Origines CORS (séparées par `,`) |
+| `REVPULSE_DEMO_EMAIL` / `_PASSWORD` | `demo@revpulse.io` / `demo1234` | Compte démo (seed) |
+| `REVPULSE_FRONTEND_DIR` | `./frontend_public` | Monte le frontend statique sur `/` (local) |
+
+## Vérifications effectuées
+
+- **Backend (26/26 checks)** : auth (demo/login/register/me), multi-tenant
+  (list/create/rename/delete/switch), members (invite/accept/role/remove +
+  quota sièges), approvals (list/approve décrément), dashboard (34 modules),
+  billing (plans/usage/change + blocage downgrade), RBAC (isolation 403),
+  wrong password 401 — voir `scripts/revpulse_api_test.py`.
+- **Intégration navigateur (zéro erreur)** : login démo via API → token JWT →
+  dashboard rendu avec données API (nav counts, 6 KPIs overview) → notif
+  badge 7 → approve via panneau (mutation API, badge 7→6, file 6→5) →
+  members modal (4 membres depuis l'API).
+- **Docker** : `docker-compose.yml` validé par parsing YAML (3 services,
+  dépendances, healthcheck Postgres, volume). nginx.conf conforme aux docs
+  nginx (`proxy_pass` + `try_files`). *Docker n'étant pas installé dans le
+  sandbox de développement, `docker compose up` n'a pas été exécuté ici — les
+  images sont buildables et le compose est structurellement valide.*
+- **Industrialisation** : `ruff check backend/app` → 0 erreur ;
+  `make test-local` → 28/28 scénarios ✓ (démarre uvicorn sqlite, teste,
+  arrête, sans docker) ; `make help` rend les 22 cibles ; `docker-compose.dev.yml`
+  merge valide (`--reload` + volumes `./backend/app` et `./frontend/public`,
+  db héritée) ; `.github/workflows/ci.yml` valide (jobs lint/test-api/docker).
+
+## Compte démo
+
+- **Login** : `demo@revpulse.io` / `demo1234` — ou bouton **« Essayer la démo »**.
+- Deux espaces seedés : **RevPulse Demo** (Pro, profil LinkedIn Camille Laurent,
+  4 membres dont 1 invitation en attente, 6 approbations, 34 modules) et
+  **Acme Growth** (Enterprise, à configurer via l'onboarding).

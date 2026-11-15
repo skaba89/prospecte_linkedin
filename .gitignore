@@ -1,0 +1,15 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+backend/.ruff_cache/
+
+# DB locales (sqlite de test/dev)
+*.db
+*.db-journal
+
+# Env
+.env
+
+# Build / OS
+.DS_Store
