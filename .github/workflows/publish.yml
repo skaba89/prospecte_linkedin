@@ -1,0 +1,85 @@
+name: Publish (CD)
+
+# Continuous Delivery : build des images Docker (backend API + frontend nginx)
+# et push sur ghcr.io (GitHub Container Registry) à chaque tag v* ou via workflow_dispatch.
+# Aucun secret à créer : utilise le GITHUB_TOKEN automatique (permission packages: write).
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag image (défaut: latest)'
+        required: false
+        default: 'latest'
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: publish-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: Build & push images → ghcr.io
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - image: revpulse-api
+            context: ./backend
+          - image: revpulse-frontend
+            context: ./frontend
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Compute image name & tags
+        id: meta
+        run: |
+          OWNER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
+          IMAGE="ghcr.io/${OWNER}/${{ matrix.image }}"
+          echo "image=${IMAGE}" >> "$GITHUB_OUTPUT"
+          if [ "${{ github.event_name }}" = "push" ]; then
+            echo "tags=${IMAGE}:${GITHUB_REF_NAME},${IMAGE}:latest" >> "$GITHUB_OUTPUT"
+          else
+            echo "tags=${IMAGE}:${{ inputs.tag }},${IMAGE}:latest" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build & push ${{ matrix.image }}
+        uses: docker/build-push-action@v5
+        with:
+          context: ${{ matrix.context }}
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  # Récap publié en résumé du run (visible dans l'onglet Summary)
+  summary:
+    name: Images publiées
+    runs-on: ubuntu-latest
+    needs: publish
+    if: always()
+    steps:
+      - run: |
+          OWNER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
+          echo "### Images publiées sur ghcr.io" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "- \`ghcr.io/${OWNER}/revpulse-api:<tag>\` — API FastAPI (port 8000)" >> "$GITHUB_STEP_SUMMARY"
+          echo "- \`ghcr.io/${OWNER}/revpulse-frontend:<tag>\` — frontend nginx (port 80)" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "Pull : \`docker pull ghcr.io/${OWNER}/revpulse-api:latest\`" >> "$GITHUB_STEP_SUMMARY"

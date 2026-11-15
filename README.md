@@ -129,12 +129,27 @@ Frontend : <http://localhost:8080> · API : <http://localhost:8000/docs>
 
 1. **lint** — `ruff check backend/app` (Python 3.12).
 2. **test-api** — installe les deps, démarre uvicorn **avec SQLite** (sans
-   docker), joue `tests/test_api.py` (28 scénarios), arrête uvicorn.
+   docker), joue `tests/test_api.py` (46 scénarios : auth/RBAC/tenants/members/
+   approvals + content/reject/history + LinkedIn mock), arrête uvicorn.
 3. **docker** — `docker compose config -q` (valide base **+** dev merge) puis
    `docker compose build`.
 
 Le job `test-api` ne dépend pas de Docker : il prouve que l'API passe ses tests
 en isolation (SQLite), exactement comme `make test-local` en local.
+
+### CD (publish d'images)
+
+`.github/workflows/publish.yml` — **Continuous Delivery** : à chaque tag `v*`
+(ou via `workflow_dispatch` manuel), build des images Docker et push sur
+**ghcr.io** (GitHub Container Registry). Aucun secret à créer : utilise le
+`GITHUB_TOKEN` automatique (permission `packages: write`).
+
+- `ghcr.io/<owner>/revpulse-api:<tag>` — API FastAPI (port 8000), context `./backend`
+- `ghcr.io/<owner>/revpulse-frontend:<tag>` — frontend nginx (port 80), context `./frontend`
+
+Tags publiés : `<version>` (ex. `v1.0.0`) + `latest`. Cache Buildx via `type=gha`.
+Déclenchement : `git tag v1.0.0 && git push origin v1.0.0` ou onglet Actions →
+« Publish (CD) » → Run workflow.
 
 ## API
 
