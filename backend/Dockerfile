@@ -7,13 +7,18 @@ ENV PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Code applicatif
+# Code applicatif + migrations Alembic (init_db applique `alembic upgrade head`)
 COPY app/ ./app/
+COPY alembic.ini ./
+COPY alembic/ ./alembic/
 
 # En docker : backend API-only (le frontend est servi par nginx).
 # La BDD par défaut pointe vers le service `db` (Postgres) du compose.
+# ⚠️ REVPULSE_ENV=production → fail-fast : REVPULSE_JWT_SECRET DOIT être surchargé
+#    (≥ 32 chars, non défaut) au démarrage, sinon uvicorn crash avec un message clair.
 ENV REVPULSE_DATABASE_URL="postgresql+psycopg2://revpulse:revpulse@db:5432/revpulse" \
     REVPULSE_FRONTEND_DIR="/nonexistent" \
+    REVPULSE_ENV="production" \
     REVPULSE_JWT_SECRET="change-me-in-production"
 
 EXPOSE 8000

@@ -13,6 +13,7 @@ services:
       - ./backend/app:/app/app
     environment:
       REVPULSE_FRONTEND_DIR: /nonexistent
+      REVPULSE_ENV: development
       REVPULSE_JWT_SECRET: ${REVPULSE_JWT_SECRET:-dev-secret-not-for-prod}
       REVPULSE_DATABASE_URL: postgresql+psycopg2://revpulse:revpulse@db:5432/revpulse
 

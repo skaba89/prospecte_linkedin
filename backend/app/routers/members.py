@@ -1,12 +1,15 @@
-"""Membres & RBAC : liste, invitation (token), acceptation, changement de rôle, retrait."""
+"""Membres & RBAC : liste, invitation (token + e-mail SMTP), acceptation, rôle, retrait."""
 import uuid
+from datetime import datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
 from .. import models, schemas
+from ..config import settings
 from ..database import get_db
 from ..deps import get_tenant, require_permission
+from ..mailer import send_invitation_email
 
 router = APIRouter(prefix="/api/tenants/{tid}/members", tags=["members"])
 
@@ -18,7 +21,7 @@ def list_members(tid: str, db: Session = Depends(get_db), _t: models.Tenant = De
     return db.query(models.Member).filter_by(tenant_id=tid).order_by(models.Member.added_at).all()
 
 
-@router.post("/invite", response_model=schemas.MemberOut, status_code=status.HTTP_201_CREATED)
+@router.post("/invite", response_model=schemas.InviteResult, status_code=status.HTTP_201_CREATED)
 def invite(tid: str, body: schemas.InviteCreate, db: Session = Depends(get_db),
            _t: models.Tenant = Depends(get_tenant), membership=Depends(require_permission("members.manage"))):
     if body.role not in VALID_ROLES:
@@ -34,22 +37,34 @@ def invite(tid: str, body: schemas.InviteCreate, db: Session = Depends(get_db),
         raise HTTPException(status.HTTP_409_CONFLICT, "Cet e-mail est déjà invité ou membre.")
     name = body.name or body.email.split("@")[0]
     token = uuid.uuid4().hex[:10]
+    expires_at = datetime.utcnow() + timedelta(days=7)
     m = models.Member(id=f"mem-{uuid.uuid4().hex[:10]}", tenant_id=tid, user_id=None,
                       email=body.email.lower(), name=name, role=body.role, status="invited",
-                      token=token, invited_by=membership.user_id)
+                      token=token, invited_by=membership.user_id, expires_at=expires_at)
     db.add(m)
     db.commit()
     db.refresh(m)
-    return m
+    # Envoi de l'e-mail d'invitation (SMTP réel si activé, dry-run = log sinon).
+    invite_link = f"{settings.app_base_url}/accept?token={token}"
+    inviter = membership.name or membership.email or "Un administrateur"
+    sent = send_invitation_email(m.email, invite_link, _t.name, m.role, inviter)
+    return {
+        "id": m.id, "tenant_id": m.tenant_id, "email": m.email, "name": m.name,
+        "role": m.role, "status": m.status, "token": m.token, "invited_by": m.invited_by,
+        "added_at": m.added_at, "expires_at": m.expires_at, "email_sent": sent,
+    }
 
 
 @router.post("/{mid}/accept", response_model=schemas.MemberOut)
 def accept_invite(tid: str, mid: str, db: Session = Depends(get_db),
                   _t: models.Tenant = Depends(get_tenant), membership=Depends(require_permission("members.manage"))):
-    """Simule l'acceptation d'une invitation : passage à Actif, rattachement au user courant."""
+    """Simule l'acceptation d'une invitation : passage à Actif, rattachement au user courant.
+    Refuse si l'invitation a expiré (expires_at dépassé)."""
     m = db.query(models.Member).filter_by(id=mid, tenant_id=tid).first()
     if not m:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Invitation introuvable")
+    if m.status == "invited" and m.expires_at and m.expires_at < datetime.utcnow():
+        raise HTTPException(status.HTTP_410_GONE, "Invitation expirée")
     m.status = "active"
     m.token = None
     m.user_id = membership.user_id

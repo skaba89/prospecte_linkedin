@@ -46,10 +46,20 @@ jobs:
           python-version: '3.12'
       - name: Install backend deps
         run: pip install -r backend/requirements.txt
+      - name: Config unit tests (JWT fail-fast)
+        run: python tests/test_config.py
+      - name: Validate Alembic migrations (up → down → up)
+        working-directory: backend
+        run: |
+          rm -f migrate_test.db
+          REVPULSE_DATABASE_URL="sqlite:///./migrate_test.db" alembic upgrade head
+          REVPULSE_DATABASE_URL="sqlite:///./migrate_test.db" alembic downgrade base
+          REVPULSE_DATABASE_URL="sqlite:///./migrate_test.db" alembic upgrade head
+          rm -f migrate_test.db
       - name: Start API (sqlite, background)
         working-directory: backend
         run: |
-          REVPULSE_DATABASE_URL="sqlite:///./ci.db" REVPULSE_FRONTEND_DIR=/nonexistent \
+          REVPULSE_ENV=test REVPULSE_DATABASE_URL="sqlite:///./ci.db" REVPULSE_FRONTEND_DIR=/nonexistent \
             python -m uvicorn app.main:app --host 127.0.0.1 --port 8000 --log-level warning &
           echo $! > /tmp/uvicorn.pid
           for i in $(seq 1 30); do

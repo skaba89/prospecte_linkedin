@@ -80,6 +80,12 @@ class MemberOut(BaseModel):
     token: str | None = None
     invited_by: str | None = None
     added_at: datetime
+    expires_at: datetime | None = None
+
+
+class InviteResult(MemberOut):
+    """Résultat d'une invitation : le membre créé + le statut d'envoi de l'e-mail."""
+    email_sent: bool = True
 
 
 class RoleUpdate(BaseModel):

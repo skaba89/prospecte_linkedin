@@ -3,8 +3,9 @@
 Usage :
     BACKEND_URL=http://localhost:8000 python tests/test_api.py
 
-Le script attend que /api/health réponde (jusqu'à ~30s) puis enchaîne 16 scénarios
-couvrant auth, multi-tenant, members + quota, approvals, dashboard, billing, RBAC.
+Le script attend que /api/health réponde (jusqu'à ~30s) puis enchaîne 25 scénarios
+couvrant auth, multi-tenant, members + quota, approvals, dashboard, billing, RBAC,
+authoring/reject/history, LinkedIn mock, invitation SMTP (dry-run) + rate-limit login.
 Exit code 0 si tout passe, 1 sinon.
 """
 import json
@@ -111,6 +112,8 @@ s, inv = call("POST", "/api/tenants/tnt-demo/members/invite", tok,
               {"email": "marc@test.io", "name": "Marc Test", "role": "Contributor"})
 ck(inv.get("status"), "invited", "invite status")
 ck(bool(inv.get("token")), True, "invite token generated")
+ck(inv.get("email_sent"), True, "invite email_sent (dry-run SMTP)")
+ck(bool(inv.get("expires_at")), True, "invite expires_at set (7j)")
 
 print("=== 10. POST profile (onboarding) ===")
 s, nt = call("POST", "/api/tenants", tok, {"name": "Test Co", "plan": "Starter"})
@@ -200,6 +203,17 @@ s, tn3 = call("GET", "/api/tenants", tok)
 other_tid = [t["id"] for t in tn3 if t["id"] != "tnt-demo"][0]
 s, _ = call("POST", f"/api/tenants/{other_tid}/linkedin/publish?aid={aid}", tok)
 ck(s, 409, "publish sans connexion LinkedIn → 409")
+
+print("=== 25. Rate-limit login (anti brute-force → 429) ===")
+# /login est limité à 5/min/IP (slowapi). Les tests 13+15 ont déjà fait 2 appels /login.
+# On enchaîne des login erronés jusqu'à déclencher le 429 (au 6e appel cumulé).
+got_429 = False
+for _i in range(12):
+    s, _ = call("POST", "/api/auth/login", body={"email": "brute@test.io", "password": "wrong"})
+    if s == 429:
+        got_429 = True
+        break
+ck(got_429, True, "rate-limit 429 déclenché")
 
 print()
 print(f"RESULT: {passed} passed, {failed} failed")

@@ -34,13 +34,20 @@ revpulse-stack/
 ├── backend/
 │   ├── Dockerfile
 │   ├── requirements.txt
+│   ├── alembic.ini             # config Alembic (URL surchargée par env.py)
+│   ├── alembic/                # migrations versionnées (0001_initial : 7 tables)
+│   │   ├── env.py              # importe Base.metadata + settings.database_url
+│   │   ├── script.py.mako
+│   │   └── versions/
 │   └── app/
-│       ├── main.py             # FastAPI : CORS, routers, static, seed@startup
-│       ├── config.py           # pydantic-settings (REVPULSE_* env)
-│       ├── database.py         # engine SQLAlchemy + Base + get_db + init_db
-│       ├── models.py           # User, Tenant, Profile, Member, Approval, DashboardModule
-│       ├── schemas.py          # Pydantic (validation + sérialisation)
+│       ├── main.py             # FastAPI : CORS, rate-limit, routers, seed@startup
+│       ├── config.py           # pydantic-settings + fail-fast JWT (prod)
+│       ├── database.py         # engine SQLAlchemy + Base + get_db + init_db (alembic)
+│       ├── models.py           # User, Tenant, Profile, Member(+expires_at), Approval, …
+│       ├── schemas.py          # Pydantic (validation + sérialisation + InviteResult)
 │       ├── security.py         # bcrypt direct + JWT
+│       ├── extensions.py       # Limiter slowapi (anti brute-force)
+│       ├── mailer.py           # SMTP invitation e-mail (dry-run si désactivé)
 │       ├── deps.py             # get_current_user, get_tenant, require_permission (RBAC)
 │       ├── seed.py             # ensure_demo() idempotent + 34 modules
 │       ├── seed_data.json      # données de dashboard (188 ko, générées par GLM)
@@ -128,9 +135,12 @@ Frontend : <http://localhost:8080> · API : <http://localhost:8000/docs>
 `backend/**`, `frontend/**`, `tests/**`, compose, Makefile) :
 
 1. **lint** — `ruff check backend/app` (Python 3.12).
-2. **test-api** — installe les deps, démarre uvicorn **avec SQLite** (sans
-   docker), joue `tests/test_api.py` (46 scénarios : auth/RBAC/tenants/members/
-   approvals + content/reject/history + LinkedIn mock), arrête uvicorn.
+2. **test-api** — installe les deps, joue `tests/test_config.py` (fail-fast JWT,
+   10 cas), valide les migrations Alembic (up → down → up sur SQLite), démarre
+   uvicorn **avec SQLite** (sans docker, schéma créé par `alembic upgrade head`),
+   joue `tests/test_api.py` (49 checks / 25 scénarios : auth/RBAC/tenants/members/
+   approvals + content/reject/history + LinkedIn mock + invitation SMTP dry-run +
+   rate-limit 429), arrête uvicorn.
 3. **docker** — `docker compose config -q` (valide base **+** dev merge) puis
    `docker compose build`.
 
@@ -150,6 +160,41 @@ en isolation (SQLite), exactement comme `make test-local` en local.
 Tags publiés : `<version>` (ex. `v1.0.0`) + `latest`. Cache Buildx via `type=gha`.
 Déclenchement : `git tag v1.0.0 && git push origin v1.0.0` ou onglet Actions →
 « Publish (CD) » → Run workflow.
+
+## P1 — Hardening (sécurité + production)
+
+Quatre renforcements production, tous vérifiés en CI (`ruff` + `test_config` +
+`test_api` 49/49 + migrations up/down/up).
+
+**Alembic (migrations versionnées)** — `backend/alembic/` + `alembic.ini` +
+`env.py` (importe `Base.metadata` + `settings.database_url`). La migration
+initiale `0001_initial` crée les 7 tables (users, tenants, profiles,
+members + `expires_at`, approvals, dashboard_modules, linkedin_connections).
+`init_db()` applique `alembic upgrade head` au démarrage (source de vérité du
+schéma) ; fallback `create_all` si Alembic absent. Production : `alembic
+upgrade head` avant le boot. CI valide le round-trip up → down → up.
+
+**JWT secret fail-fast** — `validate_jwt_secret()` (`config.py`) + `model_validator` :
+en `REVPULSE_ENV=production`, un secret par défaut (`change-me-in-production`,
+`revpulse-demo-secret-change-me`, …), vide ou `< 32` caractères fait **planter
+le démarrage** avec un message clair et la commande pour générer un secret.
+`development`/`test` tolèrent les secrets de démo (dev/CI non bloqués). Testé
+par `tests/test_config.py` (10 cas). Dockerfile/compose imposent
+`REVPULSE_ENV=production` → un boot sans vrai secret crash (voulu).
+
+**Rate-limit login (anti brute-force)** — `slowapi` Limiter (`extensions.py`),
+décorateurs `@limiter.limit` sur `/api/auth/login`, `/register`, `/demo`.
+Défaut `5/minute` par IP, configurable (`REVPULSE_LOGIN_RATE_LIMIT`) et
+désactivable (`REVPULSE_RATE_LIMIT_ENABLED`). Handler 429 intégré. Testé :
+6ᵉ login erroné → 429.
+
+**Invitation e-mail SMTP** — `mailer.py` (smtplib stdlib) envoie un vrai
+e-mail d'invitation (lien + rôle + tenant + expiration 7 jours). Colonne
+`members.expires_at` (migration). `smtp_enabled=false` → dry-run (log du lien,
+dev/test/CI). Échec SMTP → `email_sent=false` (l'invitation reste créée, l'inviter
+peut relancer). Config SMTP via `REVPULSE_SMTP_*`. `POST /members/invite`
+renvoie `InviteResult` (`MemberOut` + `email_sent`). Lien d'expiration vérifié
+dans `accept` (410 Gone si expirée).
 
 ## API
 
@@ -248,10 +293,16 @@ chargé en `defer` et n'altère pas le rendu existant.
 
 | Variable | Défaut | Rôle |
 |---|---|---|
+| `REVPULSE_ENV` | `development` | Environnement (`development`/`test`/`production`) — pilote le fail-fast JWT |
 | `REVPULSE_DATABASE_URL` | `sqlite:///./revpulse.db` | SQLAlchemy URL (sqlite ou postgresql+psycopg2) |
-| `REVPULSE_JWT_SECRET` | `change-me…` | Secret HS256 — **à changer en prod** |
+| `REVPULSE_JWT_SECRET` | `change-me…` | Secret HS256 — **≥ 32 chars obligatoire en prod** (fail-fast sinon) |
 | `REVPULSE_JWT_EXPIRY_HOURS` | `24` | Durée de validité du JWT |
 | `REVPULSE_CORS_ORIGINS` | `*` | Origines CORS (séparées par `,`) |
+| `REVPULSE_APP_BASE_URL` | `http://localhost:8000` | URL publique (liens d'invitation e-mail) |
+| `REVPULSE_RATE_LIMIT_ENABLED` | `true` | Active le rate-limiting (slowapi) |
+| `REVPULSE_LOGIN_RATE_LIMIT` | `5/minute` | Limite anti brute-force sur login/register/demo |
+| `REVPULSE_SMTP_ENABLED` | `false` | Active l'envoi réel des invitations (sinon dry-run = log) |
+| `REVPULSE_SMTP_HOST`/`_PORT`/`_USER`/`_PASSWORD`/`_FROM`/`_USE_TLS` | — | Config SMTP (port 587, TLS on par défaut) |
 | `REVPULSE_DEMO_EMAIL` / `_PASSWORD` | `demo@revpulse.io` / `demo1234` | Compte démo (seed) |
 | `REVPULSE_FRONTEND_DIR` | `./frontend_public` | Monte le frontend statique sur `/` (local) |
 
@@ -271,9 +322,12 @@ chargé en `defer` et n'altère pas le rendu existant.
   nginx (`proxy_pass` + `try_files`). *Docker n'étant pas installé dans le
   sandbox de développement, `docker compose up` n'a pas été exécuté ici — les
   images sont buildables et le compose est structurellement valide.*
-- **Industrialisation** : `ruff check backend/app` → 0 erreur ;
-  `make test-local` → 28/28 scénarios ✓ (démarre uvicorn sqlite, teste,
-  arrête, sans docker) ; `make help` rend les 22 cibles ; `docker-compose.dev.yml`
+- **Industrialisation (P1)** : `ruff check backend/app` → 0 erreur ;
+  `tests/test_config.py` → 10/10 (fail-fast JWT) ; `alembic upgrade head` →
+  7 tables (round-trip up/down/up ✓) ; `tests/test_api.py` → 49/49 checks
+  (25 scénarios : auth/RBAC/tenants/members/approvals/content/LinkedIn + invitation
+  SMTP dry-run + rate-limit 429 + fail-fast prod) ; `make test-local` passe ;
+  `make help` rend les 22 cibles ; `docker-compose.dev.yml`
   merge valide (`--reload` + volumes `./backend/app` et `./frontend/public`,
   db héritée) ; `.github/workflows/ci.yml` valide (jobs lint/test-api/docker).
 

@@ -1,4 +1,12 @@
-"""Moteur SQLAlchemy, session, Base déclarative. Compatible SQLite (local) et Postgres (docker)."""
+"""Moteur SQLAlchemy, session, Base déclarative. Compatible SQLite (local) et Postgres (docker).
+
+Le schéma est géré par Alembic (backend/alembic) — init_db() applique
+`alembic upgrade head` (source de vérité). Fallback create_all uniquement si
+Alembic n'est pas installé (env minimal sans alembic dans requirements) ; les
+erreurs de migration réelles sont propagées (fail-fast).
+"""
+from pathlib import Path
+
 from sqlalchemy import create_engine
 from sqlalchemy.orm import declarative_base, sessionmaker
 
@@ -19,5 +27,21 @@ def get_db():
 
 
 def init_db():
-    """Crée les tables (idempotent)."""
-    Base.metadata.create_all(bind=engine)
+    """Applique les migrations Alembic (source de vérité du schéma).
+
+    Fallback `Base.metadata.create_all` si Alembic n'est pas installé. Les
+    erreurs de migration (autre qu'ImportError) sont propagées : on ne masque
+    pas un vrai problème de schéma.
+    """
+    try:
+        from alembic.config import Config
+
+        from alembic import command
+    except ImportError:
+        Base.metadata.create_all(bind=engine)
+        return
+    ini = Path(__file__).resolve().parent.parent / "alembic.ini"
+    cfg = Config(str(ini))
+    cfg.set_main_option("script_location", str(ini.parent / "alembic"))
+    cfg.set_main_option("sqlalchemy.url", settings.database_url)
+    command.upgrade(cfg, "head")

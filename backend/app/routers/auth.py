@@ -1,17 +1,25 @@
-"""Auth : register, login, demo, me. Retourne un JWT + l'utilisateur."""
-from fastapi import APIRouter, Depends, HTTPException, status
+"""Auth : register, login, demo, me. Retourne un JWT + l'utilisateur.
+
+Rate-limiting (slowapi) sur login/register/demo : anti brute-force, configurable
+via REVPULSE_LOGIN_RATE_LIMIT (défaut 5/minute), désactivable via
+REVPULSE_RATE_LIMIT_ENABLED.
+"""
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy.orm import Session
 
 from .. import models, schemas, security
+from ..config import settings
 from ..database import get_db
 from ..deps import get_current_user
+from ..extensions import limiter
 from ..seed import ensure_demo
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
 
 @router.post("/register", response_model=schemas.Token)
-def register(body: schemas.UserCreate, db: Session = Depends(get_db)):
+@limiter.limit(settings.login_rate_limit)
+def register(request: Request, body: schemas.UserCreate, db: Session = Depends(get_db)):
     email = body.email.lower()
     if db.query(models.User).filter_by(email=email).first():
         raise HTTPException(status.HTTP_409_CONFLICT, "Un compte existe déjà avec cet e-mail")
@@ -23,7 +31,8 @@ def register(body: schemas.UserCreate, db: Session = Depends(get_db)):
 
 
 @router.post("/login", response_model=schemas.Token)
-def login(body: schemas.UserLogin, db: Session = Depends(get_db)):
+@limiter.limit(settings.login_rate_limit)
+def login(request: Request, body: schemas.UserLogin, db: Session = Depends(get_db)):
     email = body.email.lower()
     user = db.query(models.User).filter_by(email=email).first()
     # Répare le compte démo à la volée si l'utilisateur saisit les identifiants démo
@@ -36,7 +45,8 @@ def login(body: schemas.UserLogin, db: Session = Depends(get_db)):
 
 
 @router.post("/demo", response_model=schemas.Token)
-def demo(db: Session = Depends(get_db)):
+@limiter.limit(settings.login_rate_limit)
+def demo(request: Request, db: Session = Depends(get_db)):
     """Accès démo en 1 clic : garantit le seed puis connecte Alex Démo."""
     ensure_demo(db)
     user = db.query(models.User).filter_by(email="demo@revpulse.io").first()

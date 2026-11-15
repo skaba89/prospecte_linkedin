@@ -87,6 +87,7 @@ class Member(Base):
     token = Column(String, nullable=True)
     invited_by = Column(String, nullable=True)
     added_at = Column(DateTime, default=datetime.utcnow)
+    expires_at = Column(DateTime, nullable=True)  # invitation : date d'expiration (null = sans limite)
 
 
 class Approval(Base):

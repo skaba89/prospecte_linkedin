@@ -19,10 +19,22 @@ services:
   backend:
     build: ./backend
     environment:
+      REVPULSE_ENV: production
       REVPULSE_DATABASE_URL: postgresql+psycopg2://revpulse:revpulse@db:5432/revpulse
+      # ⚠️ Fail-fast : en production, ce secret doit être ≥ 32 chars et non défaut.
+      # Sans .env le conteneur crash au démarrage avec un message clair (voulu).
       REVPULSE_JWT_SECRET: ${REVPULSE_JWT_SECRET:-change-me-in-production}
       REVPULSE_FRONTEND_DIR: /nonexistent
       REVPULSE_CORS_ORIGINS: "*"
+      REVPULSE_APP_BASE_URL: ${REVPULSE_APP_BASE_URL:-http://localhost:8080}
+      # SMTP (invitation e-mail réelle) — désactivé par défaut (dry-run = log).
+      REVPULSE_SMTP_ENABLED: ${REVPULSE_SMTP_ENABLED:-false}
+      REVPULSE_SMTP_HOST: ${REVPULSE_SMTP_HOST:-}
+      REVPULSE_SMTP_PORT: ${REVPULSE_SMTP_PORT:-587}
+      REVPULSE_SMTP_USER: ${REVPULSE_SMTP_USER:-}
+      REVPULSE_SMTP_PASSWORD: ${REVPULSE_SMTP_PASSWORD:-}
+      REVPULSE_SMTP_FROM: ${REVPULSE_SMTP_FROM:-no-reply@revpulse.io}
+      REVPULSE_SMTP_USE_TLS: ${REVPULSE_SMTP_USE_TLS:-true}
     depends_on:
       db:
         condition: service_healthy
