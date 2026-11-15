@@ -10,6 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
 from .. import models, schemas
+from ..audit import log_audit
 from ..database import get_db
 from ..deps import get_tenant, require_permission
 
@@ -41,6 +42,10 @@ def create_content(tid: str, body: schemas.ContentCreate, db: Session = Depends(
         status_label="En attente", status_color="#f59e0b", approved=False,
     )
     db.add(a)
+    db.flush()  # peuple a.id (default lambda) pour l'audit
+    log_audit(db, tenant_id=tid, actor_user_id=membership.user_id, actor_name=membership.name,
+              action="content.submit", target_type="approval", target_id=a.id,
+              detail={"type": a.type, "title": a.title})
     db.commit()
     db.refresh(a)
     return a

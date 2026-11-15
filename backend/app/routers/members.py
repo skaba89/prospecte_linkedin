@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, Response, status
 from sqlalchemy.orm import Session
 
 from .. import models, schemas
+from ..audit import log_audit
 from ..config import settings
 from ..database import get_db
 from ..deps import get_tenant, require_permission
@@ -46,6 +47,9 @@ def invite(tid: str, body: schemas.InviteCreate, db: Session = Depends(get_db),
                       email=body.email.lower(), name=name, role=body.role, status="invited",
                       token=token, invited_by=membership.user_id, expires_at=expires_at)
     db.add(m)
+    log_audit(db, tenant_id=tid, actor_user_id=membership.user_id, actor_name=membership.name,
+              action="member.invite", target_type="member", target_id=m.id,
+              detail={"email": m.email, "role": m.role})
     db.commit()
     db.refresh(m)
     # Envoi de l'e-mail d'invitation (SMTP réel si activé, dry-run = log sinon).
@@ -72,6 +76,9 @@ def accept_invite(tid: str, mid: str, db: Session = Depends(get_db),
     m.status = "active"
     m.token = None
     m.user_id = membership.user_id
+    log_audit(db, tenant_id=tid, actor_user_id=membership.user_id, actor_name=membership.name,
+              action="member.accept", target_type="member", target_id=mid,
+              detail={"email": m.email})
     db.commit()
     db.refresh(m)
     return m
@@ -87,7 +94,11 @@ def change_role(tid: str, mid: str, body: schemas.RoleUpdate, db: Session = Depe
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Membre introuvable")
     if m.role == "Owner":
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Le rôle Owner ne peut pas être modifié")
+    old_role = m.role
     m.role = body.role
+    log_audit(db, tenant_id=tid, actor_user_id=_perm.user_id, actor_name=_perm.name,
+              action="member.role_change", target_type="member", target_id=mid,
+              detail={"email": m.email, "old": old_role, "new": body.role})
     db.commit()
     db.refresh(m)
     return m
@@ -101,6 +112,9 @@ def remove_member(tid: str, mid: str, db: Session = Depends(get_db),
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Membre introuvable")
     if m.role == "Owner":
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Le Owner ne peut pas être retiré")
+    log_audit(db, tenant_id=tid, actor_user_id=_perm.user_id, actor_name=_perm.name,
+              action="member.remove", target_type="member", target_id=mid,
+              detail={"email": m.email, "role": m.role})
     db.delete(m)
     db.commit()
     return {"removed": mid}

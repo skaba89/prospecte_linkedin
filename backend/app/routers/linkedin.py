@@ -37,6 +37,7 @@ from fastapi.responses import RedirectResponse
 from sqlalchemy.orm import Session
 
 from .. import models, schemas, security
+from ..audit import log_audit
 from ..config import settings
 from ..database import get_db
 from ..deps import get_tenant, require_permission
@@ -172,6 +173,10 @@ def linkedin_mock_connect(tid: str, db: Session = Depends(get_db)):
     _upsert_connection(db, tid, token=_MOCK_TOKEN, member_id="mock-member-001",
                        member_name="Alex Démo (LinkedIn mock)",
                        member_headline="Connexion démo — mode dev", scope=_SCOPES, expires_in=3600)
+    log_audit(db, tenant_id=tid, actor_user_id=None, actor_name="LinkedIn OAuth (mock)",
+              action="linkedin.connect", target_type="linkedin_connection", target_id=tid,
+              detail={"member_name": "Alex Démo (LinkedIn mock)", "mock": True})
+    db.commit()
     return RedirectResponse(url="/?linkedin=ok&mock=1")
 
 
@@ -196,6 +201,10 @@ def linkedin_callback(code: str, state: str, db: Session = Depends(get_db)):
                        member_id=info.get("sub", ""), member_name=info.get("name", "Membre LinkedIn"),
                        member_headline=info.get("headline", ""), scope=tok.get("scope", _SCOPES),
                        expires_in=expires_in)
+    log_audit(db, tenant_id=tid, actor_user_id=None, actor_name="LinkedIn OAuth (callback)",
+              action="linkedin.connect", target_type="linkedin_connection", target_id=tid,
+              detail={"member_name": info.get("name", ""), "mock": False})
+    db.commit()
     return RedirectResponse(url="/?linkedin=ok")
 
 
@@ -218,6 +227,8 @@ def linkedin_disconnect(tid: str, db: Session = Depends(get_db), _t: models.Tena
     conn = db.query(models.LinkedInConnection).filter_by(tenant_id=tid).first()
     if not conn:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Aucune connexion LinkedIn à supprimer.")
+    log_audit(db, tenant_id=tid, actor_user_id=_perm.user_id, actor_name=_perm.name,
+              action="linkedin.disconnect", target_type="linkedin_connection", target_id=tid, detail={})
     db.delete(conn)
     db.commit()
     return {"disconnected": tid}
@@ -242,7 +253,12 @@ def linkedin_publish(tid: str, aid: str, db: Session = Depends(get_db),
     if not text:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Contenu vide (pas de corps à publier).")
     if _is_mock() or conn.access_token == _MOCK_TOKEN:
-        return schemas.PublishResult(published=True, post_urn=f"urn:li:ugcPost:mock-{int(time.time())}",
+        urn = f"urn:li:ugcPost:mock-{int(time.time())}"
+        log_audit(db, tenant_id=tid, actor_user_id=_perm.user_id, actor_name=_perm.name,
+                  action="linkedin.publish", target_type="approval", target_id=aid,
+                  detail={"published": True, "post_urn": urn, "mock": True})
+        db.commit()
+        return schemas.PublishResult(published=True, post_urn=urn,
                                      detail="Publication mockée (mode dev) — aucun appel réseau.")
     try:
         result = _publish_post(conn.access_token, conn.member_id, text)
@@ -253,6 +269,9 @@ def linkedin_publish(tid: str, aid: str, db: Session = Depends(get_db),
     except Exception as e:
         return schemas.PublishResult(published=False, post_urn="",
                                      detail=f"Erreur réseau : {e}")
-    return schemas.PublishResult(
-        published=True, post_urn=result.get("id") or result.get("activity") or "urn:li:ugcPost:unknown",
-        detail="Publié sur LinkedIn.")
+    urn = result.get("id") or result.get("activity") or "urn:li:ugcPost:unknown"
+    log_audit(db, tenant_id=tid, actor_user_id=_perm.user_id, actor_name=_perm.name,
+              action="linkedin.publish", target_type="approval", target_id=aid,
+              detail={"published": True, "post_urn": urn, "mock": False})
+    db.commit()
+    return schemas.PublishResult(published=True, post_urn=urn, detail="Publié sur LinkedIn.")

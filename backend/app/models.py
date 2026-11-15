@@ -139,3 +139,24 @@ class LinkedInConnection(Base):
     member_headline = Column(String, default="")
     scope = Column(String, default="")
     connected_at = Column(DateTime, default=datetime.utcnow)
+
+
+class AuditLog(Base):
+    """Trace immuable des actions mutantes d'un tenant (qui a fait quoi, quand).
+
+    Scopée par tenant_id (String indexé SANS FK → survit à la suppression du
+    tenant, une audit log devant outliver l'entité auditée). Alimentée par
+    audit.log_audit() dans les routers mutantes. Le request_id corrélationne
+    avec les logs structurés P3.
+    """
+    __tablename__ = "audit_logs"
+    id = Column(String, primary_key=True, default=lambda: _uid("aud"))
+    tenant_id = Column(String, nullable=False, index=True)  # pas de FK (survie)
+    actor_user_id = Column(String, nullable=True)  # null pour actions système (OAuth callback)
+    actor_name = Column(String, default="", nullable=False)
+    action = Column(String, nullable=False)  # ex: "approval.approve", "member.invite"
+    target_type = Column(String, default="", nullable=False)
+    target_id = Column(String, default="", nullable=False)
+    detail = Column(JSONType, nullable=True)
+    request_id = Column(String, default="", nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, index=True)

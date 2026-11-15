@@ -160,3 +160,18 @@ class PublishResult(BaseModel):
     published: bool
     post_urn: str = ""
     detail: str = ""
+
+
+# ---- Audit (P4) ----
+class AuditLogOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: str
+    tenant_id: str
+    actor_user_id: str | None = None
+    actor_name: str = ""
+    action: str
+    target_type: str = ""
+    target_id: str = ""
+    detail: dict[str, Any] | list | None = None
+    request_id: str = ""
+    created_at: datetime | None = None

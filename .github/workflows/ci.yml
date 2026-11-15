@@ -86,6 +86,10 @@ jobs:
         run: python tests/test_p3.py
         env:
           BACKEND_URL: http://127.0.0.1:8000
+      - name: Run P4 tests (audit log)
+        run: python tests/test_audit.py
+        env:
+          BACKEND_URL: http://127.0.0.1:8000
       - name: Stop API
         if: always()
         run: kill $(cat /tmp/uvicorn.pid) 2>/dev/null || true

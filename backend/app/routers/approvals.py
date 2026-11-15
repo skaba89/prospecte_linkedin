@@ -3,6 +3,7 @@ from fastapi import APIRouter, Depends, HTTPException, Response, status
 from sqlalchemy.orm import Session
 
 from .. import models, schemas
+from ..audit import log_audit
 from ..database import get_db
 from ..deps import get_tenant, require_permission
 from ..pagination import Page, page_dep, set_total
@@ -31,6 +32,9 @@ def approve(tid: str, aid: str, db: Session = Depends(get_db), _t: models.Tenant
     a.status = "approved"
     a.status_label = "Approuvé"
     a.status_color = "#10b981"
+    log_audit(db, tenant_id=tid, actor_user_id=_perm.user_id, actor_name=_perm.name,
+              action="approval.approve", target_type="approval", target_id=aid,
+              detail={"title": a.title})
     db.commit()
     return {"approved": aid}
 
@@ -45,6 +49,9 @@ def reject(tid: str, aid: str, db: Session = Depends(get_db), _t: models.Tenant 
     a.status = "rejected"
     a.status_label = "Refusé"
     a.status_color = "#ef4444"
+    log_audit(db, tenant_id=tid, actor_user_id=_perm.user_id, actor_name=_perm.name,
+              action="approval.reject", target_type="approval", target_id=aid,
+              detail={"title": a.title})
     db.commit()
     return {"rejected": aid}
 

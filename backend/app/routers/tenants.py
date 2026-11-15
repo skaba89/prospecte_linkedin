@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, Response, status
 from sqlalchemy.orm import Session
 
 from .. import models, schemas
+from ..audit import log_audit
 from ..database import get_db
 from ..deps import get_current_user, get_tenant, require_permission
 from ..pagination import Page, page_dep, set_total
@@ -53,6 +54,9 @@ def create_tenant(body: schemas.TenantCreate, db: Session = Depends(get_db),
     db.add(models.Member(id=f"mem-{uuid.uuid4().hex[:10]}", tenant_id=tid, user_id=user.id, email=user.email,
                          name=user.name, role="Owner", status="active", invited_by="self",
                          added_at=datetime.utcnow()))
+    log_audit(db, tenant_id=tid, actor_user_id=user.id, actor_name=user.name,
+              action="tenant.create", target_type="tenant", target_id=tid,
+              detail={"name": body.name, "plan": body.plan})
     db.commit()
     db.refresh(t)
     return _serialize(t, db, user.id)
@@ -68,7 +72,11 @@ def get_tenant_detail(tid: str, db: Session = Depends(get_db), tenant: models.Te
 def rename_tenant(tid: str, body: schemas.TenantRename, db: Session = Depends(get_db),
                   tenant: models.Tenant = Depends(get_tenant),
                   _perm=Depends(require_permission("workspace.manage"))):
+    old_name = tenant.name
     tenant.name = body.name
+    log_audit(db, tenant_id=tid, actor_user_id=_perm.user_id, actor_name=_perm.name,
+              action="tenant.rename", target_type="tenant", target_id=tid,
+              detail={"old": old_name, "new": body.name})
     db.commit()
     db.refresh(tenant)
     return _serialize(tenant, db, tenant.owner_id)
@@ -78,6 +86,9 @@ def rename_tenant(tid: str, body: schemas.TenantRename, db: Session = Depends(ge
 def delete_tenant(tid: str, db: Session = Depends(get_db), tenant: models.Tenant = Depends(get_tenant),
                   _perm=Depends(require_permission("workspace.manage"))):
     """Supprime l'espace et toutes ses données (cascade manuelle)."""
+    log_audit(db, tenant_id=tid, actor_user_id=_perm.user_id, actor_name=_perm.name,
+              action="tenant.delete", target_type="tenant", target_id=tid,
+              detail={"name": tenant.name})
     db.query(models.DashboardModule).filter_by(tenant_id=tid).delete()
     db.query(models.Approval).filter_by(tenant_id=tid).delete()
     db.query(models.Member).filter_by(tenant_id=tid).delete()
@@ -108,6 +119,9 @@ def set_profile(tid: str, body: schemas.ProfileOut, db: Session = Depends(get_db
         p = models.Profile(tenant_id=tid, type=body.type, name=body.name, headline=body.headline,
                            company=body.company, followers=body.followers, initials=body.initials)
         db.add(p)
+    log_audit(db, tenant_id=tid, actor_user_id=_perm.user_id, actor_name=_perm.name,
+              action="tenant.profile_update", target_type="profile", target_id=tid,
+              detail={"type": body.type, "name": body.name})
     db.commit()
     db.refresh(p)
     return p

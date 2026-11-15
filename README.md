@@ -35,7 +35,7 @@ revpulse-stack/
 │   ├── Dockerfile
 │   ├── requirements.txt
 │   ├── alembic.ini             # config Alembic (URL surchargée par env.py)
-│   ├── alembic/                # migrations versionnées (0001_initial : 7 tables)
+│   ├── alembic/                # migrations versionnées (0001_initial : 7 tables + 0002_audit_log)
 │   │   ├── env.py              # importe Base.metadata + settings.database_url
 │   │   ├── script.py.mako
 │   │   └── versions/
@@ -253,6 +253,35 @@ Config : `REVPULSE_LOG_LEVEL` (défaut `INFO`), `REVPULSE_LOG_FORMAT` (`json`|`t
 exploitable par les healthchecks Docker et les sondes Liveness/Readiness d'un
 orchestrateur (Kubernetes).
 
+## P4 — Audit log multi-tenant
+
+Trace queryable et immuable des actions mutantes d'un tenant (qui a fait quoi,
+quand) — la suite naturelle du logging P3 : là où P3 capture les requêtes dans
+les logs, P4 persiste une trace structurée, tenant-scopée, consultable via API.
+Vérifié par `tests/test_audit.py` (25 checks) ajouté au job CI `test-api`.
+
+**Modèle `AuditLog`** (`app/models.py`) + migration `0002_audit_log` (`alembic/`) :
+`id, tenant_id, actor_user_id, actor_name, action, target_type, target_id, detail
+(JSON), request_id, created_at`. `tenant_id` est un **String indexé sans FK** — la
+trace doit survivre à la suppression du tenant (une audit log outlive l'entité
+auditée ; sinon la FK casserait au `DELETE`). `request_id` corrélationne avec les
+logs structurés P3.
+
+**Helper `log_audit()`** (`app/audit.py`) : appelé par les routers **avant le
+`db.commit()`**, dans la même session/transaction → atomique avec la mutation (si
+la mutation échoue avant commit, aucune ligne audit n'est écrite — cohérent :
+rien ne s'est passé). Capturé sur les 12 actions mutantes : `tenant.create/rename/
+delete/profile_update`, `member.invite/accept/role_change/remove`, `approval.approve/
+reject`, `content.submit`, `linkedin.connect/disconnect/publish`. L'acteur est
+l'utilisateur courant (via le membership) ; les actions système (callback OAuth
+LinkedIn) ont `actor_user_id=null` + `actor_name="LinkedIn OAuth"`.
+
+**Lecture** : `GET /api/tenants/{tid}/audit` — paginée (P3 : `?skip`/`?limit` +
+`X-Total-Count`), plus récent d'abord. Accès **Owner uniquement**
+(`workspace.manage`) : seul le propriétaire voit l'historique complet. La suppression
+d'un tenant logge l'événement `tenant.delete` puis **garde** l'historique (non
+reachable via API — `get_tenant` 404 — mais persistant pour forensics).
+
 ## API
 
 | Méthode | Route | Rôle | Description |
@@ -273,6 +302,7 @@ orchestrateur (Kubernetes).
 | POST | `/api/tenants/{tid}/approvals/{aid}/approve` | approvals.manage | Approuver |
 | POST | `/api/tenants/{tid}/approvals/{aid}/reject` | approvals.manage | Refuser (sort de la file) |
 | GET | `/api/tenants/{tid}/approvals/history` | membre | Approuvés + refusés (hors file) — **paginé** |
+| GET | `/api/tenants/{tid}/audit` | Owner | Trace immuable des actions mutantes (paginée, P4) |
 | POST | `/api/tenants/{tid}/content` | content.publish | Composer → soumet en file (authoring) |
 | GET | `/api/tenants/{tid}/linkedin/auth` | workspace.manage | URL d'autorisation OAuth (ou mock) |
 | GET | `/api/tenants/{tid}/linkedin/status` | membre | État de la connexion LinkedIn |
@@ -381,7 +411,7 @@ chargé en `defer` et n'altère pas le rendu existant.
   images sont buildables et le compose est structurellement valide.*
 - **Industrialisation (P1)** : `ruff check backend/app` → 0 erreur ;
   `tests/test_config.py` → 10/10 (fail-fast JWT) ; `alembic upgrade head` →
-  7 tables (round-trip up/down/up ✓) ; `tests/test_api.py` → 49/49 checks
+  8 tables (0001 + 0002_audit_log, round-trip up/down/up ✓) ; `tests/test_api.py` → 49/49 checks
   (25 scénarios : auth/RBAC/tenants/members/approvals/content/LinkedIn + invitation
   SMTP dry-run + rate-limit 429 + fail-fast prod) ; `make test-local` passe ;
   `make help` rend les 22 cibles ; `docker-compose.dev.yml`
@@ -391,9 +421,12 @@ chargé en `defer` et n'altère pas le rendu existant.
   esc attribut-safe, handler 401, no eval) ; job Docker → `nginx -t` dans l'image
   frontend construite.
 - **P3 (observabilité)** : `tests/test_p3.py` → 22/22 (pagination skip/limit +
-  `X-Total-Count` + cap 422, `X-Request-ID` echoé, health `db_ok` via `SELECT 1`) ;
-  `ruff check backend/app` → 0 erreur. **Suite totale : 10 (config) + 21 (frontend) +
-  49 (api) + 22 (p3) = 102 checks verts.**
+  `X-Total-Count` + cap 422, `X-Request-ID` echoé, health `db_ok` via `SELECT 1`).
+- **P4 (audit)** : `tests/test_audit.py` → 25/25 (écritures audit sur approve/reject/
+  invite avec `target_id`/`actor_name`/`request_id`, lecture Owner 200, isolation
+  non-membre 403 + 401, pagination + cap 422) ; `alembic` `0002_audit_log` round-trip
+  up/down/up ✓ ; `ruff check backend/app` → 0 erreur. **Suite totale : 10 (config) +
+  21 (frontend) + 49 (api) + 22 (p3) + 25 (audit) = 127 checks verts.**
 
 ## Compte démo
 
