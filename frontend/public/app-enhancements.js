@@ -99,7 +99,8 @@
       + '  <div style="margin-top:8px"><button class="rp-btn rp-ok" id="rp-c-submit">Soumettre à la file</button></div>'
       + '</div>'
       + '<div class="rp-sec"><strong>File d\'approbation (<span id="rp-pending-c">0</span>)</strong><div id="rp-pending"></div></div>'
-      + '<div class="rp-sec"><strong>Historique (approuvés / refusés)</strong><div id="rp-history"></div></div>';
+      + '<div class="rp-sec"><strong>Historique (approuvés / refusés)</strong><div id="rp-history"></div></div>'
+      + '<div class="rp-sec" id="rp-audit-sec"><strong>Historique des actions <span id="rp-audit-c" style="font-size:11px;color:#94a3b8;font-weight:400"></span></strong><div id="rp-audit"></div></div>';
     document.body.appendChild(STUDIO);
     document.getElementById("rp-c-submit").onclick = submitContent;
   }
@@ -111,8 +112,12 @@
 
   // ---- fetch + render ----
   async function refresh() {
-    var T;
-    try { T = await ensureTid(); } catch (e) { banner("Workspace introuvable : " + (e.message || e), true); return; }
+    var T, role;
+    try {
+      var ts = await api("/api/tenants");
+      if (!ts.length) throw new Error("Aucun workspace");
+      T = ts[0].id; role = ts[0].role || ""; setTid(T);
+    } catch (e) { banner("Workspace introuvable : " + (e.message || e), true); return; }
     var tidEl = document.getElementById("rp-tid"); if (tidEl) tidEl.textContent = "· " + T;
     renderLinkedIn(T);
     try {
@@ -123,6 +128,9 @@
       var hist = await api("/api/tenants/" + T + "/approvals/history");
       renderHistory(hist);
     } catch (e) { document.getElementById("rp-history").innerHTML = '<div class="rp-empty">Erreur historique</div>'; }
+    var asec = document.getElementById("rp-audit-sec");
+    if (asec) asec.style.display = (role === "Owner") ? "" : "none";
+    if (role === "Owner") renderAudit(T);
   }
 
   function badge(text, color) { return '<span class="rp-badge" style="background:' + color + '">' + esc(text) + "</span>"; }
@@ -155,6 +163,26 @@
         + '<div style="margin-top:6px"><span class="rp-result" data-id="' + esc(a.id) + '"></span>' + pub + "</div>"
         + "</div>";
     }).join("");
+  }
+
+  function renderAudit(T) {
+    var box = document.getElementById("rp-audit");
+    var cnt = document.getElementById("rp-audit-c");
+    api("/api/tenants/" + T + "/audit?limit=20").then(function (entries) {
+      if (cnt) cnt.textContent = "(" + entries.length + " affichés)";
+      if (!entries.length) { box.innerHTML = '<div class="rp-empty">Aucune action enregistrée.</div>'; return; }
+      box.innerHTML = entries.map(function (e) {
+        var when = e.created_at ? new Date(e.created_at + "Z").toLocaleString("fr-FR") : "";
+        return '<div class="rp-row" style="padding:7px 10px">'
+          + '<div style="font-size:12px"><span style="color:#635bff;font-weight:600">' + esc(e.action) + "</span>"
+          + ' <span style="color:#94a3b8">· ' + esc(e.actor_name) + "</span></div>"
+          + '<div style="font-size:11px;color:#64748b">' + esc(when) + " · " + esc(e.target_type) + " " + esc(e.target_id) + "</div>"
+          + "</div>";
+      }).join("");
+    }).catch(function (e) {
+      if (cnt) cnt.textContent = "";
+      box.innerHTML = '<div class="rp-empty">Audit indisponible' + (e.status === 403 ? " (réservé au Owner)" : "") + ".</div>";
+    });
   }
 
   async function renderLinkedIn(T) {

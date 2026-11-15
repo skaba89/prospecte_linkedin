@@ -15,6 +15,7 @@ from .config import settings
 from .database import SessionLocal, get_db, init_db
 from .extensions import limiter
 from .logging_config import RequestLoggingMiddleware, configure_logging
+from .metrics import MetricsMiddleware, metrics_response
 from .routers import approvals, audit, auth, billing, content, dashboard, linkedin, members, tenants
 from .seed import seed_all
 
@@ -36,6 +37,7 @@ app.add_middleware(
     expose_headers=["X-Total-Count", "X-Request-ID"],
 )
 app.add_middleware(SlowAPIMiddleware)
+app.add_middleware(MetricsMiddleware)
 # Request-ID + logging structuré (outermost : logge tout, y compris 429 et preflight).
 app.add_middleware(RequestLoggingMiddleware)
 
@@ -72,6 +74,12 @@ def health(db: Session = Depends(get_db)):
 for r in (auth.router, tenants.router, members.router, approvals.router, dashboard.router, billing.router,
           content.router, linkedin.router, audit.router):
     app.include_router(r)
+
+
+@app.get("/metrics")
+def metrics():
+    """Exposition Prometheus (texte) — scrape par Prometheus/Grafana. Public (pas d'auth)."""
+    return metrics_response()
 
 
 # Frontend statique : sert le dashboard (index.html) si le dossier existe.

@@ -282,6 +282,29 @@ LinkedIn) ont `actor_user_id=null` + `actor_name="LinkedIn OAuth"`.
 d'un tenant logge l'événement `tenant.delete` puis **garde** l'historique (non
 reachable via API — `get_tenant` 404 — mais persistant pour forensics).
 
+## P5 — Observabilité metrics + UI audit
+
+Clôture la boucle observabilité : logs structurés (P3) + trace audit queryable (P4)
++ **metrics Prometheus** (P5) → triade complète logs/audit/metrics. Et rend l'audit P4
+**utilisable in-app** via un panneau Owner dans le Studio. Vérifié par
+`tests/test_metrics.py` (12 checks) + 2 checks statiques ajoutés à `test_frontend.py`.
+
+**Prometheus metrics** (`app/metrics.py`) : middleware Starlette léger
+(`prometheus-client`) exposant `GET /metrics` (texte, public — scraped par Prometheus).
+  - `revpulse_http_requests_total{method,route,status}` (Counter)
+  - `revpulse_http_request_duration_seconds{method,route}` (Histogram)
+Le label `route` utilise le **route-template** (`/api/tenants/{tid}/audit`) et non le
+path brut (`/api/tenants/tnt-demo/audit`) → **cardinalité contrôlée** (sinon chaque
+tid/aid/user créerait une série temporelle — famine mémoire Prometheus). `/metrics`
+est exclu du compteur (pas de boucle de scrapping). Le middleware est inséré entre
+SlowAPI et RequestLogging (RequestLogging reste outermost → logge aussi `/metrics`).
+
+**UI audit panel** (`frontend/public/app-enhancements.js`) : section « Historique des
+actions » ajoutée au drawer Studio, **gated par rôle Owner** (la section est masquée
+si `ts[0].role !== "Owner"` — `role` lu via `/api/tenants`). Fetch
+`GET /api/tenants/{tid}/audit?limit=20` + rendu d'un tableau (action, acteur, date,
+cible). Rend la trace P4 consultable directement dans l'app sans passer par l'API.
+
 ## API
 
 | Méthode | Route | Rôle | Description |
@@ -313,6 +336,7 @@ reachable via API — `get_tenant` 404 — mais persistant pour forensics).
 | GET | `/api/tenants/{tid}/dashboard/modules/{key}` | membre | Un module |
 | GET | `/api/tenants/{tid}/billing` | membre | Plan, sièges, usage |
 | PATCH | `/api/tenants/{tid}/billing` | billing.manage | Changement de plan (quota vérifié) |
+| GET | `/metrics` | public | Exposition Prometheus (counter + histogram, P5) |
 
 ### RBAC
 Rôles : `Owner · Admin · Editor · Contributor · Viewer`. Permissions par rôle
@@ -425,8 +449,15 @@ chargé en `defer` et n'altère pas le rendu existant.
 - **P4 (audit)** : `tests/test_audit.py` → 25/25 (écritures audit sur approve/reject/
   invite avec `target_id`/`actor_name`/`request_id`, lecture Owner 200, isolation
   non-membre 403 + 401, pagination + cap 422) ; `alembic` `0002_audit_log` round-trip
-  up/down/up ✓ ; `ruff check backend/app` → 0 erreur. **Suite totale : 10 (config) +
-  21 (frontend) + 49 (api) + 22 (p3) + 25 (audit) = 127 checks verts.**
+  up/down/up ✓.
+- **P5 (observabilité + UI)** : `tests/test_metrics.py` → 12/12 (`/metrics` format
+  Prometheus, counter incrémenté, labels route-template `{tid}` sans explosion de
+  cardinalité, status 200/401, `/metrics` exclu du compteur) ; `tests/test_frontend.py`
+  → 23/23 (+2 : panneau audit `rp-audit` + gate rôle Owner) ; panneau « Historique des
+  actions » dans le Studio (Owner only, fetch `/audit?limit=20`) ; `prometheus-client`
+  ajouté à `requirements.txt` ; `ruff check backend/app` → 0 erreur. **Suite totale :
+  10 (config) + 23 (frontend) + 49 (api) + 22 (p3) + 25 (audit) + 12 (metrics) =
+  141 checks verts.**
 
 ## Compte démo
 

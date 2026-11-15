@@ -90,6 +90,10 @@ jobs:
         run: python tests/test_audit.py
         env:
           BACKEND_URL: http://127.0.0.1:8000
+      - name: Run P5 tests (Prometheus metrics)
+        run: python tests/test_metrics.py
+        env:
+          BACKEND_URL: http://127.0.0.1:8000
       - name: Stop API
         if: always()
         run: kill $(cat /tmp/uvicorn.pid) 2>/dev/null || true

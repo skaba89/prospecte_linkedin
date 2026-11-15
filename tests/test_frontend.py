@@ -130,6 +130,20 @@ def _():
     assert re.search(r"function esc\s*\(", c) or "esc=" in c
 
 
+@check("app-enhancements.js: panneau audit (fetch /audit + renderAudit + rp-audit)")
+def _():
+    c = read("frontend/public/app-enhancements.js")
+    assert "/audit" in c, "fetch /audit manquant"
+    assert "renderAudit" in c, "renderAudit manquant"
+    assert "rp-audit" in c, "élément rp-audit manquant"
+
+
+@check("app-enhancements.js: panneau audit gated par rôle Owner")
+def _():
+    c = read("frontend/public/app-enhancements.js")
+    assert 'role === "Owner"' in c or 'role=="Owner"' in c, "gate rôle Owner manquant"
+
+
 # ─── Dockerfiles ─────────────────────────────────────────────────────────────
 @check("backend/Dockerfile: USER non-root + healthcheck")
 def _():
