@@ -305,6 +305,26 @@ si `ts[0].role !== "Owner"` — `role` lu via `/api/tenants`). Fetch
 `GET /api/tenants/{tid}/audit?limit=20` + rendu d'un tableau (action, acteur, date,
 cible). Rend la trace P4 consultable directement dans l'app sans passer par l'API.
 
+## P6 — E2E Playwright (vérification bout-en-bout)
+
+Le SPA (index.html + app-enhancements.js) n'était jusqu'ici testé que statiquement
+(headers/markup via `test_frontend`). P6 ajoute un **vrai navigateur** (chromium via
+Playwright) qui exerce le cheminement utilisateur réel contre le backend. Vérifié par
+`tests/test_e2e.py` (14 checks).
+
+Scénario E2E : token démo injecté (localStorage `revpulse_jwt`) → FAB Studio visible →
+drawer ouvert → `refresh()` tourne (`#rp-tid` peuplé via `/api/tenants`) → section audit
+visible (Owner) + fetch `/audit` → compose un contenu (POST `/content`, banner OK) →
+file d'approbation affiche le contenu (GET `/approvals`) → audit panel montre
+`content.submit` → approve (POST `/approve`, banner OK) → audit panel montre
+`approval.approve` → `/metrics` scrapé par le navigateur (counter + histogram).
+
+Couvre l'intégration SPA↔backend complète : auth JWT, middleware (CORS / SlowAPI /
+metrics / logging), routers (tenants / content / approvals / audit), StaticFiles (SPA
+servie), et la logique autonome `app-enhancements.js` (Studio + panneau audit P5). CI :
+étape `playwright install --with-deps chromium` + `python tests/test_e2e.py` (après
+test_metrics, serveur encore up).
+
 ## API
 
 | Méthode | Route | Rôle | Description |
@@ -458,6 +478,13 @@ chargé en `defer` et n'altère pas le rendu existant.
   ajouté à `requirements.txt` ; `ruff check backend/app` → 0 erreur. **Suite totale :
   10 (config) + 23 (frontend) + 49 (api) + 22 (p3) + 25 (audit) + 12 (metrics) =
   141 checks verts.**
+- **P6 (E2E)** : `tests/test_e2e.py` → 14/14 (Playwright chromium : SPA chargée + FAB
+  token-injecté + drawer Studio + audit Owner visible + compose POST `/content` + file
+  `/approvals` + audit `content.submit` + approve POST `/approve` + audit
+  `approval.approve` + `/metrics` scrapé par le navigateur) ; CI : `playwright==1.57.0`
+  + `playwright install --with-deps chromium`. **Suite totale : 10 (config) + 23
+  (frontend) + 49 (api) + 22 (p3) + 25 (audit) + 12 (metrics) + 14 (e2e) = 155 checks
+  verts.**
 
 ## Compte démo
 

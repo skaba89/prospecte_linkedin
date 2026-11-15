@@ -94,6 +94,14 @@ jobs:
         run: python tests/test_metrics.py
         env:
           BACKEND_URL: http://127.0.0.1:8000
+      - name: Install Playwright + chromium (for E2E)
+        run: |
+          pip install playwright==1.57.0
+          playwright install --with-deps chromium
+      - name: Run P6 E2E tests (Playwright)
+        run: python tests/test_e2e.py
+        env:
+          BACKEND_URL: http://127.0.0.1:8000
       - name: Stop API
         if: always()
         run: kill $(cat /tmp/uvicorn.pid) 2>/dev/null || true
