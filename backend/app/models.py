@@ -102,6 +102,7 @@ class Approval(Base):
     status = Column(String, default="pending")
     risk_flags = Column(String, default="Aucun")
     summary = Column(Text, default="")
+    content_body = Column(Text, default="")  # texte complet du post/DM (pour publication LinkedIn)
     type_label = Column(String, default="")
     type_color = Column(String, default="#635bff")
     priority_label = Column(String, default="Normal")
@@ -119,3 +120,21 @@ class DashboardModule(Base):
     module_key = Column(String, nullable=False)
     payload = Column(JSONType, nullable=False)
     __table_args__ = (UniqueConstraint("tenant_id", "module_key", name="uq_tenant_module"),)
+
+
+class LinkedInConnection(Base):
+    """Connexion LinkedIn OAuth d'un tenant (1 par tenant).
+
+    ⚠️ access_token stocké en clair pour la démo — à chiffrer (Fernet) en production
+    et ne JAMAIS exposer dans une réponse API (status renvoie seulement member_name/id).
+    """
+    __tablename__ = "linkedin_connections"
+    id = Column(String, primary_key=True, default=lambda: _uid("lk"))
+    tenant_id = Column(String, ForeignKey("tenants.id"), unique=True, nullable=False)
+    access_token = Column(Text, nullable=False)
+    expires_at = Column(DateTime, nullable=True)
+    member_id = Column(String, default="")
+    member_name = Column(String, default="")
+    member_headline = Column(String, default="")
+    scope = Column(String, default="")
+    connected_at = Column(DateTime, default=datetime.utcnow)

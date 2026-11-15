@@ -153,6 +153,54 @@ print("=== 17. quota enforcement: downgrade blocked ===")
 s, _ = call("PATCH", "/api/tenants/tnt-demo/billing", tok, {"plan": "Starter"})
 ck(s, 409, "downgrade blocked when members > seats")
 
+print("=== 18. POST /content (authoring → file d'approbation) ===")
+s, created = call("POST", "/api/tenants/tnt-demo/content", tok,
+                  {"type": "post", "title": "Post test auto", "content_body": "Bonjour LinkedIn ! #test",
+                   "priority": "high", "submitter": "Test Bot"})
+ck(s, 201, "create → 201")
+ck(created.get("status"), "pending", "nouveau contenu en pending")
+ck(created.get("content_body"), "Bonjour LinkedIn ! #test", "content_body stocké")
+cid = created.get("id", "")
+s, ap3 = call("GET", "/api/tenants/tnt-demo/approvals", tok)
+ck(len(ap3), 6, "pending après create (5 seed + 1 nouveau)")
+
+print("=== 19. POST /approvals/{aid}/reject + GET /history ===")
+s, rej = call("POST", f"/api/tenants/tnt-demo/approvals/{cid}/reject", tok)
+ck(rej.get("rejected"), cid, "reject renvoie l'id")
+s, ap4 = call("GET", "/api/tenants/tnt-demo/approvals", tok)
+ck(len(ap4), 5, "pending après reject (-1)")
+s, hist = call("GET", "/api/tenants/tnt-demo/approvals/history", tok)
+ck(len(hist), 2, "history = 1 approuvé (test 6) + 1 refusé")
+ck(sum(1 for h in hist if h["status"] == "rejected"), 1, "history contient 1 rejected")
+ck(sum(1 for h in hist if h["status"] == "approved"), 1, "history contient 1 approved")
+
+print("=== 20. LinkedIn status (mock, avant connexion) ===")
+s, lk = call("GET", "/api/tenants/tnt-demo/linkedin/status", tok)
+ck(lk.get("connected"), False, "linkedin non connecté")
+ck(lk.get("mock"), True, "mode mock actif (pas de creds)")
+
+print("=== 21. LinkedIn auth (mock → mock-connect) ===")
+s, lkauth = call("GET", "/api/tenants/tnt-demo/linkedin/auth", tok)
+ck(lkauth.get("mock"), True, "auth mock=true")
+ck("mock-connect" in lkauth.get("auth_url", ""), True, "auth_url → mock-connect")
+
+print("=== 22. LinkedIn mock-connect (crée connexion factice) + status ===")
+s, _ = call("GET", "/api/tenants/tnt-demo/linkedin/mock-connect")  # redirect navigateur, pas d'auth
+s, lk2 = call("GET", "/api/tenants/tnt-demo/linkedin/status", tok)
+ck(lk2.get("connected"), True, "linkedin connecté (mock)")
+ck("mock" in lk2.get("member_name", "").lower(), True, "member_name = profil mock")
+
+print("=== 23. LinkedIn publish (mock, sur contenu approuvé du test 6) ===")
+s, pub = call("POST", "/api/tenants/tnt-demo/linkedin/publish?aid=" + aid, tok)
+ck(pub.get("published"), True, "publish mock success")
+ck(pub.get("post_urn", "").startswith("urn:li:ugcPost:mock"), True, "URN mock retourné")
+
+print("=== 24. LinkedIn publish sans connexion (autre tenant) → 409 ===")
+s, tn3 = call("GET", "/api/tenants", tok)
+other_tid = [t["id"] for t in tn3 if t["id"] != "tnt-demo"][0]
+s, _ = call("POST", f"/api/tenants/{other_tid}/linkedin/publish?aid={aid}", tok)
+ck(s, 409, "publish sans connexion LinkedIn → 409")
+
 print()
 print(f"RESULT: {passed} passed, {failed} failed")
 sys.exit(0 if failed == 0 else 1)

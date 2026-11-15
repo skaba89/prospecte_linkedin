@@ -98,6 +98,7 @@ class ApprovalOut(BaseModel):
     status: str
     risk_flags: str
     summary: str
+    content_body: str = ""
     type_label: str
     type_color: str
     priority_label: str
@@ -122,3 +123,34 @@ class BillingOut(BaseModel):
 
 class PlanUpdate(BaseModel):
     plan: str
+
+
+# ---- Content (authoring) ----
+class ContentCreate(BaseModel):
+    type: str = "post"  # post | dm | comment
+    title: str = Field(min_length=1, max_length=200)
+    content_body: str = Field(default="", max_length=5000)
+    priority: str = "medium"  # high | medium | low
+    submitter: str = Field(default="", max_length=80)
+    summary: str = Field(default="", max_length=300)
+
+
+# ---- LinkedIn ----
+class LinkedInAuthUrl(BaseModel):
+    auth_url: str
+    mock: bool = False
+
+
+class LinkedInStatus(BaseModel):
+    connected: bool = False
+    member_name: str = ""
+    member_id: str = ""
+    member_headline: str = ""
+    expires_at: str | None = None
+    mock: bool = False
+
+
+class PublishResult(BaseModel):
+    published: bool
+    post_urn: str = ""
+    detail: str = ""

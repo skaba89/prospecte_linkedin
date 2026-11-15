@@ -7,7 +7,7 @@ from fastapi.staticfiles import StaticFiles
 
 from .config import settings
 from .database import SessionLocal, init_db
-from .routers import approvals, auth, billing, dashboard, members, tenants
+from .routers import approvals, auth, billing, content, dashboard, linkedin, members, tenants
 from .seed import seed_all
 
 app = FastAPI(title="RevPulse API", version="1.0.0",
@@ -36,7 +36,8 @@ def health():
 
 
 # Routers métier
-for r in (auth.router, tenants.router, members.router, approvals.router, dashboard.router, billing.router):
+for r in (auth.router, tenants.router, members.router, approvals.router, dashboard.router, billing.router,
+          content.router, linkedin.router):
     app.include_router(r)
 
 

@@ -11,8 +11,9 @@ router = APIRouter(prefix="/api/tenants/{tid}/approvals", tags=["approvals"])
 
 @router.get("", response_model=list[schemas.ApprovalOut])
 def list_approvals(tid: str, db: Session = Depends(get_db), _t: models.Tenant = Depends(get_tenant)):
+    """File d'approbation : contenus en attente uniquement (status='pending')."""
     return (db.query(models.Approval)
-            .filter_by(tenant_id=tid, approved=False)
+            .filter_by(tenant_id=tid, status="pending")
             .order_by(models.Approval.priority.desc()).all())
 
 
@@ -28,3 +29,25 @@ def approve(tid: str, aid: str, db: Session = Depends(get_db), _t: models.Tenant
     a.status_color = "#10b981"
     db.commit()
     return {"approved": aid}
+
+
+@router.post("/{aid}/reject", status_code=status.HTTP_200_OK)
+def reject(tid: str, aid: str, db: Session = Depends(get_db), _t: models.Tenant = Depends(get_tenant),
+           _perm=Depends(require_permission("approvals.manage"))):
+    """Refuse un contenu en file (status='rejected', sort de la file pending)."""
+    a = db.query(models.Approval).filter_by(id=aid, tenant_id=tid).first()
+    if not a:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Approbation introuvable")
+    a.status = "rejected"
+    a.status_label = "Refusé"
+    a.status_color = "#ef4444"
+    db.commit()
+    return {"rejected": aid}
+
+
+@router.get("/history", response_model=list[schemas.ApprovalOut])
+def approvals_history(tid: str, db: Session = Depends(get_db), _t: models.Tenant = Depends(get_tenant)):
+    """Contenus traités (approuvés ou refusés), hors file pending."""
+    return (db.query(models.Approval)
+            .filter(models.Approval.tenant_id == tid, models.Approval.status != "pending")
+            .order_by(models.Approval.id).all())

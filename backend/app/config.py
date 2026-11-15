@@ -13,6 +13,12 @@ class Settings(BaseSettings):
     # Identifiants du compte démo (recréés idempotemment par le seed)
     demo_email: str = "demo@revpulse.io"
     demo_password: str = "demo1234"
+    # LinkedIn OAuth 2.0 — laisser vide pour le mode mock (CI/dev sans App LinkedIn).
+    # Renseigner CLIENT_ID/SECRET/REDIRECT_URI depuis https://www.linkedin.com/developers/apps
+    linkedin_client_id: str = ""
+    linkedin_client_secret: str = ""
+    linkedin_redirect_uri: str = "http://localhost:8000/api/linkedin/callback"
+    linkedin_mock: bool = False  # force le mock même si des creds sont présentes (tests)
 
 
 settings = Settings()

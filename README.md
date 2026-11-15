@@ -152,8 +152,16 @@ en isolation (SQLite), exactement comme `make test-local` en local.
 | POST | `/api/tenants/{tid}/members/invite` | manage | Invitation (token, quota sièges) |
 | POST | `/api/tenants/{tid}/members/{mid}/accept` | manage | Accepter une invitation |
 | PATCH/DELETE | `/api/tenants/{tid}/members/{mid}` | manage | Rôle, retrait |
-| GET | `/api/tenants/{tid}/approvals` | membre | File d'approbation (non approuvés) |
+| GET | `/api/tenants/{tid}/approvals` | membre | File d'approbation (status='pending') |
 | POST | `/api/tenants/{tid}/approvals/{aid}/approve` | approvals.manage | Approuver |
+| POST | `/api/tenants/{tid}/approvals/{aid}/reject` | approvals.manage | Refuser (sort de la file) |
+| GET | `/api/tenants/{tid}/approvals/history` | membre | Approuvés + refusés (hors file) |
+| POST | `/api/tenants/{tid}/content` | content.publish | Composer → soumet en file (authoring) |
+| GET | `/api/tenants/{tid}/linkedin/auth` | workspace.manage | URL d'autorisation OAuth (ou mock) |
+| GET | `/api/tenants/{tid}/linkedin/status` | membre | État de la connexion LinkedIn |
+| GET | `/api/linkedin/callback` | (public, state signé) | Callback OAuth (échange code → token) |
+| POST | `/api/tenants/{tid}/linkedin/disconnect` | workspace.manage | Supprimer la connexion |
+| POST | `/api/tenants/{tid}/linkedin/publish?aid=` | content.publish | Publier un contenu approuvé sur LinkedIn |
 | GET | `/api/tenants/{tid}/dashboard/modules` | membre | 34 modules de données (JSON) |
 | GET | `/api/tenants/{tid}/dashboard/modules/{key}` | membre | Un module |
 | GET | `/api/tenants/{tid}/billing` | membre | Plan, sièges, usage |
@@ -182,6 +190,44 @@ protocole :
 Aucune réécriture du rendu : l'adaptateur ne remplace que la **couche stockage**
 (`loadDB`/`saveDB`/`loadSess`/…), le **boot**, l'**auth** et les **mutations**.
 Les 20 vues consomment `D` et `loadDB()` de façon synchrone, inchangées.
+
+## LinkedIn — connexion réelle (test avec ton compte)
+
+Le router `linkedin.py` implémente l'OAuth 2.0 LinkedIn complet (auth → callback →
+token → profil → publication). Deux modes :
+
+- **Mock** (par défaut si `REVPULSE_LINKEDIN_CLIENT_ID` est vide) : simule la
+  connexion et la publication — tout le flow UI est testable sans App LinkedIn.
+  C'est ce que vérifie la CI (`test_api.py` sections 20-24).
+- **Réel** : renseigne tes creds LinkedIn App dans `.env` → le bouton
+  « Connecter LinkedIn » du **Studio** déclenche le vrai OAuth.
+
+### Créer l'App LinkedIn (toi seul peux le faire)
+1. Va sur <https://www.linkedin.com/developers/apps> → **Créer une application**.
+2. Renseigne nom, logo, page LinkedIn rattachée. Coche **« Sign In with LinkedIn
+   using OpenID Connect »** (fournit `openid profile`).
+3. Onglet **Auth** : ajoute une **URL de redirection autorisée** =
+   `http://localhost:8000/api/linkedin/callback` (ou ton domaine prod).
+4. Récupère le **Client ID** et **Client Secret** → copie-les dans `.env` :
+   ```
+   REVPULSE_LINKEDIN_CLIENT_ID=86xxxxxxxxxx
+   REVPULSE_LINKEDIN_CLIENT_SECRET=xxxxxxxxxxxx
+   REVPULSE_LINKEDIN_REDIRECT_URI=http://localhost:8000/api/linkedin/callback
+   REVPULSE_LINKEDIN_MOCK=false
+   ```
+5. Onglet **Products** : ajoute **« Share on LinkedIn »** (scope `w_member_social`).
+   ⚠️ La **publication** réelle (`POST /linkedin/publish`) requiert l'accès
+   **Marketing API** approuvé par LinkedIn (review). La **connexion + profil**
+   (`openid profile`) fonctionnent immédiatement, sans review.
+6. `make up` puis <http://localhost:8080> → « Essayer la démo » → bouton ✍️ Studio
+   → « Connecter LinkedIn » → consentement LinkedIn → retour auto au dashboard.
+
+### Studio (UI d'authoring — P0)
+Bouton flottant **✍️** en bas à droite (mode servi uniquement) : composer un
+contenu (post/DM/commentaire + corps) → soumet à la file → **Approuver** /
+**Refuser** → **Publier sur LinkedIn** sur les contenus approuvés. Suit le tenant
+actif automatiquement. Le module (`frontend/public/app-enhancements.js`) est
+chargé en `defer` et n'altère pas le rendu existant.
 
 ## Variables d'environnement
 
