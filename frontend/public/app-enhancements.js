@@ -1,19 +1,23 @@
-/* RevPulse — enhancements P0 : Studio (composer + file enrichie + Refuser + LinkedIn).
- * Module indépendant, chargé en defer après le script principal. Actif seulement en mode servi
- * (présence d'un token API). N'altère pas le rendu existant : ajoute un FAB + un drawer.
+/* RevPulse — Studio P0 (authoring + file enrichie + Refuser + LinkedIn).
+ * Module AUTONOME : ne dépend d'aucune variable locale du script principal
+ * (apiFetch/apiTok/_SESS sont locales à bootSaaS()). Lit le JWT directement
+ * dans localStorage (clé 'revpulse_jwt') et fait ses propres fetch avec
+ * Authorization: Bearer. Résout le tenant via /api/tenants (premier tenant,
+ * caché dans 'rp_active_tid'). Actif seulement si un token est présent.
  *
- * Dépend (globales exposées par index.html) : apiFetch(path, opts), apiTok(), _SESS.activeTenantId, _USER.
+ * Chargé en <script defer> après le script principal. N'altère pas le rendu
+ * existant : ajoute un FAB ✍️ + un drawer latéral.
  */
 (function () {
   "use strict";
-  if (typeof apiFetch !== "function") return; // mode standalone (pas d'API) → on sort
+  var _TOK_KEY = "revpulse_jwt";
+  var _TID_KEY = "rp_active_tid";
+  var STUDIO = null, FAB = null, _userName = "Moi";
 
-  var STUDIO = null; // nœud drawer
-  var FAB = null;
-
-  // ---- helpers ----
-  function tid() { return (_SESS && _SESS.activeTenantId) || ""; }
-  function api(path, opts) { return apiFetch(path, opts); } // alias court
+  // ---- helpers autonomes ----
+  function tok() { try { return localStorage.getItem(_TOK_KEY) || ""; } catch (e) { return ""; } }
+  function tid() { try { return localStorage.getItem(_TID_KEY) || ""; } catch (e) { return ""; } }
+  function setTid(t) { try { localStorage.setItem(_TID_KEY, t); } catch (e) {} }
   function el(tag, cls, html) {
     var e = document.createElement(tag);
     if (cls) e.className = cls;
@@ -23,12 +27,31 @@
   function esc(s) { return String(s == null ? "" : s).replace(/[&<>"]/g, function (c) {
     return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]; }); }
 
+  async function api(path, opts) {
+    opts = opts || {};
+    var h = { "Content-Type": "application/json" };
+    var t = tok(); if (t) h["Authorization"] = "Bearer " + t;
+    var r = await fetch(path, { method: opts.method || "GET", headers: h,
+      body: opts.body ? JSON.stringify(opts.body) : null });
+    var txt = await r.text();
+    var data = txt ? JSON.parse(txt) : {};
+    if (!r.ok) { var e = new Error(data.detail || ("HTTP " + r.status)); e.status = r.status; e.data = data; throw e; }
+    return data;
+  }
+  async function ensureTid() {
+    var t = tid(); if (t) return t;
+    var ts = await api("/api/tenants");
+    if (!ts.length) throw new Error("Aucun workspace");
+    setTid(ts[0].id);
+    return ts[0].id;
+  }
+
   // ---- styles ----
   function injectStyles() {
     var css = [
       "#rp-fab{position:fixed;right:22px;bottom:22px;z-index:9998;background:#635bff;color:#fff;border:none;",
       "border-radius:50%;width:58px;height:58px;font-size:24px;box-shadow:0 6px 20px rgba(99,91,255,.45);",
-      "cursor:pointer;display:flex;align-items:center;justify-content:center;transition:transform .15s}",
+      "cursor:pointer;display:none;align-items:center;justify-content:center;transition:transform .15s}",
       "#rp-fab:hover{transform:scale(1.08)}",
       "#rp-studio{position:fixed;top:0;right:0;width:440px;max-width:92vw;height:100vh;z-index:9999;",
       "background:#0f172a;color:#e2e8f0;box-shadow:-8px 0 32px rgba(0,0,0,.4);overflow-y:auto;",
@@ -53,11 +76,10 @@
       "border-radius:8px;font-size:13px;color:#fff;box-shadow:0 4px 16px rgba(0,0,0,.4)}",
       "#rp-banner.ok{background:#10b981} #rp-banner.err{background:#ef4444}"
     ].join("");
-    var s = el("style", null, css);
-    document.head.appendChild(s);
+    document.head.appendChild(el("style", null, css));
   }
 
-  // ---- FAB + drawer skeleton ----
+  // ---- skeleton ----
   function buildSkeleton() {
     FAB = el("button", null, "✍️");
     FAB.id = "rp-fab";
@@ -67,8 +89,8 @@
 
     STUDIO = el("div"); STUDIO.id = "rp-studio";
     STUDIO.innerHTML =
-      '<h3>✍️ Studio — authoring &amp; LinkedIn</h3>'
-      + '<div class="rp-sec" id="rp-lk-sec"></div>'
+      '<h3>✍️ Studio — authoring &amp; LinkedIn <span id="rp-tid" style="font-size:11px;color:#94a3b8;font-weight:400"></span></h3>'
+      + '<div class="rp-sec" id="rp-lk-sec"><div class="rp-empty">Chargement…</div></div>'
       + '<div class="rp-sec"><strong>Composer un contenu</strong>'
       + '  <label>Type</label><select id="rp-c-type"><option value="post">Post</option><option value="dm">DM</option><option value="comment">Commentaire</option></select>'
       + '  <label>Titre</label><input id="rp-c-title" placeholder="Titre court du contenu">'
@@ -84,20 +106,21 @@
 
   function toggle() {
     if (!STUDIO) return;
-    var open = STUDIO.classList.toggle("open");
-    if (open) refresh();
+    if (STUDIO.classList.toggle("open")) refresh();
   }
 
-  // ---- data fetch + render ----
+  // ---- fetch + render ----
   async function refresh() {
-    if (!tid()) return;
-    renderLinkedIn(); // lance son propre fetch
+    var T;
+    try { T = await ensureTid(); } catch (e) { banner("Workspace introuvable : " + (e.message || e), true); return; }
+    var tidEl = document.getElementById("rp-tid"); if (tidEl) tidEl.textContent = "· " + T;
+    renderLinkedIn(T);
     try {
-      var aps = await api("/api/tenants/" + tid() + "/approvals");
+      var aps = await api("/api/tenants/" + T + "/approvals");
       renderPending(aps);
     } catch (e) { document.getElementById("rp-pending").innerHTML = '<div class="rp-empty">Erreur file : ' + esc(e.message || e) + "</div>"; }
     try {
-      var hist = await api("/api/tenants/" + tid() + "/approvals/history");
+      var hist = await api("/api/tenants/" + T + "/approvals/history");
       renderHistory(hist);
     } catch (e) { document.getElementById("rp-history").innerHTML = '<div class="rp-empty">Erreur historique</div>'; }
   }
@@ -134,10 +157,10 @@
     }).join("");
   }
 
-  async function renderLinkedIn() {
+  async function renderLinkedIn(T) {
     var box = document.getElementById("rp-lk-sec");
     try {
-      var st = await api("/api/tenants/" + tid() + "/linkedin/status");
+      var st = await api("/api/tenants/" + T + "/linkedin/status");
       if (st.connected) {
         box.innerHTML = '<div class="rp-lk"><div><div class="rp-lk-name">🔗 ' + esc(st.member_name) + "</div>"
           + '<div class="rp-lk-sub">LinkedIn ' + (st.mock ? "(mock)" : "") + " · " + esc(st.member_id) + "</div></div>"
@@ -154,16 +177,17 @@
 
   // ---- actions ----
   async function submitContent() {
+    var T; try { T = await ensureTid(); } catch (e) { banner("Pas de workspace", true); return; }
     var body = {
       type: document.getElementById("rp-c-type").value,
       title: document.getElementById("rp-c-title").value.trim(),
       priority: document.getElementById("rp-c-prio").value,
       content_body: document.getElementById("rp-c-body").value,
-      submitter: (_USER && _USER.name) || "Moi",
+      submitter: _userName,
     };
     if (!body.title) { banner("Titre requis", true); return; }
     try {
-      await api("/api/tenants/" + tid() + "/content", { method: "POST", body: body });
+      await api("/api/tenants/" + T + "/content", { method: "POST", body: body });
       document.getElementById("rp-c-title").value = "";
       document.getElementById("rp-c-body").value = "";
       banner("Contenu soumis à la file ✓", false);
@@ -171,17 +195,17 @@
     } catch (e) { banner("Échec soumission : " + (e.message || e), true); }
   }
 
-  // délégation de clic pour approve/reject/publish
   document.addEventListener("click", async function (ev) {
     var b = ev.target.closest ? ev.target.closest("[data-act]") : null;
     if (!b || !STUDIO || !STUDIO.classList.contains("open")) return;
     var act = b.getAttribute("data-act"), aid = b.getAttribute("data-id");
-    var base = "/api/tenants/" + tid() + "/approvals/";
+    var T; try { T = await ensureTid(); } catch (e) { return; }
+    var base = "/api/tenants/" + T + "/approvals/";
     try {
       if (act === "approve") { await api(base + aid + "/approve", { method: "POST" }); banner("Approuvé ✓", false); }
       else if (act === "reject") { await api(base + aid + "/reject", { method: "POST" }); banner("Refusé", false); }
       else if (act === "publish") {
-        var r = await api("/api/tenants/" + tid() + "/linkedin/publish?aid=" + aid, { method: "POST" });
+        var r = await api("/api/tenants/" + T + "/linkedin/publish?aid=" + aid, { method: "POST" });
         var span = STUDIO.querySelector('.rp-result[data-id="' + CSS.escape(aid) + '"]');
         if (span) span.textContent = r.published ? "Publié : " + r.post_urn : "Échec : " + (r.detail || "");
         if (r.published) banner("Publié sur LinkedIn ✓ " + r.post_urn, false); else banner("Publication échouée", true);
@@ -192,13 +216,15 @@
   });
 
   async function connectLinkedIn() {
+    var T; try { T = await ensureTid(); } catch (e) { return; }
     try {
-      var r = await api("/api/tenants/" + tid() + "/linkedin/auth");
+      var r = await api("/api/tenants/" + T + "/linkedin/auth");
       window.location.href = r.auth_url; // LinkedIn OAuth (ou mock-connect en dev)
     } catch (e) { banner("Auth LinkedIn échouée : " + (e.message || e), true); }
   }
   async function disconnectLinkedIn() {
-    try { await api("/api/tenants/" + tid() + "/linkedin/disconnect", { method: "POST" }); banner("LinkedIn déconnecté", false); refresh(); }
+    var T; try { T = await ensureTid(); } catch (e) { return; }
+    try { await api("/api/tenants/" + T + "/linkedin/disconnect", { method: "POST" }); banner("LinkedIn déconnecté", false); refresh(); }
     catch (e) { banner("Déconnexion échouée", true); }
   }
 
@@ -218,10 +244,10 @@
     history.replaceState({}, "", location.pathname);
   }
 
-  // ---- boot : attendre que l'app principale ait un tenant actif ----
+  // ---- boot : attendre un token (login) ----
   function whenReady(cb) {
-    if (apiTok() && tid()) cb();
-    else setTimeout(function () { whenReady(cb); }, 250);
+    if (tok()) cb();
+    else setTimeout(function () { whenReady(cb); }, 300);
   }
 
   document.addEventListener("DOMContentLoaded", function () {
@@ -229,13 +255,11 @@
     buildSkeleton();
     handleCallback();
     whenReady(function () {
-      FAB.style.display = "flex";
-      // re-render quand le tenant actif change
-      var prev = tid();
-      setInterval(function () { var cur = tid(); if (cur !== prev && STUDIO && STUDIO.classList.contains("open")) { prev = cur; refresh(); } }, 800);
+      if (FAB) FAB.style.display = "flex";
+      api("/api/auth/me").then(function (me) { if (me && me.name) _userName = me.name; }).catch(function () {});
     });
+    setInterval(function () { if (FAB && !tok()) FAB.style.display = "none"; }, 1000);
   });
 
-  // exposed pour debug
   window.RevPulseStudio = { open: toggle, refresh: refresh };
 })();
