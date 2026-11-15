@@ -1099,7 +1099,7 @@ let D = {"account": {"name": "RevPulse", "tagline": "Sales engagement & RevOps p
 const $ = s => document.querySelector(s);
 const $$ = s => [...document.querySelectorAll(s)];
 const fmt = n => (n||0).toLocaleString('fr-FR');
-const esc = s => (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+const esc = s => (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
 
 const COLORS = ['#635bff','#a855f7','#06b6d4','#ec4899','#10b981','#f59e0b','#3b82f6','#14b8a6','#ef4444','#8b5cf6','#f97316','#0ea5e9'];
 const SENT_COLOR = {positive:'#10b981',neutral:'#3b82f6',negative:'#ef4444',question:'#f59e0b'};
@@ -2889,7 +2889,12 @@ if(location.protocol.startsWith('http')){
   const apiFetch=async(path,opts={})=>{
     const r=await fetch(path,{method:opts.method||'GET',headers:{'Content-Type':'application/json',...(apiTok()?{'Authorization':'Bearer '+apiTok()}:{})},body:opts.body?JSON.stringify(opts.body):undefined});
     let d;try{d=await r.json()}catch(e){d=null}
-    if(!r.ok)throw new Error((d&&d.detail)||('HTTP '+r.status));
+    if(!r.ok){
+      // 401 — JWT expiré/révoqué : on purge le token et renvoie l'écran de login.
+      // Évite les boucles de rendu sur un token périmé et réduit la fenêtre d'exposition.
+      if(r.status===401){apiSetTok(null);try{setScr('scr-auth')}catch(e){}}
+      throw new Error((d&&d.detail)||('HTTP '+r.status));
+    }
     return d;
   };
   let _DB={users:[],tenants:[],profiles:{},members:{}};

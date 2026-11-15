@@ -36,6 +36,17 @@ jobs:
       - run: pip install ruff==0.17.5
       - run: ruff check backend/app
 
+  frontend:
+    name: Frontend security (static checks)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Static security checks (headers nginx, CSP, non-root, esc, no eval, 401)
+        run: python tests/test_frontend.py
+
   test-api:
     name: API tests (sqlite, sans docker)
     runs-on: ubuntu-latest
@@ -76,7 +87,7 @@ jobs:
         run: kill $(cat /tmp/uvicorn.pid) 2>/dev/null || true
 
   docker:
-    name: Docker (compose validate + build)
+    name: Docker (compose validate + build + nginx -t)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -86,3 +97,5 @@ jobs:
           docker compose -f docker-compose.yml -f docker-compose.dev.yml config -q
       - name: Build images
         run: docker compose build
+      - name: nginx config syntax check (dans l'image frontend construite)
+        run: docker compose run --no-deps --rm frontend nginx -t

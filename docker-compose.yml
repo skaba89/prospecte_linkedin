@@ -25,7 +25,7 @@ services:
       # Sans .env le conteneur crash au démarrage avec un message clair (voulu).
       REVPULSE_JWT_SECRET: ${REVPULSE_JWT_SECRET:-change-me-in-production}
       REVPULSE_FRONTEND_DIR: /nonexistent
-      REVPULSE_CORS_ORIGINS: "*"
+      REVPULSE_CORS_ORIGINS: ${REVPULSE_CORS_ORIGINS:-http://localhost:8080}
       REVPULSE_APP_BASE_URL: ${REVPULSE_APP_BASE_URL:-http://localhost:8080}
       # SMTP (invitation e-mail réelle) — désactivé par défaut (dry-run = log).
       REVPULSE_SMTP_ENABLED: ${REVPULSE_SMTP_ENABLED:-false}
@@ -45,9 +45,10 @@ services:
   frontend:
     build: ./frontend
     depends_on:
-      - backend
+      backend:
+        condition: service_healthy
     ports:
-      - "8080:80"
+      - "8080:8080"
     restart: unless-stopped
 
 volumes:

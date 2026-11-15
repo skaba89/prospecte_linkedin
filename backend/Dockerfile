@@ -21,5 +21,16 @@ ENV REVPULSE_DATABASE_URL="postgresql+psycopg2://revpulse:revpulse@db:5432/revpu
     REVPULSE_ENV="production" \
     REVPULSE_JWT_SECRET="change-me-in-production"
 
+# Utilisateur non-root (durcissement conteneur) : ni le serveur ni les migrations
+# n'écrivent sur le FS en prod (Postgres externe) — /app en lecture suffit.
+RUN groupadd -r app && useradd -r -g app -d /app -s /sbin/nologin app \
+    && chown -R app:app /app
+USER app
+
 EXPOSE 8000
+
+# Healthcheck : /api/health (200). urllib du runtime Python → pas de curl à installer.
+HEALTHCHECK --interval=15s --timeout=5s --start-period=25s --retries=5 \
+  CMD python -c "import sys,urllib.request as u; sys.exit(0 if u.urlopen('http://127.0.0.1:8000/api/health',timeout=4).status==200 else 1)"
+
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
