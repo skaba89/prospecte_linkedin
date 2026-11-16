@@ -47,9 +47,9 @@ for path in ["/crm/sequences", "/crm/sequences/{sid}", "/crm/sequences/{sid}/enr
     ck(path in rt, True, f"endpoint path {path}")
 # 8 endpoints (POST create + GET list sur /sequences ; GET/PATCH/DELETE sur /{sid} ; POST enroll ;
 # GET enrollments ; POST process ; GET stats).
-ck(rt.count("@router.post") + rt.count("@router.get") + rt.count("@router.patch") + rt.count("@router.delete"), 9,
-   "9 endpoints (3 POST + 4 GET + 1 PATCH + 1 DELETE)")
-ck(rt.count('require_permission("crm.manage")'), 5, "RBAC crm.manage sur 5 writes (create/update/delete/enroll/process)")
+ck(rt.count("@router.post") + rt.count("@router.get") + rt.count("@router.patch") + rt.count("@router.delete") >= 9, True,
+   "≥9 endpoints P15 (3 POST + 4 GET + 1 PATCH + 1 DELETE — lenient pour stacked PR P16+)")
+ck(rt.count('require_permission("crm.manage")') >= 5, True, "≥5 writes RBAC crm.manage (create/update/delete/enroll/process — lenient P16+)")
 ck("get_tenant" in rt, True, "get_tenant sur reads (list/detail/enrollments/stats)")
 for action in ["crm.sequence_create", "crm.sequence_update", "crm.sequence_delete",
                "crm.sequence_enroll", "crm.sequence_process"]:
