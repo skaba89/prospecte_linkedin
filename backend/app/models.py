@@ -342,3 +342,29 @@ class SuppressionList(Base):
     source = Column(String, default="manual", nullable=False)  # manual | import
     created_at = Column(DateTime, default=datetime.utcnow)
     __table_args__ = (UniqueConstraint("tenant_id", "email", name="uq_tenant_suppression_email"),)
+
+
+# ─── P13 : Notifications & e-mails (pont P12 sync ↔ outreach CRM) ─────────────
+class Notification(Base):
+    """Notification multi-canal (email + in-app feed), scopée par tenant (P13). Trace chaque
+    envoi d'e-mail de prospection/suivi + les notifications in-app (cloche dashboard). status :
+    pending|sent|failed|dry_run (smtp_enabled=false → dry_run). read_at nullable pour le feed
+    in-app (null = non lu). Rattachée au contact CRM (recipient_contact_id) + à l'expéditeur
+    (user_id). Pont P12 (contacts syncés LinkedIn) → P13 (outreach e-mail)."""
+    __tablename__ = "notifications"
+    id = Column(String, primary_key=True, default=lambda: _uid("ntf"))
+    tenant_id = Column(String, ForeignKey("tenants.id"), nullable=False, index=True)
+    user_id = Column(String, ForeignKey("users.id"), nullable=True)  # expéditeur
+    type = Column(String, nullable=False)  # email | in_app | system
+    channel = Column(String, nullable=False, default="email")  # email | feed
+    recipient_email = Column(String, nullable=True, index=True)  # normalisé (null pour in-app pur)
+    recipient_contact_id = Column(String, ForeignKey("contacts.id"), nullable=True)
+    subject = Column(String, nullable=False)
+    body_text = Column(Text, nullable=False)
+    body_html = Column(Text, nullable=True)
+    template_id = Column(String, nullable=True)  # cold_outreach|follow_up|intro|re_engagement
+    status = Column(String, nullable=False, default="pending")  # pending|sent|failed|dry_run
+    sent_at = Column(DateTime, nullable=True)
+    error_detail = Column(Text, nullable=True)
+    read_at = Column(DateTime, nullable=True)  # in-app feed : null = non lu
+    created_at = Column(DateTime, default=datetime.utcnow)

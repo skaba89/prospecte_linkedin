@@ -186,6 +186,46 @@ class SyncRunOut(BaseModel):
     completed_at: datetime | None = None
 
 
+# ---- Notifications & e-mails (P13) ----
+class NotificationOut(BaseModel):
+    """Notification (e-mail envoyé ou in-app feed), scopée par tenant (P13)."""
+    model_config = ConfigDict(from_attributes=True)
+    id: str
+    type: str
+    channel: str = "email"
+    recipient_email: str | None = None
+    recipient_contact_id: str | None = None
+    subject: str
+    body_text: str = ""
+    body_html: str | None = None
+    template_id: str | None = None
+    status: str  # pending|sent|failed|dry_run
+    sent_at: datetime | None = None
+    error_detail: str | None = None
+    read_at: datetime | None = None
+    created_at: datetime | None = None
+
+
+class EmailSendRequest(BaseModel):
+    """Envoi d'un e-mail templated à un contact CRM (P13). template + message perso optionnel."""
+    template: str  # cold_outreach | follow_up | intro | re_engagement
+    custom_message: str = ""
+
+
+class TemplateInfo(BaseModel):
+    id: str
+    name: str
+    description: str
+
+
+class EmailSendResult(BaseModel):
+    """Résultat d'un envoi e-mail (P13) : la notification créée + statut d'envoi."""
+    notification_id: str
+    status: str  # sent | failed | dry_run | skipped
+    email_sent: bool
+    detail: str = ""
+
+
 # ---- Audit (P4) ----
 class AuditLogOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
