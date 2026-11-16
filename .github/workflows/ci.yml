@@ -72,6 +72,8 @@ jobs:
         run: python tests/test_scoring.py
       - name: P18 Webhooks outbound static checks (models/service/router/hooks HMAC/retry/RBAC audit)
         run: python tests/test_webhooks.py
+      - name: P19 Webhook retry cron static checks (start_scheduler threading daemon/env gate/deliver_pending)
+        run: python tests/test_webhook_retry_cron.py
 
   test-api:
     name: API tests (sqlite, sans docker)

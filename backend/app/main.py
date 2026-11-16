@@ -77,6 +77,11 @@ def _startup():
     from .services.sequences import start_scheduler
 
     start_scheduler()
+    # P19 : scheduler de retry webhooks (background thread daemon). Retente les deliveries
+    # pending toutes les WEBHOOK_SCHEDULER_INTERVAL_SECONDS (défaut 60s — time-sensitive).
+    from .services.webhooks import start_scheduler as start_webhook_scheduler
+
+    start_webhook_scheduler()
 
 
 @app.get("/api/health")
