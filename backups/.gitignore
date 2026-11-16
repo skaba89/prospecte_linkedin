@@ -1,0 +1,4 @@
+# Ignore les dumps (générés, jamais commités) mais garde le dossier.
+*.sql.gz
+!.gitignore
+!.gitkeep

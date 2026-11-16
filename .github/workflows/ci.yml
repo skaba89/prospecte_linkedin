@@ -37,7 +37,7 @@ jobs:
       - run: ruff check backend/app
 
   frontend:
-    name: Static checks (frontend + observability)
+    name: Static checks (frontend + observability + backups)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -50,6 +50,8 @@ jobs:
         run: python tests/test_frontend.py
       - name: Observability configs (Grafana dashboard + Prometheus alerts + scrape, P7)
         run: python tests/test_observability.py
+      - name: Backup/restore scripts (pg_dump --clean, rotation, round-trip, P8)
+        run: python tests/test_backups.py
 
   test-api:
     name: API tests (sqlite, sans docker)

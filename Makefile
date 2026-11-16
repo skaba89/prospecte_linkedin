@@ -7,7 +7,7 @@ BACKEND_URL  ?= http://localhost:8000
 PY           := python3
 
 .DEFAULT_GOAL := help
-.PHONY: help build up down rebuild logs ps test test-api test-local lint fmt dev dev-up dev-down dev-logs clean db-shell backend-shell backend-logs health
+.PHONY: help build up down rebuild logs ps test test-api test-local lint fmt dev dev-up dev-down dev-logs clean db-shell backend-shell backend-logs health backup restore backup-test
 
 help: ## Affiche cette aide
 	@awk 'BEGIN{FS=":.*##"; printf "\n\033[1mRevPulse stack\033[0m — make <target>\n\n"} /^[a-zA-Z_-]+:.*?##/ { printf "  \033[36m%-14s\033[0m %s\n", $$1, $$2 }' $(MAKEFILE_LIST)
@@ -90,3 +90,14 @@ backend-logs: ## Logs du backend uniquement
 clean: ## ⚠️ Arrête + supprime les volumes (efface la BDD)
 	$(COMPOSE) down -v
 	@echo "Volumes supprimés. Relancez 'make up' pour re-seed."
+
+# ---------- Backups Postgres (P8) ----------
+backup: ## Sauvegarde la BDD (pg_dump --clean gzippé + rotation keep-10)
+	./scripts/backup_db.sh
+
+restore: ## Restaure un dump : make restore FILE=backups/revpulse_YYYYMMDD_HHMMSS.sql.gz
+	@test -n "$(FILE)" || { echo "Usage: make restore FILE=backups/<dump>.sql.gz"; exit 1; }
+	./scripts/restore_db.sh "$(FILE)" --yes
+
+backup-test: ## Test E2E backup→restore sur un postgres éphémère (nécessite docker)
+	./scripts/test_backup_restore.sh

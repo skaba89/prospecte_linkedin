@@ -349,6 +349,28 @@ docker-compose.observability.yml up` → Prometheus (http://localhost:9090) + Gr
 (http://localhost:3000, admin/admin). Grafana provisionne automatiquement le datasource
 + le dashboard (aucune config manuelle).
 
+## P8 — Sauvegardes Postgres + test de restauration (résilience)
+
+Achève la capacité de récupération entamée en P7 (monitoring) : sauvegarde automatisée de
+la base Postgres + restauration idempotente + test E2E bout-en-bout (backup → perte →
+restore → verify). Vérifié par `tests/test_backups.py` (40 checks statiques).
+
+Scripts sous `scripts/` :
+  - `backup_db.sh` : `pg_dump --clean --if-exists` (dump idempotent) → gzip →
+    `backups/revpulse_YYYYMMDD_HHMMSS.sql.gz`, rotation keep-N (`RETENTION_KEEP=10`).
+    Fonctionne via `docker compose exec db pg_dump` (défaut) ou `pg_dump` local.
+  - `restore_db.sh` : `gunzip` + `psql --ON_ERROR_STOP=1`, confirmation interactive
+    requise sauf `--yes` (évite d'écraser la prod par accident).
+  - `test_backup_restore.sh` : round-trip E2E sur un postgres éphémère (docker) —
+    `alembic upgrade head` → seed (1 user + 1 tenant) → backup → `DROP SCHEMA public`
+    (simule une perte) → restore → verify counts (tenants=1, users=1). Lancer via
+    `make backup-test` (nécessite docker, non exécuté en CI).
+
+Makefile : `make backup` / `make restore FILE=backups/<dump>.sql.gz` / `make backup-test`.
+`backups/` est versionné (`.gitkeep`) mais les dumps `*.sql.gz` sont gitignorés.
+
+Cron (prod) : `0 3 * * * cd /opt/revpulse && make backup >> backups/cron.log 2>&1`.
+
 ## API
 
 | Méthode | Route | Rôle | Description |
@@ -517,6 +539,14 @@ chargé en `defer` et n'altère pas le rendu existant.
   prometheus + grafana + mounts) ; `ruff check backend/app` → 0 erreur. **Suite totale :
   10 (config) + 23 (frontend) + 38 (observability) + 49 (api) + 22 (p3) + 25 (audit) +
   12 (metrics) + 14 (e2e) = 193 checks verts.**
+- **P8 (sauvegardes + restauration)** : `tests/test_backups.py` → 40/40 (existence +
+  exécutable + `bash -n` valide pour les 3 scripts, `backup_db.sh` `pg_dump --clean
+  --if-exists` + gzip + rotation keep-N + vars, `restore_db.sh` psql + gunzip +
+  `ON_ERROR_STOP` + confirmation `--yes`, `test_backup_restore.sh` round-trip docker +
+  alembic + seed + `DROP SCHEMA` + verify, Makefile cibles `backup`/`restore`/
+  `backup-test`, `backups/.gitignore` ignore `*.sql.gz`) ; `ruff` clean. **Suite totale :
+  10 (config) + 23 (frontend) + 38 (observability) + 40 (backups) + 49 (api) + 22 (p3) +
+  25 (audit) + 12 (metrics) + 14 (e2e) = 233 checks verts.**
 
 ## Compte démo
 
