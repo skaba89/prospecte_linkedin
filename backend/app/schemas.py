@@ -219,8 +219,9 @@ class TemplateInfo(BaseModel):
 
 
 class EmailSendResult(BaseModel):
-    """Résultat d'un envoi e-mail (P13) : la notification créée + statut d'envoi."""
-    notification_id: str
+    """Résultat d'un envoi e-mail (P13) : la notification créée + statut d'envoi.
+    notification_id nullable (None si template inconnu — pas de notif créée, helper P15 send_email_to_contact)."""
+    notification_id: str | None = None
     status: str  # sent | failed | dry_run | skipped
     email_sent: bool
     detail: str = ""
@@ -532,3 +533,86 @@ class AnalyticsSources(BaseModel):
     """Stats contacts par source (P14) + conversion."""
     by_source: list[SourceStat] = []
     total: int = 0
+
+
+# ---- Séquences & automatisation (P15) ----
+class SequenceStepCreate(BaseModel):
+    """Step d'une séquence à la création (P15). template_id = template P13, delay_days = délai."""
+    template_id: str  # cold_outreach | follow_up | intro | re_engagement
+    delay_days: int = 0  # délai avant envoi après le step précédent (0 = immédiat)
+
+
+class SequenceStepOut(BaseModel):
+    """Step d'une séquence sérialisé (P15)."""
+    id: str
+    step_order: int
+    template_id: str
+    delay_days: int
+
+
+class SequenceCreate(BaseModel):
+    """Création d'une séquence + ses steps (P15)."""
+    name: str
+    description: str = ""
+    status: str = "draft"  # draft | active | paused
+    steps: list[SequenceStepCreate]
+
+
+class SequenceUpdate(BaseModel):
+    """Mise à jour partielle d'une séquence (P15). Au moins un champ."""
+    name: str | None = None
+    description: str | None = None
+    status: str | None = None  # draft | active | paused
+
+
+class SequenceOut(BaseModel):
+    """Séquence sérialisée (P15) avec steps + count enrollments."""
+    id: str
+    tenant_id: str
+    name: str
+    description: str
+    status: str
+    created_by: str | None = None
+    created_at: datetime
+    updated_at: datetime
+    steps: list[SequenceStepOut] = []
+    enrollments_count: int = 0
+
+
+class EnrollRequest(BaseModel):
+    """Enrollment d'un contact dans une séquence (P15)."""
+    contact_id: str
+
+
+class SequenceEnrollmentOut(BaseModel):
+    """Enrollment sérialisé (P15)."""
+    id: str
+    sequence_id: str
+    contact_id: str
+    current_step_order: int
+    status: str  # active | completed | paused | failed
+    enrolled_by_user_id: str | None = None
+    enrolled_at: datetime
+    next_step_at: datetime
+    completed_at: datetime | None = None
+    error_detail: str | None = None
+
+
+class SequenceProcessResult(BaseModel):
+    """Résultat d'une passe du scheduler sur une séquence (P15)."""
+    sequence_id: str
+    processed: int
+    sent: int
+    skipped: int
+    failed: int
+    completed: int
+
+
+class SequenceStats(BaseModel):
+    """Stats d'une séquence (P15) : counts par statut d'enrollment."""
+    sequence_id: str
+    total_enrollments: int
+    active: int
+    completed: int
+    paused: int
+    failed: int

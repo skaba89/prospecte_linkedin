@@ -29,6 +29,7 @@ from .routers import (
     linkedin,
     members,
     notifications,
+    sequences,
     tenants,
 )
 from .seed import seed_all
@@ -64,6 +65,10 @@ def _startup():
         seed_all(db)
     finally:
         db.close()
+    # P15 : scheduler de séquences (background thread daemon, stdlib threading — pas de dep).
+    # Traite les enrollments dus toutes les SEQUENCE_SCHEDULER_INTERVAL_SECONDS (défaut 300s).
+    from .services.sequences import start_scheduler
+    start_scheduler()
 
 
 @app.get("/api/health")
@@ -89,7 +94,7 @@ def health(db: Session = Depends(get_db)):
 
 # Routers métier
 for r in (auth.router, tenants.router, members.router, approvals.router, dashboard.router, billing.router,
-          content.router, linkedin.router, audit.router, crm.router, notifications.router, analytics.router):
+          content.router, linkedin.router, audit.router, crm.router, notifications.router, sequences.router, analytics.router):
     app.include_router(r)
 
 

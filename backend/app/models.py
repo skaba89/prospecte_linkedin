@@ -368,3 +368,51 @@ class Notification(Base):
     error_detail = Column(Text, nullable=True)
     read_at = Column(DateTime, nullable=True)  # in-app feed : null = non lu
     created_at = Column(DateTime, default=datetime.utcnow)
+
+
+# ---- Séquences & automatisation (P15) ----
+class EmailSequence(Base):
+    """Séquence d'e-mails multi-steps (P15). Drip campaign automatisée : enrollment d'un contact →
+    envoi échelonné des SequenceStep (delay_days entre steps) → advancement par le scheduler
+    (services/sequences.py process_due_enrollments). Scopée par tenant. status :
+    draft (non démarrée, scheduler ignore) | active (scheduler traite) | paused (suspendue)."""
+    __tablename__ = "email_sequences"
+    id = Column(String, primary_key=True, default=lambda: _uid("seq"))
+    tenant_id = Column(String, ForeignKey("tenants.id"), nullable=False, index=True)
+    name = Column(String, nullable=False)
+    description = Column(Text, default="")
+    status = Column(String, default="draft", nullable=False)  # draft | active | paused
+    created_by = Column(String, ForeignKey("users.id"), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+
+class SequenceStep(Base):
+    """Étape d'une séquence (P15). order = position 1-indexed. template_id = template e-mail P13
+    (cold_outreach|follow_up|intro|re_engagement). delay_days = délai avant envoi après le step
+    précédent (0 = immédiat). CASCADE sur delete séquence."""
+    __tablename__ = "sequence_steps"
+    id = Column(String, primary_key=True, default=lambda: _uid("stp"))
+    sequence_id = Column(String, ForeignKey("email_sequences.id", ondelete="CASCADE"), nullable=False, index=True)
+    step_order = Column(Integer, nullable=False)  # 1-indexed (évite le mot-clé SQL réservé `order`)
+    template_id = Column(String, nullable=False)
+    delay_days = Column(Integer, default=0, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+
+class SequenceEnrollment(Base):
+    """Enrollment d'un contact dans une séquence (P15). current_step_order = prochain step à envoyer
+    (1-indexed). status : active (en cours) | completed (dernier step envoyé) | paused | failed.
+    next_step_at = quand le scheduler doit envoyer le step courant. enrolled_by_user_id = acteur
+    (pour l'audit crm.email_contact via send_email_to_contact). CASCADE sur delete séquence."""
+    __tablename__ = "sequence_enrollments"
+    id = Column(String, primary_key=True, default=lambda: _uid("enr"))
+    sequence_id = Column(String, ForeignKey("email_sequences.id", ondelete="CASCADE"), nullable=False, index=True)
+    contact_id = Column(String, ForeignKey("contacts.id"), nullable=False, index=True)
+    current_step_order = Column(Integer, default=1, nullable=False)
+    status = Column(String, default="active", nullable=False)  # active | completed | paused | failed
+    enrolled_by_user_id = Column(String, ForeignKey("users.id"), nullable=True)
+    enrolled_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    next_step_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    completed_at = Column(DateTime, nullable=True)
+    error_detail = Column(Text, nullable=True)
