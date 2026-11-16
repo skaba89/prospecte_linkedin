@@ -371,6 +371,30 @@ Makefile : `make backup` / `make restore FILE=backups/<dump>.sql.gz` / `make bac
 
 Cron (prod) : `0 3 * * * cd /opt/revpulse && make backup >> backups/cron.log 2>&1`.
 
+## P9 — Sécurité AppSec (durcissement)
+
+Durcissement complémentaire : scanner de secrets en code committé, audit advisory des
+dépendances, hachage bcrypt vérifié, config env-driven (fail-fast JWT secret en prod).
+Vérifié par `tests/test_security.py` (29 checks statiques).
+
+Scripts sous `scripts/` :
+  - `scan_secrets.sh` : grep sur 7 patterns de PAT/clés réelles (GitHub `ghp_`/
+    `github_pat_`, AWS `AKIA`, private keys, Stripe `sk_live_`, Slack `xox`, Google
+    `AIza`) avec allowlist (.env.example, docker-compose, tests/, README, backups).
+    Exit 1 si un secret est trouvé ; exécuté par `tests/test_security.py` (assert exit 0).
+  - `audit_deps.sh` : `pip-audit` (backend/requirements.txt) + `npm audit` (frontend,
+    skip gracieux si pas de package-lock.json). Advisory par défaut (exit 0) ;
+    `--strict` pour CI gating.
+
+Vérifié également : `backend/app/security.py` utilise bcrypt 4.2.0 directement
+(`hashpw`/`checkpw` + `gensalt`, tronque à 72 bytes) ; `config.py` est env-driven via
+pydantic `BaseSettings` (`env_prefix="REVPULSE_"`) avec fail-fast `validate_jwt_secret`
+(≥ 32 chars + rejet des valeurs par défaut connues en production).
+
+Makefile : `make audit-deps` (advisory) / `make audit-deps -- --strict` (gating).
+nginx a déjà les 6 headers de sécurité (X-Frame, X-Content-Type, Referrer-Policy,
+Permissions-Policy, CSP, HSTS) — couverts par `tests/test_frontend.py` (P6).
+
 ## API
 
 | Méthode | Route | Rôle | Description |
@@ -547,6 +571,14 @@ chargé en `defer` et n'altère pas le rendu existant.
   `backup-test`, `backups/.gitignore` ignore `*.sql.gz`) ; `ruff` clean. **Suite totale :
   10 (config) + 23 (frontend) + 38 (observability) + 40 (backups) + 49 (api) + 22 (p3) +
   25 (audit) + 12 (metrics) + 14 (e2e) = 233 checks verts.**
+- **P9 (sécurité AppSec)** : `tests/test_security.py` → 29/29 (scan_secrets.sh existe +
+  exécutable + bash -n + 7 patterns ghp_/github_pat_/AKIA/PRIVATE KEY/sk_live_/xox/AIza
+  + allowlist + s'exécute exit 0 code propre, audit_deps.sh pip-audit + npm audit + skip
+  no-lockfile + --strict, security.py bcrypt hashpw/checkpw/gensalt, bcrypt in
+  requirements, config.py BaseSettings env-driven, aucun secret ≥ 24 chars hardcoded,
+  Makefile audit-deps) ; `ruff` clean. **Suite totale : 10 (config) + 23 (frontend) +
+  38 (observability) + 40 (backups) + 29 (security) + 49 (api) + 22 (p3) + 25 (audit) +
+  12 (metrics) + 14 (e2e) = 262 checks verts.**
 
 ## Compte démo
 

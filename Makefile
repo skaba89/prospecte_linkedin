@@ -7,7 +7,7 @@ BACKEND_URL  ?= http://localhost:8000
 PY           := python3
 
 .DEFAULT_GOAL := help
-.PHONY: help build up down rebuild logs ps test test-api test-local lint fmt dev dev-up dev-down dev-logs clean db-shell backend-shell backend-logs health backup restore backup-test
+.PHONY: help build up down rebuild logs ps test test-api test-local lint fmt dev dev-up dev-down dev-logs clean db-shell backend-shell backend-logs health backup restore backup-test audit-deps
 
 help: ## Affiche cette aide
 	@awk 'BEGIN{FS=":.*##"; printf "\n\033[1mRevPulse stack\033[0m — make <target>\n\n"} /^[a-zA-Z_-]+:.*?##/ { printf "  \033[36m%-14s\033[0m %s\n", $$1, $$2 }' $(MAKEFILE_LIST)
@@ -101,3 +101,7 @@ restore: ## Restaure un dump : make restore FILE=backups/revpulse_YYYYMMDD_HHMMS
 
 backup-test: ## Test E2E backup→restore sur un postgres éphémère (nécessite docker)
 	./scripts/test_backup_restore.sh
+
+# ---------- Sécurité AppSec (P9) ----------
+audit-deps: ## Audit advisory des dépendances (pip-audit + npm audit ; --strict pour fail)
+	./scripts/audit_deps.sh
