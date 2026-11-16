@@ -133,30 +133,38 @@ ck("linkedin.router" in main_src, True, "router linkedin enregistré dans main.p
 ci = read(".github/workflows/ci.yml")
 ck("python tests/test_linkedin.py" in ci, True, "test_linkedin.py dans le CI (static checks)")
 
-# Introspection : LinkedInSyncRun dans Base.metadata + endpoint enregistré.
+# Introspection : LinkedInSyncRun dans Base.metadata + endpoints enregistrés + mock client.
+# Skip gracieux si sqlalchemy n'est pas installé (le job static-checks n'installe que pyyaml) —
+# ces aspects sont ALORS validés via le job test-api (E2E, deps complètes) + la lecture des
+# sources ci-dessus. Skip ≠ fail : on ne pénalise pas un env sans deps runtime.
 sys.path.insert(0, str(ROOT / "backend"))
 try:
+    import sqlalchemy  # noqa: F401 — garde-fou : skip si absent (static-checks)
     from app.database import Base
     from app import models
     from app.routers import linkedin as lg
-    ck("linkedin_sync_runs" in Base.metadata.tables, True,
-       "table linkedin_sync_runs dans Base.metadata")
-    has_field = hasattr(models.LinkedInSyncRun, "total") and hasattr(models.LinkedInSyncRun, "imported")
-    ck(has_field, True, "LinkedInSyncRun.total/imported accessibles (ORM)")
-    # endpoints enregistrés sur le router
-    routes = [r.path for r in lg.router.routes]
-    ck(any("sync-contacts" in p for p in routes), True, "route sync-contacts enregistrée")
-    ck(any("sync-runs" in p for p in routes), True, "route sync-runs enregistrée")
-    # client importable
     from app.services import linkedin_client as lc
-    mock_data = lc.fetch_connections("tok", mock=True)
-    ck(len(mock_data) >= 8, True, f"fetch_connections mock retourne ≥8 ({len(mock_data)})")
-    ck(all("linkedin_url" in c and "title" in c for c in mock_data), True,
-       "chaque entrée mock a linkedin_url + title")
-    ck(any("cto" in c["title"].lower() for c in mock_data), True,
-       "≥1 CTO dans le mock (segment P11 'Décideurs tech')")
-except Exception as e:
-    ck(False, True, f"introspection OK (erreur: {type(e).__name__}: {e})")
+except ImportError:
+    print("  ⚠ Introspection ignorée (sqlalchemy non installé — validée via job test-api E2E).")
+    print("    Les checks par lecture de sources ci-dessus couvrent déjà ces aspects.")
+else:
+    try:
+        ck("linkedin_sync_runs" in Base.metadata.tables, True,
+           "table linkedin_sync_runs dans Base.metadata")
+        has_field = hasattr(models.LinkedInSyncRun, "total") and hasattr(models.LinkedInSyncRun, "imported")
+        ck(has_field, True, "LinkedInSyncRun.total/imported accessibles (ORM)")
+        routes = [r.path for r in lg.router.routes]
+        ck(any("sync-contacts" in p for p in routes), True, "route sync-contacts enregistrée")
+        ck(any("sync-runs" in p for p in routes), True, "route sync-runs enregistrée")
+        mock_data = lc.fetch_connections("tok", mock=True)
+        ck(len(mock_data) >= 8, True, f"fetch_connections mock retourne ≥8 ({len(mock_data)})")
+        ck(all("linkedin_url" in c and "title" in c for c in mock_data), True,
+           "chaque entrée mock a linkedin_url + title")
+        ck(any("cto" in c["title"].lower() for c in mock_data), True,
+           "≥1 CTO dans le mock (segment P11 'Décideurs tech')")
+    except Exception as e:
+        # Bug runtime réel (sqlalchemy installé mais introspection casse) → fail.
+        ck(False, True, f"introspection runtime (erreur: {type(e).__name__}: {e})")
 
 print()
 print(f"RESULT: {passed} passed, {failed} failed")
