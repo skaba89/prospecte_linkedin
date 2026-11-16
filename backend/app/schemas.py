@@ -469,3 +469,66 @@ class PipelineColumn(BaseModel):
     opportunities: list[OpportunityOut]
     count: int
     total_value: int
+
+
+# ---- Analytics & reporting (P14) ----
+class PipelineStageStat(BaseModel):
+    """Stats agrégées d'un stage de pipeline (P14 analytics)."""
+    stage: str
+    count: int
+    total_value: int = 0
+    avg_probability: float = 0.0
+
+
+class EmailStat(BaseModel):
+    """Stats e-mail par template (P14 analytics) + breakdown par statut."""
+    template_id: str | None = None
+    count: int
+    by_status: dict[str, int] = {}
+
+
+class SourceStat(BaseModel):
+    """Stats contact par source (P14 analytics) + taux de conversion."""
+    source: str
+    count: int
+    conversion_pct: float = 0.0  # % de contacts « convertis » (won/contacted/qualified)
+
+
+class AnalyticsOverview(BaseModel):
+    """Vue d'ensemble KPIs (P14) : CRM (contacts + opportunités) + e-mails + sync LinkedIn."""
+    contacts_total: int
+    contacts_by_source: dict[str, int] = {}
+    contacts_by_status: dict[str, int] = {}
+    opportunities_total: int
+    opportunities_by_stage: dict[str, int] = {}
+    pipeline_value: int = 0
+    pipeline_currency: str = "EUR"
+    emails_total: int
+    emails_by_status: dict[str, int] = {}
+    last_sync_at: datetime | None = None
+    last_sync_status: str | None = None
+    last_sync_imported: int = 0
+    last_sync_total: int = 0
+    sync_runs_total: int = 0
+
+
+class AnalyticsPipeline(BaseModel):
+    """Pipeline agrégé par stage (P14) + win rate + valeur totale."""
+    stages: list[PipelineStageStat] = []
+    win_rate_pct: float = 0.0  # closed_won / total
+    total_value: int = 0
+    total_opportunities: int = 0
+
+
+class AnalyticsEmails(BaseModel):
+    """Stats e-mail (P14) : par template + par statut + taux de succès (sent/(sent+failed))."""
+    by_template: list[EmailStat] = []
+    by_status: dict[str, int] = {}
+    success_rate_pct: float = 0.0
+    total: int = 0
+
+
+class AnalyticsSources(BaseModel):
+    """Stats contacts par source (P14) + conversion."""
+    by_source: list[SourceStat] = []
+    total: int = 0

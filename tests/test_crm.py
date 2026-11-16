@@ -165,7 +165,7 @@ ck('"crm.manage"' not in viewer_line, True, "Viewer n'a PAS crm.manage (read-onl
 # ─── Intégration ──────────────────────────────────────────────────────────────
 print("\n=== Intégration (main, tenants, seed, requirements) ===")
 main = read("backend/app/main.py")
-ck("crm" in main.split("from .routers import")[1].split("\n")[0], True, "main.py importe router crm")
+ck("crm" in main.split("from .routers import")[1].split("\n\n")[0], True, "main.py importe router crm (single-line ou vertical)")
 ck("crm.router" in main, True, "main.py enregistre crm.router")
 reqs = read("backend/requirements.txt")
 ck("openpyxl" in reqs, True, "requirements.txt : openpyxl (import XLSX)")
