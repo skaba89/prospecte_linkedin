@@ -9,14 +9,24 @@ une webhook lent/down ne bloque pas la mutation source (au pire 5s de timeout).
 Sécurité : HMAC-SHA256(secret, body) → header `X-RevPulse-Signature` (le destinataire vérifie
 l'authenticité). `X-RevPulse-Event` = nom de l'événement. Retry : attempts incrémenté à chaque
 deliver ; status pending tant que attempts < max_attempts, failed sinon. deliver_pending retry
-les pending (endpoint retry / cron futur).
+les pending (endpoint retry manuel OU cron P19 automatique via start_scheduler).
+
+P19 — start_scheduler() : background thread daemon (stdlib threading, pas de dep). Tourne toutes
+les WEBHOOK_SCHEDULER_INTERVAL_SECONDS (défaut 60s — plus fréquent que les séquences car les
+webhooks sont time-sensitives : un endpoint down au moment de l'emit sera retenté dans la minute).
+Désactivé si interval <= 0. Démarré depuis main._startup (à côté du sequences scheduler).
+Multi-worker caveat : en prod multi-workers, chaque worker lance son scheduler → --workers 1 OU
+un process scheduler dédié (noté dans le README). Pour cette app (single-worker uvicorn), OK.
 """
 
 import hashlib
 import hmac
 import json
 import logging
+import os
 import secrets as _secrets
+import threading
+import time
 import urllib.error
 import urllib.request
 from datetime import datetime
@@ -24,6 +34,7 @@ from datetime import datetime
 from sqlalchemy.orm import Session
 
 from .. import models
+from ..database import SessionLocal
 
 log = logging.getLogger("revpulse.webhooks")
 
@@ -141,8 +152,41 @@ def deliver(db: Session, delivery: models.WebhookDelivery) -> bool:
 
 def deliver_pending(db: Session, limit: int = 50) -> int:
     """Retry les deliveries pending (limit). Retourne le nombre traitées. Synchronous —
-    appelé par l'endpoint retry ou un cron futur."""
+    appelé par l'endpoint retry manuel OU par le cron P19 (start_scheduler). Ne commit pas
+    (le caller commit — le router pour l'endpoint, le scheduler pour le cron)."""
     pendings = db.query(models.WebhookDelivery).filter_by(status="pending").limit(limit).all()
     for d in pendings:
         deliver(db, d)
     return len(pendings)
+
+
+def start_scheduler() -> None:
+    """Démarre le scheduler de retry webhooks (background thread daemon, stdlib threading — pas
+    de nouvelle dep). Tourne toutes les WEBHOOK_SCHEDULER_INTERVAL_SECONDS (défaut 60s — plus
+    fréquent que les séquences car les webhooks sont time-sensitives : un endpoint down au moment
+    de l'emit sera retenté dans la minute). Désactivé si interval <= 0. Boucle infinie :
+    deliver_pending(db) → commit → sleep(interval). Catch large volontaire (le scheduler ne doit
+    jamais crasher l'app). Démarré depuis main._startup."""
+    interval = int(os.getenv("WEBHOOK_SCHEDULER_INTERVAL_SECONDS", "60"))
+    if interval <= 0:
+        log.info("Webhook scheduler disabled (WEBHOOK_SCHEDULER_INTERVAL_SECONDS=%s).", interval)
+        return
+
+    def _loop():
+        while True:
+            db = SessionLocal()
+            try:
+                n = deliver_pending(db)
+                if n:
+                    log.info("Webhook scheduler: retried %d pending deliveries.", n)
+                db.commit()
+            except Exception as e:  # scheduler ne doit jamais crasher (catch large volontaire)
+                log.exception("Webhook scheduler error: %s", e)
+                db.rollback()
+            finally:
+                db.close()
+            time.sleep(interval)
+
+    t = threading.Thread(target=_loop, daemon=True, name="revpulse-webhook-scheduler")
+    t.start()
+    log.info("Webhook scheduler started (interval=%ss).", interval)
