@@ -17,7 +17,20 @@ from .database import SessionLocal, get_db, init_db
 from .extensions import limiter
 from .logging_config import RequestLoggingMiddleware, configure_logging
 from .metrics import MetricsMiddleware, metrics_response
-from .routers import approvals, audit, auth, billing, content, crm, dashboard, linkedin, members, notifications, tenants
+from .routers import (
+    analytics,
+    approvals,
+    audit,
+    auth,
+    billing,
+    content,
+    crm,
+    dashboard,
+    linkedin,
+    members,
+    notifications,
+    tenants,
+)
 from .seed import seed_all
 
 # Logging structuré (JSON en prod, texte en dev/test) — configuré avant l'app.
@@ -76,7 +89,7 @@ def health(db: Session = Depends(get_db)):
 
 # Routers métier
 for r in (auth.router, tenants.router, members.router, approvals.router, dashboard.router, billing.router,
-          content.router, linkedin.router, audit.router, crm.router, notifications.router):
+          content.router, linkedin.router, audit.router, crm.router, notifications.router, analytics.router):
     app.include_router(r)
 
 

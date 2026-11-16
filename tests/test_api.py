@@ -460,6 +460,67 @@ print("=== 53. email_contact RBAC (non-member → 403) ===")
 s, _ = call("POST", f"/api/tenants/tnt-demo/crm/contacts/{ncid}/email", ptok, {"template": "cold_outreach"})
 ck(s, 403, "non-member → 403 sur email_contact")
 
+# ─── P14 Analytics & reporting (54-59) : overview/pipeline/emails/sources/export CSV/RBAC ─
+print("=== 54. GET /analytics/overview (KPIs agrégés CRM+emails+sync) ===")
+s, ov = call("GET", "/api/tenants/tnt-demo/analytics/overview", tok)
+ck(s, 200, "analytics overview 200")
+ck(ov.get("contacts_total", -1) >= 1, True, f"contacts_total ≥ 1 ({ov.get('contacts_total')})")
+ck("contacts_by_source" in ov, True, "contacts_by_source présent")
+ck("contacts_by_status" in ov, True, "contacts_by_status présent")
+ck("opportunities_total" in ov, True, "opportunities_total présent")
+ck("pipeline_value" in ov, True, "pipeline_value présent (sum Opportunity.value)")
+ck("emails_total" in ov, True, "emails_total présent (P13)")
+ck(ov.get("emails_total", -1) >= 1, True, f"emails_total ≥ 1 ({ov.get('emails_total')}) — notifs P13")
+ck("sync_runs_total" in ov, True, "sync_runs_total présent (P12)")
+ck(ov.get("sync_runs_total", -1) >= 1, True, f"sync_runs_total ≥ 1 ({ov.get('sync_runs_total')}) — sync P12")
+
+print("=== 55. GET /analytics/pipeline (par stage + win rate + value) ===")
+s, pp = call("GET", "/api/tenants/tnt-demo/analytics/pipeline", tok)
+ck(s, 200, "analytics pipeline 200")
+ck("stages" in pp, True, "stages list présent")
+ck("win_rate_pct" in pp, True, "win_rate_pct présent")
+ck("total_value" in pp, True, "total_value présent")
+ck("total_opportunities" in pp, True, "total_opportunities présent")
+
+print("=== 56. GET /analytics/emails (par template + succès) ===")
+s, em = call("GET", "/api/tenants/tnt-demo/analytics/emails", tok)
+ck(s, 200, "analytics emails 200")
+ck("by_template" in em, True, "by_template présent")
+ck("by_status" in em, True, "by_status présent")
+ck("success_rate_pct" in em, True, "success_rate_pct présent")
+ck(em.get("total", -1) >= 1, True, f"emails total ≥ 1 ({em.get('total')})")
+
+print("=== 57. GET /analytics/sources (par source + conversion) ===")
+s, sr = call("GET", "/api/tenants/tnt-demo/analytics/sources", tok)
+ck(s, 200, "analytics sources 200")
+ck("by_source" in sr, True, "by_source présent")
+ck("total" in sr, True, "total présent")
+ck(sr.get("total", -1) >= 1, True, f"sources total ≥ 1 ({sr.get('total')})")
+
+print("=== 58. GET /analytics/export (CSV contacts — raw urllib, non-JSON) ===")
+_req = urllib.request.Request(BASE + "/api/tenants/tnt-demo/analytics/export")
+_req.add_header("Authorization", f"Bearer {tok}")
+try:
+    with urllib.request.urlopen(_req, timeout=10) as _r:
+        _csv_status = _r.status
+        _csv_ct = _r.headers.get("content-type", "")
+        _csv_cd = _r.headers.get("content-disposition", "")
+        _csv_text = _r.read().decode("utf-8")
+except urllib.error.HTTPError as _e:
+    _csv_status, _csv_ct, _csv_cd, _csv_text = _e.code, "", "", ""
+ck(_csv_status, 200, "analytics export 200")
+ck("text/csv" in _csv_ct, True, f"content-type text/csv ({_csv_ct})")
+ck("attachment" in _csv_cd, True, "Content-Disposition attachment (download)")
+ck("first_name" in _csv_text and "email" in _csv_text, True, "CSV header (first_name, email)")
+_csv_lines = [l for l in _csv_text.strip().split("\n") if l]
+ck(len(_csv_lines) >= 2, True, f"≥1 ligne data CSV ({len(_csv_lines)} lignes total)")
+
+print("=== 59. analytics RBAC (non-member → 403) ===")
+s, _ = call("GET", "/api/tenants/tnt-demo/analytics/overview", ptok)
+ck(s, 403, "non-member → 403 sur analytics/overview (get_tenant)")
+s, _ = call("GET", "/api/tenants/tnt-demo/analytics/export", ptok)
+ck(s, 403, "non-member → 403 sur analytics/export (crm.manage)")
+
 print()
 print(f"RESULT: {passed} passed, {failed} failed")
 sys.exit(0 if failed == 0 else 1)
