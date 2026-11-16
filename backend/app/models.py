@@ -4,6 +4,7 @@ Toute table « métier » (Profile, Member, Approval, DashboardModule) est scop�
 par `tenant_id` → isolation par espace de travail. Les membres portent aussi un
 `user_id` (nullable : null pour une invitation en attente non encore rattachée).
 """
+
 import uuid
 from datetime import datetime
 
@@ -16,6 +17,7 @@ from .database import Base
 
 class JSONType(TypeDecorator):
     """JSON portable : JSONB sous Postgres, JSON sinon (SQLite)."""
+
     impl = Text
     cache_ok = True
 
@@ -26,12 +28,14 @@ class JSONType(TypeDecorator):
 
     def process_bind_param(self, value, dialect):
         import json
+
         if value is None:
             return None
         return json.dumps(value, ensure_ascii=False)
 
     def process_result_value(self, value, dialect):
         import json
+
         if value is None:
             return None
         if isinstance(value, (dict, list)):
@@ -63,6 +67,7 @@ class Tenant(Base):
 
 class Profile(Base):
     """Profil connecté à l'espace (LinkedIn simulé ou compte RevPulse natif). 1 par tenant."""
+
     __tablename__ = "profiles"
     id = Column(String, primary_key=True, default=lambda: _uid("prf"))
     tenant_id = Column(String, ForeignKey("tenants.id"), unique=True, nullable=False)
@@ -76,6 +81,7 @@ class Profile(Base):
 
 class Member(Base):
     """Ligne d'appartenance tenant x utilisateur (ou invitation en attente si user_id est null)."""
+
     __tablename__ = "members"
     id = Column(String, primary_key=True, default=lambda: _uid("mem"))
     tenant_id = Column(String, ForeignKey("tenants.id"), nullable=False, index=True)
@@ -92,6 +98,7 @@ class Member(Base):
 
 class Approval(Base):
     """Contenu en file d'approbation, scopé par tenant."""
+
     __tablename__ = "approvals"
     id = Column(String, primary_key=True, default=lambda: _uid("apr"))
     tenant_id = Column(String, ForeignKey("tenants.id"), nullable=False, index=True)
@@ -115,6 +122,7 @@ class Approval(Base):
 
 class DashboardModule(Base):
     """Un module de dashboard (clé → payload JSON), scopé par tenant."""
+
     __tablename__ = "dashboard_modules"
     id = Column(String, primary_key=True, default=lambda: _uid("mod"))
     tenant_id = Column(String, ForeignKey("tenants.id"), nullable=False, index=True)
@@ -129,6 +137,7 @@ class LinkedInConnection(Base):
     ⚠️ access_token stocké en clair pour la démo — à chiffrer (Fernet) en production
     et ne JAMAIS exposer dans une réponse API (status renvoie seulement member_name/id).
     """
+
     __tablename__ = "linkedin_connections"
     id = Column(String, primary_key=True, default=lambda: _uid("lk"))
     tenant_id = Column(String, ForeignKey("tenants.id"), unique=True, nullable=False)
@@ -149,6 +158,7 @@ class AuditLog(Base):
     audit.log_audit() dans les routers mutantes. Le request_id corrélationne
     avec les logs structurés P3.
     """
+
     __tablename__ = "audit_logs"
     id = Column(String, primary_key=True, default=lambda: _uid("aud"))
     tenant_id = Column(String, nullable=False, index=True)  # pas de FK (survie)
@@ -165,6 +175,7 @@ class AuditLog(Base):
 class OAuthState(Base):
     """State OAuth à usage unique (anti-CSRF + anti-rejeu). nonce aléatoire stocké,
     marqué 'used' au callback → un même state ne peut être rejoué (P10.3)."""
+
     __tablename__ = "oauth_states"
     id = Column(String, primary_key=True, default=lambda: _uid("ost"))
     tenant_id = Column(String, nullable=False, index=True)
@@ -178,6 +189,7 @@ class RevokedToken(Base):
     """JTI révoqué (logout / révocation manuelle). La vérification se fait dans
     get_current_user (query par jti) — decode_token reste pur. Nettoyage : rows où
     expires_at < now (P10.7)."""
+
     __tablename__ = "revoked_tokens"
     jti = Column(String, primary_key=True)
     user_id = Column(String, nullable=True, index=True)
@@ -189,6 +201,7 @@ class Publication(Base):
     """Trace durable + dédup des publications LinkedIn (post/comment/dm). content_hash
     = sha256(texte normalisé) → empêche la double publication du même contenu (P10.9).
     status durable : published | failed | pending (survit au redémarrage)."""
+
     __tablename__ = "publications"
     id = Column(String, primary_key=True, default=lambda: _uid("pub"))
     tenant_id = Column(String, ForeignKey("tenants.id"), nullable=False, index=True)
@@ -207,6 +220,7 @@ class LinkedInSyncRun(Base):
     status (running|completed|failed), compteurs (total/imported/updated/skipped),
     fenêtre temporelle (started_at/completed_at) + error_detail si échec. Scopée par tenant,
     rattachée à l'utilisateur qui a déclenché (actor_user_id). Pont P10 (OAuth) ↔ P11 (CRM)."""
+
     __tablename__ = "linkedin_sync_runs"
     id = Column(String, primary_key=True, default=lambda: _uid("syn"))
     tenant_id = Column(String, ForeignKey("tenants.id"), nullable=False, index=True)
@@ -232,6 +246,7 @@ class LinkedInSyncRun(Base):
 
 class Company(Base):
     """Entreprise/prospect compte, scopée par tenant. Un contact y rattache (0..n)."""
+
     __tablename__ = "companies"
     id = Column(String, primary_key=True, default=lambda: _uid("cmp"))
     tenant_id = Column(String, ForeignKey("tenants.id"), nullable=False, index=True)
@@ -250,6 +265,7 @@ class Contact(Base):
     unique par tenant → dédup à l'import + à la création manuelle. score = heuristique
     0-100 (titre senior, taille entreprise, complétude des données). owner_id =
     commercial attribué (FK users, nullable = non affecté)."""
+
     __tablename__ = "contacts"
     id = Column(String, primary_key=True, default=lambda: _uid("ctc"))
     tenant_id = Column(String, ForeignKey("tenants.id"), nullable=False, index=True)
@@ -273,6 +289,7 @@ class Contact(Base):
 class Opportunity(Base):
     """Affaire en pipeline (Kanban), scopée par tenant. stage = colonne Kanban.
     Probabilité % de closing. value = montant estimé (Integer, dans la currency)."""
+
     __tablename__ = "opportunities"
     id = Column(String, primary_key=True, default=lambda: _uid("opp"))
     tenant_id = Column(String, ForeignKey("tenants.id"), nullable=False, index=True)
@@ -293,6 +310,7 @@ class Opportunity(Base):
 class Task(Base):
     """Tâche commerciale (call/demo/relance), scopée par tenant. Liée à un contact
     et/ou une opportunité (les deux nullable). assignee_id = responsable (FK users)."""
+
     __tablename__ = "tasks"
     id = Column(String, primary_key=True, default=lambda: _uid("tsk"))
     tenant_id = Column(String, ForeignKey("tenants.id"), nullable=False, index=True)
@@ -309,6 +327,7 @@ class Task(Base):
 class Note(Base):
     """Note/compte-rendu libre sur un contact ou une opportunité, scopée par tenant.
     Auteur = user courant (FK users). body en Text (non limité en DB)."""
+
     __tablename__ = "notes"
     id = Column(String, primary_key=True, default=lambda: _uid("nte"))
     tenant_id = Column(String, ForeignKey("tenants.id"), nullable=False, index=True)
@@ -322,6 +341,7 @@ class Note(Base):
 class Segment(Base):
     """Filtre sauvegardé (liste dynamique de contacts), scopé par tenant.
     criteria = JSON : {search, status, company_id, owner_id, score_min, source}."""
+
     __tablename__ = "segments"
     id = Column(String, primary_key=True, default=lambda: _uid("seg"))
     tenant_id = Column(String, ForeignKey("tenants.id"), nullable=False, index=True)
@@ -334,6 +354,7 @@ class SuppressionList(Base):
     """Exclusions RGPD (désinscription/bounce/réclamation), scopées par tenant.
     L'import de contacts skippe les emails présents ici (respect de la désinscription).
     UniqueConstraint(tenant_id, email) → pas de doublon. Hard delete possible (RGPD)."""
+
     __tablename__ = "suppression_list"
     id = Column(String, primary_key=True, default=lambda: _uid("sup"))
     tenant_id = Column(String, ForeignKey("tenants.id"), nullable=False, index=True)
@@ -351,6 +372,7 @@ class Notification(Base):
     pending|sent|failed|dry_run (smtp_enabled=false → dry_run). read_at nullable pour le feed
     in-app (null = non lu). Rattachée au contact CRM (recipient_contact_id) + à l'expéditeur
     (user_id). Pont P12 (contacts syncés LinkedIn) → P13 (outreach e-mail)."""
+
     __tablename__ = "notifications"
     id = Column(String, primary_key=True, default=lambda: _uid("ntf"))
     tenant_id = Column(String, ForeignKey("tenants.id"), nullable=False, index=True)
@@ -376,6 +398,7 @@ class EmailSequence(Base):
     envoi échelonné des SequenceStep (delay_days entre steps) → advancement par le scheduler
     (services/sequences.py process_due_enrollments). Scopée par tenant. status :
     draft (non démarrée, scheduler ignore) | active (scheduler traite) | paused (suspendue)."""
+
     __tablename__ = "email_sequences"
     id = Column(String, primary_key=True, default=lambda: _uid("seq"))
     tenant_id = Column(String, ForeignKey("tenants.id"), nullable=False, index=True)
@@ -391,6 +414,7 @@ class SequenceStep(Base):
     """Étape d'une séquence (P15). order = position 1-indexed. template_id = template e-mail P13
     (cold_outreach|follow_up|intro|re_engagement). delay_days = délai avant envoi après le step
     précédent (0 = immédiat). CASCADE sur delete séquence."""
+
     __tablename__ = "sequence_steps"
     id = Column(String, primary_key=True, default=lambda: _uid("stp"))
     sequence_id = Column(String, ForeignKey("email_sequences.id", ondelete="CASCADE"), nullable=False, index=True)
@@ -405,6 +429,7 @@ class SequenceEnrollment(Base):
     (1-indexed). status : active (en cours) | completed (dernier step envoyé) | paused | failed.
     next_step_at = quand le scheduler doit envoyer le step courant. enrolled_by_user_id = acteur
     (pour l'audit crm.email_contact via send_email_to_contact). CASCADE sur delete séquence."""
+
     __tablename__ = "sequence_enrollments"
     id = Column(String, primary_key=True, default=lambda: _uid("enr"))
     sequence_id = Column(String, ForeignKey("email_sequences.id", ondelete="CASCADE"), nullable=False, index=True)
@@ -416,3 +441,45 @@ class SequenceEnrollment(Base):
     next_step_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     completed_at = Column(DateTime, nullable=True)
     error_detail = Column(Text, nullable=True)
+
+
+# ---- Webhooks outbound (P18) ----
+class Webhook(Base):
+    """Webhook outbound (P18) : notifie un système externe sur des événements RevPulse
+    (Slack/Zapier/CRM externe). Scopé par tenant. events = liste d'événements souscrits
+    (contact.created, contact.scored, sequence.enrolled, sequence.step_completed, email.sent,
+    opportunity.created). secret = clé HMAC-SHA256 signant chaque livraison (header
+    X-RevPulse-Signature → le destinataire vérifie l'authenticité). active=false → suspendu
+    (emit_event skippe). created_by = admin créateur (FK users, nullable)."""
+
+    __tablename__ = "webhooks"
+    id = Column(String, primary_key=True, default=lambda: _uid("whk"))
+    tenant_id = Column(String, ForeignKey("tenants.id"), nullable=False, index=True)
+    url = Column(String, nullable=False)
+    secret = Column(String, nullable=False)
+    events = Column(JSONType, nullable=False)  # ["contact.created", "contact.scored", ...]
+    active = Column(Boolean, default=True, nullable=False)
+    created_by = Column(String, ForeignKey("users.id"), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+
+class WebhookDelivery(Base):
+    """Livraison d'un webhook (P18). payload = JSON envoyé (snap au moment de l'émission).
+    status : pending (à livrer / retry en cours) | success (2xx reçu) | failed (épuisé ou
+    erreur). attempts = nb d'essais (incrémenté par deliver). max_attempts = 3 (default).
+    response_code = code HTTP retourné (null si erreur réseau). last_error = dernier message
+    d'erreur (truncé 200 chars). CASCADE sur delete webhook."""
+
+    __tablename__ = "webhook_deliveries"
+    id = Column(String, primary_key=True, default=lambda: _uid("whd"))
+    webhook_id = Column(String, ForeignKey("webhooks.id", ondelete="CASCADE"), nullable=False, index=True)
+    event = Column(String, nullable=False, index=True)
+    payload = Column(JSONType, nullable=False)
+    status = Column(String, default="pending", nullable=False, index=True)  # pending|success|failed
+    response_code = Column(Integer, nullable=True)
+    attempts = Column(Integer, default=0, nullable=False)
+    max_attempts = Column(Integer, default=3, nullable=False)
+    last_error = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+    delivered_at = Column(DateTime, nullable=True)

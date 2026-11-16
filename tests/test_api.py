@@ -691,6 +691,86 @@ print("=== 80. score-recompute RBAC (non-member → 403) ===")
 s, _ = call("POST", "/api/tenants/tnt-demo/crm/contacts/score-recompute", ptok)
 ck(s, 403, "non-member → 403 sur score-recompute")
 
+# ─── P18 : Webhooks outbound (serveur local qui capte les livraisons + signature HMAC) ───
+import hashlib  # noqa: E402
+import hmac  # noqa: E402
+import http.server  # noqa: E402
+import threading  # noqa: E402
+
+_hook_received = []
+
+
+class _HookHandler(http.server.BaseHTTPRequestHandler):
+    def do_POST(self):
+        n = int(self.headers.get("Content-Length", 0))
+        body = self.rfile.read(n)
+        _hook_received.append({"event": self.headers.get("X-RevPulse-Event"),
+                               "sig": self.headers.get("X-RevPulse-Signature"), "body": body})
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(b"ok")
+
+    def log_message(self, *a):
+        pass
+
+
+_hook_srv = http.server.HTTPServer(("127.0.0.1", 9099), _HookHandler)
+threading.Thread(target=_hook_srv.serve_forever, daemon=True).start()
+
+# Cleanup : supprime les webhooks préexistants (smoke test / run précédent) pour un état propre.
+s, _existing = call("GET", "/api/tenants/tnt-demo/webhooks", tok)
+for _w in _existing:
+    call("DELETE", f"/api/tenants/tnt-demo/webhooks/{_w['id']}", tok)
+
+print("=== 81. POST /webhooks (create, events contact.created) ===")
+s, wh = call("POST", "/api/tenants/tnt-demo/webhooks", tok,
+             {"url": "http://127.0.0.1:9099/wh", "events": ["contact.created"]})
+if s != 201:
+    print(f"  ⚠ DEBUG create webhook HTTP {s}: {wh}")
+ck(s, 201, "create webhook 201")
+ck(wh.get("events"), ["contact.created"], "events retournés filtrés")
+ck("secret" not in wh, True, "secret non exposé en WebhookOut")
+
+print("=== 82. POST /webhooks/{wid}/test (ping → delivery success) ===")
+s, tr = call("POST", f"/api/tenants/tnt-demo/webhooks/{wh['id']}/test", tok)
+ck(s, 200, "test ping 200")
+ck(tr.get("status"), "success", "test ping delivery success")
+ck(tr.get("response_code"), 200, "test ping HTTP 200 reçu")
+
+print("=== 83. POST /crm/contacts (emit contact.created → delivery) ===")
+s, c = call("POST", "/api/tenants/tnt-demo/crm/contacts", tok,
+            {"first_name": "HookE2E", "last_name": "Test", "email": "hooke2e@test.com", "title": "VP"})
+ck(s, 201, "create contact 201 (emit contact.created déclenché)")
+time.sleep(0.5)
+
+print("=== 84. GET /webhooks/{wid}/deliveries (2 deliveries success) ===")
+s, delivs = call("GET", f"/api/tenants/tnt-demo/webhooks/{wh['id']}/deliveries", tok)
+ck(s, 200, "list deliveries 200")
+ck(len(delivs), 2, "2 deliveries (webhook.test + contact.created)")
+ck(all(d.get("status") == "success" for d in delivs), True, "toutes les deliveries success")
+
+print("=== 85. signature HMAC reçue sur serveur local (64 hex) ===")
+ck(len(_hook_received), 2, "2 requêtes reçues sur serveur local")
+ck(all(len(r.get("sig", "")) == 64 for r in _hook_received), True, "signatures 64 hex chars (HMAC-SHA256)")
+ck(all(all(ch in "0123456789abcdef" for ch in r.get("sig", "")) for r in _hook_received), True, "signatures hex valides")
+
+print("=== 86. POST /webhooks RBAC (non-member → 403) ===")
+s, _ = call("POST", "/api/tenants/tnt-demo/webhooks", ptok,
+            {"url": "http://127.0.0.1:9099/x", "events": ["contact.created"]})
+ck(s, 403, "non-member → 403 sur create webhook")
+
+print("=== 87. PATCH /webhooks/{wid} (toggle active=false) ===")
+s, w2 = call("PATCH", f"/api/tenants/tnt-demo/webhooks/{wh['id']}", tok, {"active": False})
+ck(s, 200, "patch webhook 200")
+ck(w2.get("active"), False, "active=false après patch")
+
+print("=== 88. DELETE /webhooks/{wid} (CASCADE deliveries) ===")
+s, _ = call("DELETE", f"/api/tenants/tnt-demo/webhooks/{wh['id']}", tok)
+ck(s, 200, "delete webhook 200")
+s, lst = call("GET", "/api/tenants/tnt-demo/webhooks", tok)
+ck(len(lst), 0, "webhook list vide après delete")
+_hook_srv.shutdown()
+
 print()
 print(f"RESULT: {passed} passed, {failed} failed")
 sys.exit(0 if failed == 0 else 1)

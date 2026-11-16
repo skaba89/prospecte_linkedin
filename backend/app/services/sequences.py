@@ -12,6 +12,7 @@ interval <= 0. Démarré depuis main._startup. Multi-worker caveat : en producti
 chaque worker lance son scheduler → utiliser --workers 1 OU un process scheduler dédié (noté
 dans le README). Pour cette app (single-worker uvicorn), OK.
 """
+
 import logging
 import os
 import threading
@@ -22,6 +23,7 @@ from sqlalchemy.orm import Session
 
 from ..database import SessionLocal
 from ..models import Contact, EmailSequence, SequenceEnrollment, SequenceStep, Tenant
+from .webhooks import emit_event
 
 _log = logging.getLogger("revpulse.sequences")
 
@@ -39,10 +41,11 @@ def process_due_enrollments(db: Session) -> dict:
     from ..routers.notifications import send_email_to_contact
 
     now = datetime.utcnow()
-    due = (db.query(SequenceEnrollment)
-           .filter(SequenceEnrollment.status == "active",
-                   SequenceEnrollment.next_step_at <= now)
-           .all())
+    due = (
+        db.query(SequenceEnrollment)
+        .filter(SequenceEnrollment.status == "active", SequenceEnrollment.next_step_at <= now)
+        .all()
+    )
     stats = {"processed": 0, "sent": 0, "skipped": 0, "failed": 0, "completed": 0}
     for enr in due:
         stats["processed"] += 1
@@ -50,9 +53,7 @@ def process_due_enrollments(db: Session) -> dict:
         # Séquence supprimée ou pausée/draft → skip (le scheduler ne traite que active).
         if not seq or seq.status != "active":
             continue
-        step = (db.query(SequenceStep)
-                .filter_by(sequence_id=enr.sequence_id, step_order=enr.current_step_order)
-                .first())
+        step = db.query(SequenceStep).filter_by(sequence_id=enr.sequence_id, step_order=enr.current_step_order).first()
         contact = db.query(Contact).filter_by(id=enr.contact_id).first()
         if not contact or not step:
             enr.status = "failed"
@@ -62,10 +63,14 @@ def process_due_enrollments(db: Session) -> dict:
         tenant = db.query(Tenant).filter_by(id=seq.tenant_id).first()
         tenant_name = tenant.name if tenant else ""
         result = send_email_to_contact(
-            db, seq.tenant_id, contact, step.template_id,
+            db,
+            seq.tenant_id,
+            contact,
+            step.template_id,
             actor_user_id=enr.enrolled_by_user_id,
             actor_name="Sequence scheduler",
-            tenant_name=tenant_name)
+            tenant_name=tenant_name,
+        )
         if result.status not in _OK_STATUSES:
             # Échec réel (SMTP down, template inconnu) → bloque l'enrollment.
             enr.status = "failed"
@@ -78,8 +83,7 @@ def process_due_enrollments(db: Session) -> dict:
         else:
             stats["skipped"] += 1
         next_order = step.step_order + 1
-        next_step = (db.query(SequenceStep)
-                     .filter_by(sequence_id=enr.sequence_id, step_order=next_order).first())
+        next_step = db.query(SequenceStep).filter_by(sequence_id=enr.sequence_id, step_order=next_order).first()
         if next_step:
             enr.current_step_order = next_order
             enr.next_step_at = now + timedelta(days=next_step.delay_days)
@@ -87,6 +91,20 @@ def process_due_enrollments(db: Session) -> dict:
             enr.status = "completed"
             enr.completed_at = now
             stats["completed"] += 1
+        emit_event(
+            db,
+            tenant_id=seq.tenant_id,
+            event="sequence.step_completed",
+            payload={
+                "enrollment_id": enr.id,
+                "tenant_id": seq.tenant_id,
+                "sequence_id": enr.sequence_id,
+                "contact_id": enr.contact_id,
+                "step_order": step.step_order,
+                "template_id": step.template_id,
+                "completed": enr.status == "completed",
+            },
+        )
     db.commit()
     if stats["processed"]:
         _log.info("process_due_enrollments: %s", stats)
@@ -99,18 +117,21 @@ def process_sequence(db: Session, sequence_id: str, tenant_id: str) -> dict:
     from ..routers.notifications import send_email_to_contact
 
     now = datetime.utcnow()
-    due = (db.query(SequenceEnrollment)
-           .join(EmailSequence, SequenceEnrollment.sequence_id == EmailSequence.id)
-           .filter(SequenceEnrollment.status == "active",
-                   SequenceEnrollment.next_step_at <= now,
-                   EmailSequence.id == sequence_id,
-                   EmailSequence.tenant_id == tenant_id)
-           .all())
+    due = (
+        db.query(SequenceEnrollment)
+        .join(EmailSequence, SequenceEnrollment.sequence_id == EmailSequence.id)
+        .filter(
+            SequenceEnrollment.status == "active",
+            SequenceEnrollment.next_step_at <= now,
+            EmailSequence.id == sequence_id,
+            EmailSequence.tenant_id == tenant_id,
+        )
+        .all()
+    )
     stats = {"processed": 0, "sent": 0, "skipped": 0, "failed": 0, "completed": 0}
     for enr in due:
         stats["processed"] += 1
-        step = (db.query(SequenceStep)
-                .filter_by(sequence_id=enr.sequence_id, step_order=enr.current_step_order).first())
+        step = db.query(SequenceStep).filter_by(sequence_id=enr.sequence_id, step_order=enr.current_step_order).first()
         contact = db.query(Contact).filter_by(id=enr.contact_id).first()
         if not contact or not step:
             enr.status = "failed"
@@ -119,10 +140,14 @@ def process_sequence(db: Session, sequence_id: str, tenant_id: str) -> dict:
             continue
         tenant = db.query(Tenant).filter_by(id=tenant_id).first()
         result = send_email_to_contact(
-            db, tenant_id, contact, step.template_id,
+            db,
+            tenant_id,
+            contact,
+            step.template_id,
             actor_user_id=enr.enrolled_by_user_id,
             actor_name="Sequence scheduler (manual)",
-            tenant_name=tenant.name if tenant else "")
+            tenant_name=tenant.name if tenant else "",
+        )
         if result.status not in _OK_STATUSES:
             enr.status = "failed"
             enr.error_detail = result.detail
@@ -133,8 +158,7 @@ def process_sequence(db: Session, sequence_id: str, tenant_id: str) -> dict:
         else:
             stats["skipped"] += 1
         next_order = step.step_order + 1
-        next_step = (db.query(SequenceStep)
-                     .filter_by(sequence_id=enr.sequence_id, step_order=next_order).first())
+        next_step = db.query(SequenceStep).filter_by(sequence_id=enr.sequence_id, step_order=next_order).first()
         if next_step:
             enr.current_step_order = next_order
             enr.next_step_at = now + timedelta(days=next_step.delay_days)
@@ -142,6 +166,20 @@ def process_sequence(db: Session, sequence_id: str, tenant_id: str) -> dict:
             enr.status = "completed"
             enr.completed_at = now
             stats["completed"] += 1
+        emit_event(
+            db,
+            tenant_id=tenant_id,
+            event="sequence.step_completed",
+            payload={
+                "enrollment_id": enr.id,
+                "tenant_id": tenant_id,
+                "sequence_id": enr.sequence_id,
+                "contact_id": enr.contact_id,
+                "step_order": step.step_order,
+                "template_id": step.template_id,
+                "completed": enr.status == "completed",
+            },
+        )
     db.commit()
     return stats
 

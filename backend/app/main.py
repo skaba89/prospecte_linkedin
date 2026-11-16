@@ -1,4 +1,5 @@
 """Point d'entrée FastAPI : CORS, rate-limit, routers, seed au démarrage, static du frontend."""
+
 import logging
 import os
 
@@ -31,15 +32,19 @@ from .routers import (
     notifications,
     sequences,
     tenants,
+    webhooks,
 )
 from .seed import seed_all
 
 # Logging structuré (JSON en prod, texte en dev/test) — configuré avant l'app.
 configure_logging(settings.log_level, settings.log_format)
 
-app = FastAPI(title="RevPulse API", version="1.1.0",
-              description="Backend multi-tenant du LinkedIn Command Center — auth JWT, RBAC, "
-                          "dashboard data, migrations Alembic, rate-limit, invitations e-mail SMTP.")
+app = FastAPI(
+    title="RevPulse API",
+    version="1.1.0",
+    description="Backend multi-tenant du LinkedIn Command Center — auth JWT, RBAC, "
+    "dashboard data, migrations Alembic, rate-limit, invitations e-mail SMTP.",
+)
 
 # Rate-limiting (slowapi) : le limiter est défini dans .extensions (pas d'import circulaire).
 app.state.limiter = limiter
@@ -48,7 +53,9 @@ app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[o.strip() for o in settings.cors_origins.split(",")] if settings.cors_origins else ["*"],
-    allow_credentials=True, allow_methods=["*"], allow_headers=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
     expose_headers=["X-Total-Count", "X-Request-ID"],
 )
 app.add_middleware(SlowAPIMiddleware)
@@ -68,6 +75,7 @@ def _startup():
     # P15 : scheduler de séquences (background thread daemon, stdlib threading — pas de dep).
     # Traite les enrollments dus toutes les SEQUENCE_SCHEDULER_INTERVAL_SECONDS (défaut 300s).
     from .services.sequences import start_scheduler
+
     start_scheduler()
 
 
@@ -83,18 +91,30 @@ def health(db: Session = Depends(get_db)):
         db.execute(text("SELECT 1")).first()
         db_ok = True
     except Exception as e:
-        logging.getLogger("revpulse.health").warning(
-            "DB healthcheck failed: %s: %s", type(e).__name__, str(e)[:200])
+        logging.getLogger("revpulse.health").warning("DB healthcheck failed: %s: %s", type(e).__name__, str(e)[:200])
     return JSONResponse(
-        {"status": "ok" if db_ok else "degraded", "service": "revpulse-api",
-         "db_ok": db_ok, "env": settings.env},
+        {"status": "ok" if db_ok else "degraded", "service": "revpulse-api", "db_ok": db_ok, "env": settings.env},
         status_code=200 if db_ok else 503,
     )
 
 
 # Routers métier
-for r in (auth.router, tenants.router, members.router, approvals.router, dashboard.router, billing.router,
-          content.router, linkedin.router, audit.router, crm.router, notifications.router, sequences.router, analytics.router):
+for r in (
+    auth.router,
+    tenants.router,
+    members.router,
+    approvals.router,
+    dashboard.router,
+    billing.router,
+    content.router,
+    linkedin.router,
+    audit.router,
+    crm.router,
+    notifications.router,
+    sequences.router,
+    analytics.router,
+    webhooks.router,
+):
     app.include_router(r)
 
 

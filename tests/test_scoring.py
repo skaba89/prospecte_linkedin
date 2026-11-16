@@ -56,15 +56,16 @@ ck("profile = min(sum(breakdown.values()), 100)" in crm, True, "profil cap 100 (
 
 # ─── crm.py : _score_contact (query engagement DB) ────────────────────────────
 print("\n=== crm.py : _score_contact (query engagement DB P17) ===")
-ck("emails_sent = (db.query(models.Notification)" in crm, True, "query Notification count")
+ck("db.query(models.Notification)" in crm, True, "query Notification count")
 ck('recipient_contact_id=c.id, type="email"' in crm, True, "filtre recipient_contact_id + type=email")
 ck('models.Notification.status.in_(["sent", "dry_run"])' in crm, True, "filtre status sent/dry_run (engagement valide)")
-ck("order_by(models.Notification.created_at.desc()).first()" in crm, True, "last notification (last_contact_at)")
+ck("order_by(models.Notification.created_at.desc())" in crm, True, "last notification (last_contact_at)")
 ck("last_notif.created_at if last_notif else None" in crm, True, "last_contact_at extrait (None si jamais contacté)")
-ck("db.query(models.Opportunity).filter_by(tenant_id=c.tenant_id, contact_id=c.id)" in crm, True, "query Opportunity par contact")
+ck("db.query(models.Opportunity)" in crm and ".filter_by(tenant_id=c.tenant_id, contact_id=c.id)" in crm, True, "query Opportunity par contact")
 ck('models.Opportunity.stage.in_(["prospecting", "qualified", "proposal", "negotiation"])' in crm, True,
    "opportunité active = stage prospecting/qualified/proposal/negotiation (exclut closed)")
-ck("_compute_score(c, company, emails_sent=emails_sent" in crm, True, "_score_contact passe l'engagement à _compute_score")
+ck("emails_sent=emails_sent, last_contact_at=last_contact_at, has_active_opportunity=has_opp" in crm, True,
+   "_score_contact passe l'engagement à _compute_score")
 ck("def _engagement_signals(" in crm, True, "_engagement_signals helper extrait (DRY — un seul point de query)")
 ck("emails_sent, last_contact_at, has_opp = _engagement_signals(db, c)" in crm, True, "_score_contact délègue à _engagement_signals")
 ck("return score, breakdown" in crm, True, "_score_contact retourne (score, breakdown) tuple")
