@@ -10,7 +10,7 @@ import sys
 os.environ.setdefault("REVPULSE_ENV", "test")
 sys.path.insert(0, "backend")
 
-from app.config import INSECURE_SECRETS, validate_jwt_secret  # noqa: E402
+from app.config import INSECURE_SECRETS, validate_jwt_secret
 
 GOOD_32 = "x" * 32  # seuil minimal accepté en production
 GOOD_48 = "a-very-long-random-secret-48-chars-abc-def"

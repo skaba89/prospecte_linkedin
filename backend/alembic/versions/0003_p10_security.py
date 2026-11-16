@@ -15,6 +15,7 @@ Sécurité de la migration :
 import os
 
 import sqlalchemy as sa
+
 from alembic import op
 
 revision = "0003_p10_security"
