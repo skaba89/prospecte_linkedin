@@ -26,7 +26,7 @@ import urllib.parse
 import urllib.request
 from datetime import datetime, timedelta
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Response, status
 from fastapi.responses import RedirectResponse
 from sqlalchemy.orm import Session
 
@@ -35,6 +35,9 @@ from ..audit import log_audit
 from ..config import settings
 from ..database import get_db
 from ..deps import get_tenant, require_permission
+from ..pagination import Page, page_dep, set_total
+from ..services import linkedin_client
+from .crm import _compute_score
 
 router = APIRouter(prefix="/api", tags=["linkedin"])
 _log = logging.getLogger("revpulse.linkedin")
@@ -105,6 +108,18 @@ def _store_token(tok: str) -> str:
 def _load_token(conn: models.LinkedInConnection) -> str:
     """Déchiffre le token stocké (gère rotation + legacy plaintext dev)."""
     return security.decrypt_token(conn.access_token)
+
+
+def _placeholder_email(linkedin_url: str, first_name: str, last_name: str) -> str:
+    """Email synthétique pour un contact LinkedIn sans email (l'API /v2/connections ne
+    l'expose pas — scope r_emailaddress séparé). Dérivé du slug linkedin_url (unique par
+    connexion) + domaine clairement factice (@linkedin.sync) — jamais un email réel."""
+    slug = ""
+    if linkedin_url:
+        slug = linkedin_url.rstrip("/").split("/in/")[-1].split("/")[-1].lower()
+    if not slug:
+        slug = f"{first_name}{last_name}".lower()
+    return f"{slug}@linkedin.sync"
 
 
 def _upsert_connection(db: Session, tid: str, *, token: str, member_id: str, member_name: str,
@@ -365,3 +380,108 @@ def linkedin_publish(tid: str, aid: str, parent_urn: str | None = None, db: Sess
         _log.warning("LinkedIn publish error: %s", type(e).__name__)
         db.commit()
         return schemas.PublishResult(published=False, post_urn="", detail=pub.error_detail)
+
+
+# ─── P12 : sync LinkedIn → CRM Contacts (pont P10 OAuth ↔ P11 CRM) ─────────────
+@router.post("/tenants/{tid}/linkedin/sync-contacts", response_model=schemas.SyncResult)
+def linkedin_sync_contacts(tid: str, db: Session = Depends(get_db),
+                           _t: models.Tenant = Depends(get_tenant),
+                           membership=Depends(require_permission("crm.manage"))):
+    """P12 : sync des connexions LinkedIn 1er degré → CRM Contacts.
+
+    Récupère les connexions (mock en dev/CI, réel en prod avec retry/backoff), upsert dans
+    Contact (source='linkedin', dédup par linkedin_url puis email dans le tenant). Skip les
+    emails en suppression list (RGPD). Score recalculé via l'heuristique CRM (_compute_score).
+    Trace dans LinkedInSyncRun + audit_log. Retourne les compteurs (imported/updated/skipped/total).
+    """
+    conn = db.query(models.LinkedInConnection).filter_by(tenant_id=tid).first()
+    if not conn:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "Aucun compte LinkedIn connecté. Connectez-le d'abord (GET /linkedin/auth).")
+    run = models.LinkedInSyncRun(tenant_id=tid, status="running", actor_user_id=membership.user_id)
+    db.add(run)
+    db.commit()
+    db.refresh(run)
+    try:
+        is_mock = _is_mock() or _load_token(conn) == _MOCK_TOKEN
+        access_token = _load_token(conn)
+        connections = linkedin_client.fetch_connections(access_token, mock=is_mock)
+        imported = updated = skipped = 0
+        for c in connections:
+            email = (c.get("email") or "").strip().lower()
+            linkedin_url = (c.get("linkedin_url") or "").strip()
+            # RGPD : skip si email présent dans la suppression list du tenant.
+            if email and db.query(models.SuppressionList).filter_by(
+                    tenant_id=tid, email=email).first():
+                skipped += 1
+                continue
+            # Dédup : linkedin_url d'abord (identifiant LinkedIn stable), puis email.
+            existing = None
+            if linkedin_url:
+                existing = db.query(models.Contact).filter_by(
+                    tenant_id=tid, linkedin_url=linkedin_url).first()
+            if not existing and email:
+                existing = db.query(models.Contact).filter_by(
+                    tenant_id=tid, email=email).first()
+            title = c.get("title") or c.get("headline", "")
+            first_name, last_name = c.get("first_name", ""), c.get("last_name", "")
+            if existing:
+                if first_name:
+                    existing.first_name = first_name
+                if last_name:
+                    existing.last_name = last_name
+                if title:
+                    existing.title = title
+                if linkedin_url:
+                    existing.linkedin_url = linkedin_url
+                if email:
+                    existing.email = email
+                existing.source = "linkedin"
+                existing.score, _ = _compute_score(existing, None)
+                updated += 1
+            else:
+                contact = models.Contact(
+                    tenant_id=tid, first_name=first_name, last_name=last_name,
+                    email=email or _placeholder_email(linkedin_url, first_name, last_name),
+                    title=title, linkedin_url=linkedin_url,
+                    source="linkedin", status="new")
+                contact.score, _ = _compute_score(contact, None)
+                db.add(contact)
+                imported += 1
+        run.total, run.imported, run.updated, run.skipped = (
+            len(connections), imported, updated, skipped)
+        run.status = "completed"
+        run.completed_at = datetime.utcnow()
+        db.commit()
+        log_audit(db, tenant_id=tid, actor_user_id=membership.user_id, actor_name=membership.name,
+                  action="linkedin.sync_contacts", target_type="linkedin_sync_run", target_id=run.id,
+                  detail={"total": run.total, "imported": imported, "updated": updated,
+                          "skipped": skipped, "mock": is_mock})
+        db.commit()
+        mode = "mock" if is_mock else "réel"
+        return schemas.SyncResult(
+            sync_run_id=run.id, status="completed", total=run.total,
+            imported=imported, updated=updated, skipped=skipped,
+            detail=f"Sync {mode} terminé : {imported} importés, {updated} mis à jour, "
+                  f"{skipped} ignorés (RGPD).")
+    except Exception as e:
+        run.status = "failed"
+        run.error_detail = f"{type(e).__name__}: {str(e)[:200]}"
+        run.completed_at = datetime.utcnow()
+        db.commit()
+        _log.warning("LinkedIn sync failed (run %s): %s", run.id, run.error_detail)
+        return schemas.SyncResult(
+            sync_run_id=run.id, status="failed", total=0,
+            imported=0, updated=0, skipped=0, detail=run.error_detail)
+
+
+@router.get("/tenants/{tid}/linkedin/sync-runs", response_model=list[schemas.SyncRunOut])
+def linkedin_sync_runs(tid: str, response: Response, page: Page = Depends(page_dep),
+                       db: Session = Depends(get_db), _t: models.Tenant = Depends(get_tenant)):
+    """P12 : historique paginé des syncs LinkedIn → CRM (métriques + traçabilité).
+    Trié par started_at desc (plus récent d'abord). X-Total-Count = total runs."""
+    q = (db.query(models.LinkedInSyncRun).filter_by(tenant_id=tid)
+         .order_by(models.LinkedInSyncRun.started_at.desc()))
+    set_total(response, q.count())
+    return q.offset(page.skip).limit(page.limit).all()

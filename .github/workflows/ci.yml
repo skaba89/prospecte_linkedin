@@ -58,6 +58,8 @@ jobs:
         run: python tests/test_p10_security.py
       - name: P11 CRM static checks (models/migration/schemas/router/RBAC/dedup/score)
         run: python tests/test_crm.py
+      - name: P12 LinkedIn sync static checks (client/sync/dedup/RBAC/retry)
+        run: python tests/test_linkedin.py
 
   test-api:
     name: API tests (sqlite, sans docker)
