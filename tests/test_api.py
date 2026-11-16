@@ -653,6 +653,44 @@ ck(s, 400, "enroll-batch empty (no segment_id, no contact_ids) → 400")
 s, _ = call("POST", f"/api/tenants/tnt-demo/crm/sequences/{sid2}/enroll-batch", ptok, {"segment_id": seg_id})
 ck(s, 403, "non-member → 403 sur enroll-batch")
 
+# ─── P17 Scoring avancé (75-80) ──────────────────────────────────────────────
+print("=== 75. POST /crm/contacts (cid_score : email+linkedin+VP+phone = profil 80) ===")
+s, csc = call("POST", "/api/tenants/tnt-demo/crm/contacts", tok,
+              {"first_name": "Score", "last_name": "P17", "email": "score.p17@test.com",
+               "linkedin_url": "https://linkedin.com/in/scorep17", "title": "VP Engineering",
+               "phone": "+33612345678"})
+ck(s, 201, "create cid_score 201")
+cid_score = csc["id"]
+
+print("=== 76. POST /crm/contacts/{cid_score}/score (profil=80, engagement=0) ===")
+s, sb = call("POST", f"/api/tenants/tnt-demo/crm/contacts/{cid_score}/score", tok)
+ck(s, 200, "recompute score 200")
+ck(sb.get("score"), 80, "score=80 (4 critères profil, no engagement yet)")
+ck(sb.get("breakdown", {}).get("engagement"), 0, "engagement=0 (no email sent)")
+
+print("=== 77. POST /crm/contacts/{cid_score}/email (envoi → hook recompute P17) ===")
+s, em = call("POST", f"/api/tenants/tnt-demo/crm/contacts/{cid_score}/email", tok,
+             {"template": "cold_outreach"})
+ck(s, 200, "send email 200")
+ck(em.get("status") in ("sent", "dry_run"), True, f"email status={em.get('status')} (engagement valide)")
+
+print("=== 78. POST /crm/contacts/{cid_score}/score AGAIN (engagement +5, decay 0) ===")
+s, sb2 = call("POST", f"/api/tenants/tnt-demo/crm/contacts/{cid_score}/score", tok)
+ck(s, 200, "recompute score again 200")
+ck(sb2.get("score"), 85, "score=85 (80 profil + 5 engagement, decay=0 car contact récent)")
+ck(sb2.get("breakdown", {}).get("engagement"), 5, "engagement=5 (1 email × 5)")
+ck(sb2.get("breakdown", {}).get("decay"), 0, "decay=0 (last_contact = now)")
+
+print("=== 79. POST /crm/contacts/score-recompute (batch) ===")
+s, srr = call("POST", "/api/tenants/tnt-demo/crm/contacts/score-recompute", tok)
+ck(s, 200, "batch recompute 200")
+ck(srr.get("recomputed", 0) >= 1, True, f"recomputed ≥1 ({srr.get('recomputed')})")
+ck(srr.get("avg_score", -1) >= 0, True, f"avg_score ≥0 ({srr.get('avg_score')})")
+
+print("=== 80. score-recompute RBAC (non-member → 403) ===")
+s, _ = call("POST", "/api/tenants/tnt-demo/crm/contacts/score-recompute", ptok)
+ck(s, 403, "non-member → 403 sur score-recompute")
+
 print()
 print(f"RESULT: {passed} passed, {failed} failed")
 sys.exit(0 if failed == 0 else 1)

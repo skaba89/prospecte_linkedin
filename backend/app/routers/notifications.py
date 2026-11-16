@@ -123,6 +123,12 @@ def send_email_to_contact(db: Session, tenant_id: str, contact: models.Contact,
     db.add(notif)
     db.commit()
     db.refresh(notif)
+    # P17 : recompute le score du contact (l'engagement a changé — un e-mail de plus envoyé).
+    from .crm import _score_contact
+    contact = db.query(models.Contact).filter_by(id=ctid, tenant_id=tid).first()
+    if contact:
+        _score_contact(db, contact)
+        db.commit()
     log_audit(db, tenant_id=tid, actor_user_id=actor_user_id, actor_name=actor_name,
               action="crm.email_contact", target_type="contact", target_id=ctid,
               detail={"template": template_id, "status": notif_status, "email": email})

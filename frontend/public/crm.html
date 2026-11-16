@@ -101,6 +101,7 @@
           </select>
           <input type="number" id="f-score" placeholder="Score min" min="0" max="100" style="width:90px" onchange="loadContacts()">
           <button class="btn btn-primary btn-sm" onclick="exportCsv()">Export CSV</button>
+          <button class="btn btn-sm" onclick="recomputeAllScores()" title="P17 : recalcule les scores (profil + engagement emails + decay récence)">↻ Recompute scores</button>
         </div>
         <div id="contacts-table"><div class="empty">Chargement…</div></div>
       </div>
@@ -306,6 +307,14 @@ async function exportCsv(){
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a'); a.href=url; a.download=`contacts_${TID}.csv`; a.click();
   URL.revokeObjectURL(url);
+}
+
+async function recomputeAllScores(){
+  if(!confirm('Recalculer le score de tous les contacts (profil P11 + engagement P17 + decay) ?')) return;
+  const {status, data} = await api('POST', `/tenants/${TID}/crm/contacts/score-recompute`);
+  if(status !== 200){ alert('Recompute échoué : ' + (data?.detail || status)); return; }
+  alert('Scores recalculés : ' + (data.recomputed||0) + ' contacts (score moyen ' + (data.avg_score||0) + ').');
+  loadContacts();
 }
 
 async function importFile(){

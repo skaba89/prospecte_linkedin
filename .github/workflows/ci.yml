@@ -68,6 +68,8 @@ jobs:
         run: python tests/test_sequences.py
       - name: P16 Ciblage avancé + batch enrollment static checks (has_email/no_email_days/enrolled_in_sequence/enroll-batch)
         run: python tests/test_segments_dyn.py
+      - name: P17 Scoring avancé static checks (engagement+decay+opportunity, hook notifications, batch recompute)
+        run: python tests/test_scoring.py
 
   test-api:
     name: API tests (sqlite, sans docker)
