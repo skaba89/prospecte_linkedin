@@ -83,6 +83,7 @@
       <div class="tab" data-tab="pipeline" onclick="showTab('pipeline')">Pipeline</div>
       <div class="tab" data-tab="import" onclick="showTab('import')">Import</div>
       <div class="tab" data-tab="suppression" onclick="showTab('suppression')">Exclusions RGPD</div>
+      <div class="tab" data-tab="linkedin" onclick="showTab('linkedin')">LinkedIn</div>
     </div>
 
     <div id="tab-contacts">
@@ -141,6 +142,24 @@
         <div id="suppression-table"><div class="empty">Chargement…</div></div>
       </div>
     </div>
+
+    <div id="tab-linkedin" style="display:none">
+      <div class="panel">
+        <h3 style="margin-bottom:8px">Sync LinkedIn → CRM</h3>
+        <p style="color:var(--muted);font-size:13px;margin-bottom:16px">
+          Importe vos connexions LinkedIn 1er degré dans le CRM (source=linkedin, dédup par profil URL).
+          Skip les exclusions RGPD. Score recalculé automatiquement (heuristique CRM).
+        </p>
+        <div id="li-status" class="result">Chargement…</div>
+        <div style="margin:16px 0;display:flex;gap:12px;align-items:center">
+          <button class="btn btn-primary btn-sm" onclick="syncLinkedIn()" id="li-sync-btn">↻ Sync maintenant</button>
+          <a href="#" id="li-connect-link" target="_blank" style="font-size:13px"></a>
+        </div>
+        <div id="li-sync-result" class="result"></div>
+        <h4 style="margin:24px 0 8px">Historique des syncs</h4>
+        <div id="sync-runs-table"><div class="empty">Chargement…</div></div>
+      </div>
+    </div>
   </div>
 </div>
 
@@ -185,9 +204,10 @@ function logout(){ localStorage.removeItem('revpulse_jwt'); location.href='/'; }
 
 function showTab(name){
   document.querySelectorAll('.tab').forEach(t=>t.classList.toggle('active', t.dataset.tab===name));
-  ['contacts','pipeline','import','suppression'].forEach(t=>{
+  ['contacts','pipeline','import','suppression','linkedin'].forEach(t=>{
     document.getElementById('tab-'+t).style.display = (t===name)?'block':'none';
   });
+  if(name==='linkedin'){ loadLinkedInStatus(); loadSyncRuns(); }
 }
 
 function debouncedLoad(){ clearTimeout(debounceT); debounceT=setTimeout(loadContacts, 250); }
@@ -331,6 +351,66 @@ dz.addEventListener('drop', ev=>{
   const f = ev.dataTransfer.files[0];
   if(f){ document.getElementById('file-input').files = ev.dataTransfer.files; importFile(); }
 });
+
+async function loadLinkedInStatus(){
+  const el = document.getElementById('li-status');
+  const r = await api('GET', `/tenants/${TID}/linkedin/status`);
+  if(r.status !== 200){ el.innerHTML = '<span style="color:var(--muted)">Statut indisponible.</span>'; return; }
+  const s = r.data || {};
+  const link = document.getElementById('li-connect-link');
+  if(!s.connected){
+    el.innerHTML = '<span style="color:var(--muted)">● Non connecté.</span>';
+    const ar = await api('GET', `/tenants/${TID}/linkedin/auth`);
+    if(ar.status===200 && ar.data && ar.data.auth_url){
+      link.href = ar.data.auth_url;
+      link.textContent = ar.data.mock ? '→ Connexion mock (dev)' : '→ Connecter mon LinkedIn';
+    }
+    document.getElementById('li-sync-btn').disabled = true;
+    return;
+  }
+  el.innerHTML = '<span style="color:#10b981">● Connecté</span> — ' + esc(s.member_name||'Membre LinkedIn')
+    + (s.member_headline ? ' <span style="color:var(--muted)">· '+esc(s.member_headline)+'</span>' : '')
+    + (s.mock ? ' <span style="color:var(--muted);font-size:12px">(mode mock)</span>' : '');
+  link.textContent = '';
+  document.getElementById('li-sync-btn').disabled = false;
+}
+
+async function syncLinkedIn(){
+  const btn = document.getElementById('li-sync-btn');
+  const el = document.getElementById('li-sync-result');
+  if(btn.disabled) return;
+  btn.disabled = true; el.innerHTML = '<span style="color:var(--muted)">Sync en cours…</span>';
+  const r = await api('POST', `/tenants/${TID}/linkedin/sync-contacts`);
+  btn.disabled = false;
+  if(r.status===200 && r.data){
+    const d = r.data;
+    el.innerHTML = '<div class="card" style="border-color:#10b981"><strong>✓ '+esc(d.status)+'</strong> — '
+      + d.imported+' importés, '+d.updated+' mis à jour, '+d.skipped+' ignorés (RGPD) sur '+d.total+'.'
+      + '<div style="color:var(--muted);font-size:12px;margin-top:4px">'+esc(d.detail||'')+'</div></div>';
+    loadSyncRuns();
+  } else if(r.status===409){
+    el.innerHTML = '<div class="card" style="border-color:#f59e0b">Connectez LinkedIn d\'abord (lien ci-dessus).</div>';
+  } else {
+    el.innerHTML = '<div class="card" style="border-color:#ef4444">Erreur '+r.status+'.</div>';
+  }
+}
+
+async function loadSyncRuns(){
+  const el = document.getElementById('sync-runs-table');
+  const r = await api('GET', `/tenants/${TID}/linkedin/sync-runs`);
+  if(r.status!==200 || !Array.isArray(r.data)){ el.innerHTML='<div class="empty">Aucun sync.</div>'; return; }
+  const runs = r.data;
+  if(!runs.length){ el.innerHTML='<div class="empty">Aucun sync effectué.</div>'; return; }
+  const th = h=>'<th style="text-align:left;padding:8px;border-bottom:1px solid var(--border);color:var(--muted)">'+h+'</th>';
+  const td = v=>'<td style="padding:8px;border-bottom:1px solid var(--border)">'+v+'</td>';
+  el.innerHTML = '<table style="width:100%;border-collapse:collapse;font-size:13px"><thead><tr>'
+    + ['Date','Statut','Total','Importés','Maj','Ignorés'].map(th).join('') + '</tr></thead><tbody>'
+    + runs.map(run=>'<tr>'
+      + td(run.started_at ? new Date(run.started_at).toLocaleString('fr-FR') : '—')
+      + td((run.status==='completed'?'✓ ':'✗ ')+esc(run.status))
+      + td(run.total||0) + td(run.imported||0) + td(run.updated||0) + td(run.skipped||0)
+      + '</tr>').join('') + '</tbody></table>';
+}
 
 init();
 </script>

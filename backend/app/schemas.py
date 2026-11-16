@@ -162,6 +162,30 @@ class PublishResult(BaseModel):
     detail: str = ""
 
 
+class SyncResult(BaseModel):
+    """Résultat d'une sync LinkedIn → CRM (P12) : compteurs + id du run pour traçabilité."""
+    sync_run_id: str
+    status: str  # completed | failed
+    total: int = 0
+    imported: int = 0
+    updated: int = 0
+    skipped: int = 0
+    detail: str = ""
+
+
+class SyncRunOut(BaseModel):
+    """Ligne d'historique d'un sync run (P12) — pour GET /linkedin/sync-runs."""
+    model_config = ConfigDict(from_attributes=True)
+    id: str
+    status: str
+    total: int = 0
+    imported: int = 0
+    updated: int = 0
+    skipped: int = 0
+    started_at: datetime | None = None
+    completed_at: datetime | None = None
+
+
 # ---- Audit (P4) ----
 class AuditLogOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)

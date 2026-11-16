@@ -334,6 +334,61 @@ print("=== 37. CRM tenant isolation (non-member → 403) ===")
 s, _ = call("GET", "/api/tenants/tnt-demo/crm/contacts", ptok)
 ck(s, 403, "non-member → 403 sur CRM tnt-demo")
 
+# ─── P12 LinkedIn → CRM sync (38-44) : mock-connect, sync, dédup, historique, 409, RBAC ─
+print("=== 38. LinkedIn mock-connect (tnt-demo) ===")
+# mock-connect n'a pas d'auth (P10) + redirige → call suit le redirect (HTML, non parsable).
+# On l'invoque pour l'effet de bord (crée LinkedInConnection) puis on vérifie /status.
+call("GET", "/api/tenants/tnt-demo/linkedin/mock-connect")
+s, st = call("GET", "/api/tenants/tnt-demo/linkedin/status", tok)
+ck(s, 200, "linkedin status 200")
+ck(st.get("connected"), True, "linkedin connected après mock-connect")
+ck(st.get("mock"), True, "status mock=True (mode dev sans creds)")
+
+print("=== 39. POST /linkedin/sync-contacts (sync LinkedIn → CRM) ===")
+s, res = call("POST", "/api/tenants/tnt-demo/linkedin/sync-contacts", tok)
+ck(s, 200, "sync-contacts 200")
+ck(res.get("status"), "completed", "sync status completed")
+ck(res.get("total", 0) >= 8, True, f"sync total ≥8 ({res.get('total')})")
+ck(res.get("imported", 0) >= 1, True, f"sync imported ≥1 ({res.get('imported')})")
+ck(bool(res.get("sync_run_id")), True, "sync_run_id retourné (traçabilité)")
+
+print("=== 40. GET /crm/contacts?source=linkedin (vérifie le sync → CRM) ===")
+s, cs = call("GET", "/api/tenants/tnt-demo/crm/contacts?source=linkedin", tok)
+ck(s, 200, "contacts source=linkedin 200")
+ck(len(cs) >= 8, True, f"≥8 contacts source=linkedin ({len(cs)})")
+ck(all(c.get("source") == "linkedin" for c in cs), True, "tous les contacts sont source=linkedin")
+ck(any("cto" in c.get("title", "").lower() for c in cs), True,
+   "≥1 contact CTO syncé (nourrit segment P11 'Décideurs tech')")
+ck(any(c.get("linkedin_url", "").startswith("https://linkedin.com/in/") for c in cs), True,
+   "contacts ont une linkedin_url")
+
+print("=== 41. POST /linkedin/sync-contacts (idempotence — dédup par linkedin_url) ===")
+s, res2 = call("POST", "/api/tenants/tnt-demo/linkedin/sync-contacts", tok)
+ck(s, 200, "2e sync 200")
+ck(res2.get("status"), "completed", "2e sync completed")
+ck(res2.get("imported", -1) == 0, True, f"2e sync imported 0 (déjà tous là, {res2.get('imported')})")
+ck(res2.get("updated", 0) >= 8, True, f"2e sync updated ≥8 (dédup, {res2.get('updated')})")
+
+print("=== 42. GET /linkedin/sync-runs (historique paginé) ===")
+s, runs = call("GET", "/api/tenants/tnt-demo/linkedin/sync-runs", tok)
+ck(s, 200, "sync-runs 200")
+ck(len(runs) >= 2, True, f"≥2 runs historisés ({len(runs)})")
+ck(runs[0].get("status"), "completed", "dernier run completed")
+ck(runs[0].get("total", 0) >= 8, True, "dernier run total ≥8")
+ck(all("started_at" in r and "completed_at" in r for r in runs), True,
+   "chaque run a started_at + completed_at")
+
+print("=== 43. disconnect → sync → 409 (pas de connexion) ===")
+s, _ = call("POST", "/api/tenants/tnt-demo/linkedin/disconnect", tok)
+ck(s, 200, "disconnect 200")
+s, res3 = call("POST", "/api/tenants/tnt-demo/linkedin/sync-contacts", tok)
+ck(s, 409, "sync après disconnect → 409 (pas de connexion)")
+ck("connecté" in res3.get("detail", "") or "409" in str(s), True, "message 409 explicatif")
+
+print("=== 44. sync-contacts RBAC (non-member → 403) ===")
+s, _ = call("POST", "/api/tenants/tnt-demo/linkedin/sync-contacts", ptok)
+ck(s, 403, "non-member → 403 sur sync-contacts")
+
 print()
 print(f"RESULT: {passed} passed, {failed} failed")
 sys.exit(0 if failed == 0 else 1)

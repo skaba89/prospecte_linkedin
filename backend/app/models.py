@@ -202,6 +202,25 @@ class Publication(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
+class LinkedInSyncRun(Base):
+    """Trace d'une exécution de sync LinkedIn → CRM Contacts (P12). Une ligne par sync :
+    status (running|completed|failed), compteurs (total/imported/updated/skipped),
+    fenêtre temporelle (started_at/completed_at) + error_detail si échec. Scopée par tenant,
+    rattachée à l'utilisateur qui a déclenché (actor_user_id). Pont P10 (OAuth) ↔ P11 (CRM)."""
+    __tablename__ = "linkedin_sync_runs"
+    id = Column(String, primary_key=True, default=lambda: _uid("syn"))
+    tenant_id = Column(String, ForeignKey("tenants.id"), nullable=False, index=True)
+    status = Column(String, nullable=False)  # running | completed | failed
+    total = Column(Integer, default=0, nullable=False)
+    imported = Column(Integer, default=0, nullable=False)
+    updated = Column(Integer, default=0, nullable=False)
+    skipped = Column(Integer, default=0, nullable=False)
+    error_detail = Column(Text, nullable=True)
+    started_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    completed_at = Column(DateTime, nullable=True)
+    actor_user_id = Column(String, ForeignKey("users.id"), nullable=True)
+
+
 # ─── P11 : CRM & prospection ───────────────────────────────────────────────────
 # Chaîne : Company (entreprise) → Contact (prospect, rattaché à 0/1 company) →
 # Opportunity (affaire en pipeline) + Task + Note (activités liées au contact ou
