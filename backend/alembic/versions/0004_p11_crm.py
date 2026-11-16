@@ -18,6 +18,7 @@ Sécurité de la migration :
   - Aucune données seedée par la migration (le seed Python idempotent gère la démo).
 """
 import sqlalchemy as sa
+from sqlalchemy.dialects.postgresql import JSONB
 
 from alembic import op
 
@@ -131,7 +132,7 @@ def upgrade() -> None:
         sa.Column("id", sa.String(), nullable=False),
         sa.Column("tenant_id", sa.String(), nullable=False, index=True),
         sa.Column("name", sa.String(), nullable=False),
-        sa.Column("criteria", sa.Text(), nullable=False),  # JSON sérialisé (JSONType côté ORM)
+        sa.Column("criteria", JSONB().with_variant(sa.Text(), "sqlite"), nullable=False),  # JSONB PG / Text sqlite — aligné sur JSONType du modèle (pattern 0001/0002)
         sa.Column("created_at", sa.DateTime(), nullable=False, server_default=sa.func.now()),
         sa.PrimaryKeyConstraint("id"),
         sa.ForeignKeyConstraint(["tenant_id"], ["tenants.id"]),

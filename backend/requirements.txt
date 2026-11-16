@@ -10,4 +10,4 @@ alembic==1.13.3
 slowapi==0.1.9
 prometheus-client==0.24.1
 openpyxl==3.1.5
-python-multipart==0.0.20
+python-multipart==0.0.33
