@@ -616,3 +616,17 @@ class SequenceStats(BaseModel):
     completed: int
     paused: int
     failed: int
+
+
+# ---- Batch enrollment (P16 — ciblage segment → séquence) ----
+class EnrollBatchRequest(BaseModel):
+    """Batch enrollment (P16) : segment_id (applique le criteria du segment) OU contact_ids explicites."""
+    segment_id: str | None = None
+    contact_ids: list[str] = []
+
+
+class EnrollBatchResult(BaseModel):
+    """Résultat d'un batch enrollment (P16) : enrolled + skipped (déjà active) + total."""
+    enrolled: int
+    skipped: int
+    total: int

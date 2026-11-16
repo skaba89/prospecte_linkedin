@@ -10,10 +10,10 @@ Score : heuristique 0-100 (email, linkedin, titre senior, taille entreprise, té
 """
 import csv
 import io
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, Response, UploadFile, status
-from sqlalchemy import or_
+from sqlalchemy import exists, or_
 from sqlalchemy.orm import Session
 
 from .. import models, schemas
@@ -73,8 +73,13 @@ def _score_contact(db: Session, c: models.Contact) -> int:
 
 
 def _apply_contact_filters(q, tid: str, *, search=None, status=None, company_id=None,
-                           owner_id=None, score_min=None, source=None):
-    """Applique les filtres search/status/company/owner/score/source à une query Contact."""
+                           owner_id=None, score_min=None, source=None,
+                           has_email=None, no_email_days=None, enrolled_in_sequence=None):
+    """Applique les filtres search/status/company/owner/score/source + critères avancés P16
+    (has_email, no_email_days, enrolled_in_sequence) à une query Contact.
+    has_email (bool) : True = email réel (pas placeholder @linkedin.sync) ; False = sans email réel.
+    no_email_days (int) : dormants — aucun e-mail envoyé (Notification type=email) dans les N derniers jours.
+    enrolled_in_sequence (str) : contacts NON activement enrollés dans cette séquence (ciblage batch enroll)."""
     if search:
         like = f"%{search.lower()}%"
         q = q.filter(or_(
@@ -93,6 +98,28 @@ def _apply_contact_filters(q, tid: str, *, search=None, status=None, company_id=
         q = q.filter(models.Contact.score >= score_min)
     if source:
         q = q.filter(models.Contact.source == source)
+    # P16 : has_email — email réel (non null, non vide, non placeholder sync LinkedIn).
+    if has_email is True:
+        q = q.filter(models.Contact.email.isnot(None), models.Contact.email != "",
+                     ~models.Contact.email.like("%@linkedin.sync"),
+                     ~models.Contact.email.like("%@local.revpulse.io"))
+    elif has_email is False:
+        q = q.filter(or_(models.Contact.email.is_(None), models.Contact.email == "",
+                         models.Contact.email.like("%@linkedin.sync"),
+                         models.Contact.email.like("%@local.revpulse.io")))
+    # P16 : no_email_days — dormants (NOT EXISTS email dans les N derniers jours).
+    if no_email_days is not None:
+        cutoff = datetime.utcnow() - timedelta(days=no_email_days)
+        q = q.filter(~exists().where(
+            models.Notification.recipient_contact_id == models.Contact.id,
+            models.Notification.type == "email",
+            models.Notification.created_at > cutoff))
+    # P16 : enrolled_in_sequence — NON activement enrollés (ciblage batch enroll).
+    if enrolled_in_sequence is not None:
+        q = q.filter(~exists().where(
+            models.SequenceEnrollment.contact_id == models.Contact.id,
+            models.SequenceEnrollment.sequence_id == enrolled_in_sequence,
+            models.SequenceEnrollment.status == "active"))
     return q
 
 
@@ -174,10 +201,15 @@ def list_contacts(tid: str, response: Response, page: Page = Depends(page_dep),
                   company_id: str | None = Query(None), owner_id: str | None = Query(None),
                   score_min: int | None = Query(None, ge=0, le=100),
                   source: str | None = Query(None),
+                  has_email: bool | None = Query(None),
+                  no_email_days: int | None = Query(None, ge=0),
+                  enrolled_in_sequence: str | None = Query(None),
                   db: Session = Depends(get_db), _t: models.Tenant = Depends(get_tenant)):
     q = db.query(models.Contact).filter_by(tenant_id=tid)
     q = _apply_contact_filters(q, tid, search=search, status=status, company_id=company_id,
-                               owner_id=owner_id, score_min=score_min, source=source)
+                               owner_id=owner_id, score_min=score_min, source=source,
+                               has_email=has_email, no_email_days=no_email_days,
+                               enrolled_in_sequence=enrolled_in_sequence)
     q = q.order_by(models.Contact.created_at.desc())
     set_total(response, q.count())
     return q.offset(page.skip).limit(page.limit).all()
@@ -686,7 +718,10 @@ def apply_segment(tid: str, sid: str, response: Response, page: Page = Depends(p
     q = db.query(models.Contact).filter_by(tenant_id=tid)
     q = _apply_contact_filters(q, tid, search=criteria.get("search"), status=criteria.get("status"),
                                company_id=criteria.get("company_id"), owner_id=criteria.get("owner_id"),
-                               score_min=criteria.get("score_min"), source=criteria.get("source"))
+                               score_min=criteria.get("score_min"), source=criteria.get("source"),
+                               has_email=criteria.get("has_email"),
+                               no_email_days=criteria.get("no_email_days"),
+                               enrolled_in_sequence=criteria.get("enrolled_in_sequence"))
     q = q.order_by(models.Contact.created_at.desc())
     set_total(response, q.count())
     return q.offset(page.skip).limit(page.limit).all()

@@ -218,6 +218,11 @@ async function showDetail(sid){
         <button class="btn" onclick="enrollContact('${sid}')">Enrôler</button>
         <button class="btn sec" onclick="processNow('${sid}')">▶ Process now</button>
       </div>
+      <label>Enrôler un segment (batch — P16, criteria appliqué)</label>
+      <div class="row">
+        <select id="enr-seg"><option value="">— Sélectionner un segment —</option></select>
+        <button class="btn" onclick="enrollSegment('${sid}')">Enrôler le segment</button>
+      </div>
       <h3 style="margin-top:16px">Enrollments (${enrs.length})</h3>
       ${enrs.length ? `<table><thead><tr><th>Contact</th><th>Step</th><th>Statut</th><th>Prochaine étape</th><th>Complété</th></tr></thead>
         <tbody>${enrs.map(e => `<tr><td>${esc(e.contact_id)}</td><td class="num">${e.current_step_order}</td>
@@ -225,6 +230,7 @@ async function showDetail(sid){
           <td>${fmtDate(e.next_step_at)}</td><td>${fmtDate(e.completed_at)}</td></tr>`).join('')}</tbody></table>` : '<div class="empty">Aucun enrollment.</div>'}
       <div style="margin-top:14px"><button class="btn sec" onclick="document.getElementById('detail').style.display='none'">← Retour à la liste</button></div>
     </div>`;
+  loadSegmentsForEnroll();
 }
 
 async function enrollContact(sid){
@@ -240,6 +246,26 @@ async function processNow(sid){
   const {status, data} = await api('POST', '/tenants/' + TID + '/crm/sequences/' + sid + '/process');
   if(status !== 200){ alert('Process échoué : ' + status); return; }
   alert('Passe scheduler : ' + (data.processed||0) + ' traité(s), ' + (data.sent||0) + ' envoyé(s), ' + (data.completed||0) + ' complété(s).');
+  showDetail(sid);
+}
+
+async function loadSegmentsForEnroll(){
+  const sel = document.getElementById('enr-seg');
+  if(!sel) return;
+  const {status, data} = await api('GET', '/tenants/' + TID + '/crm/segments');
+  if(status !== 200 || !data){ sel.innerHTML = '<option value="">(erreur segments)</option>'; return; }
+  sel.innerHTML = '<option value="">— Sélectionner un segment —</option>' +
+    data.map(s => `<option value="${esc(s.id)}">${esc(s.name)} (${Object.keys(s.criteria||{}).length} critères)</option>`).join('');
+}
+
+async function enrollSegment(sid){
+  const segId = document.getElementById('enr-seg').value;
+  if(!segId){ alert('Sélectionnez un segment.'); return; }
+  if(!confirm('Enrôler tous les contacts du segment dans cette séquence ?')) return;
+  const {status, data} = await api('POST', '/tenants/' + TID + '/crm/sequences/' + sid + '/enroll-batch',
+                                   {segment_id: segId});
+  if(status !== 200){ alert('Batch enroll échoué : ' + (data?.detail || status)); return; }
+  alert('Batch : ' + (data.enrolled||0) + ' enrôlé(s), ' + (data.skipped||0) + ' déjà actif(s) (total ' + (data.total||0) + ').');
   showDetail(sid);
 }
 

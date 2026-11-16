@@ -198,6 +198,64 @@ def enroll_contact(tid: str, sid: str, payload: schemas.EnrollRequest,
     return _enr_to_out(enr)
 
 
+# Clés de criteria acceptées par _apply_contact_filters (P11 + P16) — filtrage safe pour **kwargs.
+_CRITERIA_KEYS = {"search", "status", "company_id", "owner_id", "score_min", "source",
+                  "has_email", "no_email_days", "enrolled_in_sequence"}
+
+
+@router.post("/tenants/{tid}/crm/sequences/{sid}/enroll-batch",
+             response_model=schemas.EnrollBatchResult)
+def enroll_batch(tid: str, sid: str, payload: schemas.EnrollBatchRequest,
+                 db: Session = Depends(get_db), _t: models.Tenant = Depends(get_tenant),
+                 membership=Depends(require_permission("crm.manage"))):
+    """Batch enrollment (P16) : enrôle tous les contacts d'un segment (criteria appliqué) OU
+    d'une liste explicite contact_ids. Skip les déjà activement enrollés (pas de 409 en batch).
+    Connecte segments P11 (criteria étendu P16) → séquences P15. Audit crm.sequence_enroll_batch."""
+    from .crm import _apply_contact_filters
+    seq = db.query(models.EmailSequence).filter_by(tenant_id=tid, id=sid).first()
+    if not seq:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Séquence introuvable.")
+    first_step = (db.query(models.SequenceStep).filter_by(sequence_id=sid)
+                  .order_by(models.SequenceStep.step_order.asc()).first())
+    if not first_step:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Séquence sans step.")
+    # Résolution des contacts : via segment_id (criteria appliqué) OU liste explicite.
+    if payload.segment_id:
+        seg = db.query(models.Segment).filter_by(tenant_id=tid, id=payload.segment_id).first()
+        if not seg:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "Segment introuvable.")
+        q = db.query(models.Contact).filter_by(tenant_id=tid)
+        crit = {k: v for k, v in (seg.criteria or {}).items() if k in _CRITERIA_KEYS}
+        q = _apply_contact_filters(q, tid, **crit)
+        contacts = q.all()
+    else:
+        if not payload.contact_ids:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "segment_id ou contact_ids requis.")
+        contacts = (db.query(models.Contact).filter_by(tenant_id=tid)
+                    .filter(models.Contact.id.in_(payload.contact_ids)).all())
+    now = datetime.utcnow()
+    enrolled = skipped = 0
+    for contact in contacts:
+        existing = (db.query(models.SequenceEnrollment)
+                    .filter_by(sequence_id=sid, contact_id=contact.id, status="active").first())
+        if existing:
+            skipped += 1
+            continue
+        enr = models.SequenceEnrollment(
+            sequence_id=sid, contact_id=contact.id,
+            current_step_order=first_step.step_order, status="active",
+            enrolled_by_user_id=membership.user_id, enrolled_at=now,
+            next_step_at=now + timedelta(days=first_step.delay_days))
+        db.add(enr)
+        enrolled += 1
+    log_audit(db, tenant_id=tid, actor_user_id=membership.user_id, actor_name=membership.name,
+              action="crm.sequence_enroll_batch", target_type="sequence", target_id=sid,
+              detail={"segment_id": payload.segment_id, "contact_ids_count": len(payload.contact_ids),
+                      "enrolled": enrolled, "skipped": skipped, "total": enrolled + skipped})
+    db.commit()
+    return schemas.EnrollBatchResult(enrolled=enrolled, skipped=skipped, total=enrolled + skipped)
+
+
 @router.get("/tenants/{tid}/crm/sequences/{sid}/enrollments",
             response_model=list[schemas.SequenceEnrollmentOut])
 def list_enrollments(tid: str, sid: str,
