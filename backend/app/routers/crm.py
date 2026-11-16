@@ -50,9 +50,13 @@ def _normalize_email(email: str) -> str:
     return (email or "").strip().lower()
 
 
-def _compute_score(c: models.Contact, company: models.Company | None = None) -> tuple[int, dict[str, int]]:
-    """Heuristique 0-100 : 5 critères de 20 pts chacun (email, linkedin, titre senior,
-    taille entreprise, téléphone). Calculée à l'insert + à l'update."""
+def _compute_score(c: models.Contact, company: models.Company | None = None,
+                   *, emails_sent: int = 0, last_contact_at: datetime | None = None,
+                   has_active_opportunity: bool = False) -> tuple[int, dict[str, int]]:
+    """Heuristique 0-100 : profil P11 (5 critères 20 pts : email/linkedin/senior_title/
+    company_size/phone, cap 100) + engagement P17 (emails envoyés +5/email cap 25, opportunité
+    active +15, cap 40) - decay P17 (récence : -1/jour depuis dernier e-mail, cap 30). Total
+    clampé 0-100. Sans engagement (défaut) → score = profil seul (backward compatible P11)."""
     breakdown = {}
     breakdown["email"] = 20 if c.email else 0
     breakdown["linkedin"] = 20 if (c.linkedin_url or "").strip() else 0
@@ -61,15 +65,49 @@ def _compute_score(c: models.Contact, company: models.Company | None = None) -> 
     size = (company.size if company else "") or ""
     breakdown["company_size"] = 20 if (size in LARGE_COMPANY_SIZES or size.endswith("+")) else 0
     breakdown["phone"] = 20 if (c.phone or "").strip() else 0
-    return min(sum(breakdown.values()), 100), breakdown
+    profile = min(sum(breakdown.values()), 100)
+    # P17 : engagement (emails envoyés + opportunité active).
+    breakdown["engagement"] = min(emails_sent * 5, 25)
+    breakdown["opportunity"] = 15 if has_active_opportunity else 0
+    engagement = min(breakdown["engagement"] + breakdown["opportunity"], 40)
+    # P17 : decay (récence dernier e-mail ; jamais contacté = pas de decay).
+    decay = 0
+    if last_contact_at is not None:
+        decay = min(max((datetime.utcnow() - last_contact_at).days, 0), 30)
+    breakdown["decay"] = -decay
+    total = max(0, min(profile + engagement - decay, 100))
+    return total, breakdown
 
 
-def _score_contact(db: Session, c: models.Contact) -> int:
-    """Calcule + applique le score d'un contact (fetch la company si rattachée)."""
+def _engagement_signals(db: Session, c: models.Contact) -> tuple[int, datetime | None, bool]:
+    """P17 : récupère les signals d'engagement depuis la DB — emails envoyés (Notification
+    type=email sent/dry_run, count), date du dernier e-mail (last_contact_at pour le decay),
+    opportunité active (Opportunity stage prospecting/qualified/proposal/negotiation). Réutilisé
+    par _score_contact + recompute_score (DRY — un seul point de query engagement)."""
+    emails_sent = (db.query(models.Notification)
+                   .filter_by(tenant_id=c.tenant_id, recipient_contact_id=c.id, type="email")
+                   .filter(models.Notification.status.in_(["sent", "dry_run"])).count())
+    last_notif = (db.query(models.Notification)
+                  .filter_by(tenant_id=c.tenant_id, recipient_contact_id=c.id, type="email")
+                  .filter(models.Notification.status.in_(["sent", "dry_run"]))
+                  .order_by(models.Notification.created_at.desc()).first())
+    last_contact_at = last_notif.created_at if last_notif else None
+    has_opp = (db.query(models.Opportunity).filter_by(tenant_id=c.tenant_id, contact_id=c.id)
+               .filter(models.Opportunity.stage.in_(["prospecting", "qualified", "proposal", "negotiation"]))
+               .first() is not None)
+    return emails_sent, last_contact_at, has_opp
+
+
+def _score_contact(db: Session, c: models.Contact) -> tuple[int, dict[str, int]]:
+    """Calcule + applique le score d'un contact : profil P11 + engagement P17 (emails envoyés,
+    opportunité active) - decay (récence dernier e-mail). Retourne (score, breakdown) pour que
+    recompute_score puisse retourner le détail à l'API. Side-effect : c.score = score."""
     company = db.query(models.Company).filter_by(id=c.company_id).first() if c.company_id else None
-    score, _ = _compute_score(c, company)
+    emails_sent, last_contact_at, has_opp = _engagement_signals(db, c)
+    score, breakdown = _compute_score(c, company, emails_sent=emails_sent,
+                                      last_contact_at=last_contact_at, has_active_opportunity=has_opp)
     c.score = score
-    return score
+    return score, breakdown
 
 
 def _apply_contact_filters(q, tid: str, *, search=None, status=None, company_id=None,
@@ -418,16 +456,32 @@ def delete_contact(tid: str, ctid: str, db: Session = Depends(get_db),
 def recompute_score(tid: str, ctid: str, db: Session = Depends(get_db),
                     _t: models.Tenant = Depends(get_tenant),
                     membership=Depends(require_permission("crm.manage"))):
-    """Recalcule le score d'un contact + retourne le détail (breakdown 5 critères)."""
+    """Recalcule le score d'un contact (profil P11 + engagement P17 + decay) + retourne le détail."""
     c = db.query(models.Contact).filter_by(id=ctid, tenant_id=tid).first()
     if not c:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Contact introuvable")
-    company = db.query(models.Company).filter_by(id=c.company_id).first() if c.company_id else None
-    score, breakdown = _compute_score(c, company)
-    c.score = score
+    score, breakdown = _score_contact(db, c)
     c.updated_at = datetime.utcnow()
     db.commit()
     return schemas.ScoreBreakdown(score=score, breakdown=breakdown)
+
+
+@router.post("/contacts/score-recompute", response_model=schemas.ScoreRecomputeResult)
+def recompute_all_scores(tid: str, db: Session = Depends(get_db),
+                         _t: models.Tenant = Depends(get_tenant),
+                         membership=Depends(require_permission("crm.manage"))):
+    """Batch recompute (P17) : recalcule le score de tous les contacts du tenant (profil P11
+    + engagement P17 emails/opportunité + decay récence). Utile après import massif ou pour
+    rafraîchir le decay. Retourne {recomputed, avg_score}. Audit crm.score_recompute_batch."""
+    contacts = db.query(models.Contact).filter_by(tenant_id=tid).all()
+    for c in contacts:
+        _score_contact(db, c)
+    log_audit(db, tenant_id=tid, actor_user_id=membership.user_id, actor_name=membership.name,
+              action="crm.score_recompute_batch", target_type="tenant", target_id=tid,
+              detail={"recomputed": len(contacts)})
+    db.commit()
+    avg = sum(c.score for c in contacts) / len(contacts) if contacts else 0
+    return schemas.ScoreRecomputeResult(recomputed=len(contacts), avg_score=round(avg, 1))
 
 
 # ─── Opportunities + pipeline Kanban ─────────────────────────────────────────

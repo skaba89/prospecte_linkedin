@@ -462,6 +462,12 @@ class ScoreBreakdown(BaseModel):
     breakdown: dict[str, int]
 
 
+class ScoreRecomputeResult(BaseModel):
+    """Résultat du batch recompute (P17) : nb de contacts recalculés + score moyen."""
+    recomputed: int
+    avg_score: float
+
+
 class PipelineColumn(BaseModel):
     """Colonne Kanban : stage + opportunités + total valeur."""
     stage: str
