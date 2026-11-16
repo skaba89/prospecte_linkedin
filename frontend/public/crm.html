@@ -1,0 +1,338 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>RevPulse CRM</title>
+<style>
+  :root{--bg:#0a0e1a;--panel:#131826;--panel2:#1a2030;--border:#232a3d;--text:#e5e7eb;--muted:#8b95a8;
+        --accent:#635bff;--accent2:#0a66c2;--ok:#10b981;--warn:#f59e0b;--err:#ef4444;--grad:linear-gradient(135deg,#635bff,#0a66c2)}
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:var(--bg);color:var(--text);min-height:100vh}
+  a{color:var(--accent);text-decoration:none}
+  .topbar{display:flex;align-items:center;gap:16px;padding:14px 24px;background:var(--panel);border-bottom:1px solid var(--border);position:sticky;top:0;z-index:10}
+  .topbar h1{font-size:18px;font-weight:700;background:var(--grad);-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent}
+  .topbar .spacer{margin-left:auto}
+  .btn{padding:8px 14px;border-radius:8px;border:1px solid var(--border);background:var(--panel2);color:var(--text);cursor:pointer;font-size:13px;font-weight:600}
+  .btn:hover{border-color:var(--accent)}
+  .btn-primary{background:var(--grad);border:none;color:#fff}
+  .btn-sm{padding:5px 10px;font-size:12px}
+  .wrap{max-width:1400px;margin:0 auto;padding:24px}
+  .tabs{display:flex;gap:4px;margin-bottom:20px;border-bottom:1px solid var(--border)}
+  .tab{padding:10px 18px;cursor:pointer;color:var(--muted);font-weight:600;font-size:14px;border-bottom:2px solid transparent}
+  .tab.active{color:var(--text);border-bottom-color:var(--accent)}
+  .panel{background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:20px;margin-bottom:20px}
+  .toolbar{display:flex;gap:10px;align-items:center;margin-bottom:16px;flex-wrap:wrap}
+  input,select{padding:8px 12px;border-radius:8px;border:1px solid var(--border);background:var(--panel2);color:var(--text);font-size:13px}
+  input:focus,select:focus{outline:none;border-color:var(--accent)}
+  table{width:100%;border-collapse:collapse;font-size:13px}
+  th{text-align:left;padding:10px 12px;color:var(--muted);font-weight:600;border-bottom:1px solid var(--border);font-size:11px;text-transform:uppercase;letter-spacing:.05em}
+  td{padding:10px 12px;border-bottom:1px solid var(--border)}
+  tr:hover td{background:var(--panel2)}
+  .badge{display:inline-block;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:700}
+  .score{font-weight:700}
+  .pipeline{display:grid;grid-template-columns:repeat(6,1fr);gap:12px}
+  .col{background:var(--panel2);border-radius:10px;padding:12px;min-height:200px}
+  .col-h{display:flex;align-items:center;gap:8px;margin-bottom:12px;font-size:13px;font-weight:700}
+  .col-dot{width:10px;height:10px;border-radius:50%}
+  .col-cnt{margin-left:auto;color:var(--muted);font-size:12px}
+  .col-val{font-size:11px;color:var(--muted);margin-bottom:8px}
+  .card{background:var(--panel);border:1px solid var(--border);border-radius:8px;padding:10px;margin-bottom:8px;cursor:pointer}
+  .card:hover{border-color:var(--accent)}
+  .card-t{font-size:13px;font-weight:600;margin-bottom:4px}
+  .card-v{font-size:12px;color:var(--ok);font-weight:700}
+  .card-c{font-size:11px;color:var(--muted)}
+  .move{display:flex;gap:4px;margin-top:6px}
+  .move button{padding:2px 6px;font-size:10px;border-radius:4px;border:1px solid var(--border);background:var(--panel2);color:var(--muted);cursor:pointer}
+  .move button:hover{border-color:var(--accent);color:var(--text)}
+  .empty{text-align:center;padding:40px;color:var(--muted);font-size:14px}
+  .stat{display:inline-block;margin-right:20px;font-size:13px}
+  .stat b{color:var(--text)}
+  .dropzone{border:2px dashed var(--border);border-radius:12px;padding:40px;text-align:center;color:var(--muted);cursor:pointer}
+  .dropzone:hover{border-color:var(--accent);color:var(--text)}
+  .result{margin-top:16px;font-size:13px}
+  .result .row{display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--border)}
+  .result .row b{color:var(--text)}
+  .err{color:var(--err)}
+  .login{max-width:380px;margin:80px auto;text-align:center}
+  .login h2{margin-bottom:12px}
+  .login p{color:var(--muted);margin-bottom:20px;font-size:14px}
+  @media(max-width:900px){.pipeline{grid-template-columns:repeat(2,1fr)}}
+</style>
+</head>
+<body>
+<div class="topbar">
+  <h1>RevPulse CRM</h1>
+  <span style="color:var(--muted);font-size:13px" id="tenant-name"></span>
+  <div class="spacer"></div>
+  <a href="/" class="btn btn-sm">← Dashboard</a>
+  <button class="btn btn-sm" onclick="logout()">Déconnexion</button>
+</div>
+
+<div class="wrap" id="app">
+  <div class="login" id="login" style="display:none">
+    <h2>Accès CRM</h2>
+    <p>Connecte-toi au dashboard RevPulse pour activer le CRM, ou utilise le compte démo.</p>
+    <button class="btn btn-primary" onclick="demoLogin()">Connexion démo</button>
+    <a href="/" style="display:block;margin-top:12px;font-size:13px">← Retour au dashboard</a>
+  </div>
+
+  <div id="crm" style="display:none">
+    <div class="tabs">
+      <div class="tab active" data-tab="contacts" onclick="showTab('contacts')">Contacts</div>
+      <div class="tab" data-tab="pipeline" onclick="showTab('pipeline')">Pipeline</div>
+      <div class="tab" data-tab="import" onclick="showTab('import')">Import</div>
+      <div class="tab" data-tab="suppression" onclick="showTab('suppression')">Exclusions RGPD</div>
+    </div>
+
+    <div id="tab-contacts">
+      <div class="panel">
+        <div class="toolbar">
+          <input type="text" id="search" placeholder="Rechercher (nom, email, titre)…" style="flex:1;min-width:200px" oninput="debouncedLoad()">
+          <select id="f-status" onchange="loadContacts()">
+            <option value="">Tous statuts</option>
+            <option value="new">Nouveau</option>
+            <option value="qualified">Qualifié</option>
+            <option value="contacted">Contacté</option>
+            <option value="nurture">Nurture</option>
+            <option value="won">Gagné</option>
+            <option value="lost">Perdu</option>
+          </select>
+          <input type="number" id="f-score" placeholder="Score min" min="0" max="100" style="width:90px" onchange="loadContacts()">
+          <button class="btn btn-primary btn-sm" onclick="exportCsv()">Export CSV</button>
+        </div>
+        <div id="contacts-table"><div class="empty">Chargement…</div></div>
+      </div>
+    </div>
+
+    <div id="tab-pipeline" style="display:none">
+      <div class="panel">
+        <div id="pipeline"><div class="empty">Chargement…</div></div>
+      </div>
+    </div>
+
+    <div id="tab-import" style="display:none">
+      <div class="panel">
+        <h3 style="margin-bottom:8px">Import de contacts (CSV / XLSX)</h3>
+        <p style="color:var(--muted);font-size:13px;margin-bottom:16px">
+          Colonnes : <code>first_name, last_name, email, title, phone, linkedin_url, company, status</code>.
+          Dédup automatique (email normalisé) + skip des exclusions RGPD.
+        </p>
+        <div class="dropzone" id="dropzone" onclick="document.getElementById('file-input').click()">
+          📎 Clique ou dépose un fichier CSV/XLSX ici
+        </div>
+        <input type="file" id="file-input" accept=".csv,.xlsx" style="display:none" onchange="importFile()">
+        <div id="import-result" class="result"></div>
+      </div>
+    </div>
+
+    <div id="tab-suppression" style="display:none">
+      <div class="panel">
+        <h3 style="margin-bottom:12px">Liste d'exclusion (RGPD — désinscription / bounce / réclamation)</h3>
+        <div class="toolbar">
+          <input type="email" id="sup-email" placeholder="email@exemple.com" style="flex:1">
+          <select id="sup-reason">
+            <option value="unsubscribe">Désinscription</option>
+            <option value="bounced">Bounce</option>
+            <option value="complaint">Réclamation</option>
+          </select>
+          <button class="btn btn-primary btn-sm" onclick="addSuppression()">Ajouter</button>
+        </div>
+        <div id="suppression-table"><div class="empty">Chargement…</div></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+const API = window.location.origin + '/api';
+let TOK = localStorage.getItem('revpulse_jwt');
+let TID = null;
+let debounceT = null;
+
+// Résout le tenant actif depuis la session dashboard.
+try { const s = JSON.parse(localStorage.getItem('revpulse_session') || '{}'); TID = s.activeTenantId; } catch(e){}
+
+async function api(method, path, body, isForm){
+  const opts = {method, headers: {'Authorization': 'Bearer ' + TOK}};
+  if(body){ if(isForm){ opts.body = body; } else { opts.headers['Content-Type']='application/json'; opts.body = JSON.stringify(body); } }
+  const r = await fetch(API + path, opts);
+  const txt = await r.text();
+  return {status: r.status, data: txt ? JSON.parse(txt) : null, headers: r.headers};
+}
+
+function init(){
+  if(!TOK || !TID){ document.getElementById('login').style.display='block'; return; }
+  document.getElementById('crm').style.display='block';
+  document.getElementById('tenant-name').textContent = '· ' + TID;
+  loadContacts(); loadPipeline(); loadSuppression();
+}
+
+async function demoLogin(){
+  const r = await fetch(API + '/auth/demo', {method:'POST'});
+  const d = await r.json();
+  TOK = d.token; localStorage.setItem('revpulse_jwt', TOK);
+  // Récupère le tenant démo.
+  const t = await fetch(API + '/tenants', {headers:{'Authorization':'Bearer '+TOK}});
+  const tenants = await t.json();
+  TID = tenants[0]?.id;
+  const sess = JSON.parse(localStorage.getItem('revpulse_session')||'{}');
+  sess.activeTenantId = TID; localStorage.setItem('revpulse_session', JSON.stringify(sess));
+  init();
+}
+
+function logout(){ localStorage.removeItem('revpulse_jwt'); location.href='/'; }
+
+function showTab(name){
+  document.querySelectorAll('.tab').forEach(t=>t.classList.toggle('active', t.dataset.tab===name));
+  ['contacts','pipeline','import','suppression'].forEach(t=>{
+    document.getElementById('tab-'+t).style.display = (t===name)?'block':'none';
+  });
+}
+
+function debouncedLoad(){ clearTimeout(debounceT); debounceT=setTimeout(loadContacts, 250); }
+
+const STATUS_COLORS = {new:'#8b95a8',qualified:'#0a66c2',contacted:'#635bff',nurture:'#f59e0b',won:'#10b981',lost:'#ef4444'};
+const STATUS_LABELS = {new:'Nouveau',qualified:'Qualifié',contacted:'Contacté',nurture:'Nurture',won:'Gagné',lost:'Perdu'};
+
+async function loadContacts(){
+  const search = encodeURIComponent(document.getElementById('search').value||'');
+  const status = document.getElementById('f-status').value;
+  const score = document.getElementById('f-score').value;
+  let q = `/tenants/${TID}/crm/contacts?limit=100`;
+  if(search) q += `&search=${search}`;
+  if(status) q += `&status=${status}`;
+  if(score) q += `&score_min=${score}`;
+  const r = await api('GET', q);
+  const el = document.getElementById('contacts-table');
+  if(r.status!==200){ el.innerHTML = `<div class="empty err">Erreur ${r.status}</div>`; return; }
+  const items = r.data||[];
+  const total = r.headers.get('X-Total-Count') || items.length;
+  if(!items.length){ el.innerHTML = '<div class="empty">Aucun contact. Importe-en ou crée-en un.</div>'; return; }
+  el.innerHTML = `<div style="margin-bottom:8px"><span class="stat"><b>${total}</b> contact(s)</span></div>
+    <table><thead><tr><th>Nom</th><th>Email</th><th>Titre</th><th>Statut</th><th>Score</th><th>Source</th></tr></thead>
+    <tbody>${items.map(c=>`<tr>
+      <td>${esc(c.first_name)} ${esc(c.last_name)}</td>
+      <td>${esc(c.email)}</td>
+      <td>${esc(c.title||'—')}</td>
+      <td><span class="badge" style="background:${STATUS_COLORS[c.status]||'#8b95a8'}33;color:${STATUS_COLORS[c.status]||'#8b95a8'}">${STATUS_LABELS[c.status]||c.status}</span></td>
+      <td><span class="score" style="color:${c.score>=80?'#10b981':c.score>=40?'#f59e0b':'#ef4444'}">${c.score}</span></td>
+      <td style="color:var(--muted)">${c.source}</td>
+    </tr>`).join('')}</tbody></table>`;
+}
+
+const STAGES = [
+  ['prospecting','Prospection','#94a3b8'],
+  ['qualified','Qualifié','#0a66c2'],
+  ['proposal','Proposition','#635bff'],
+  ['negotiation','Négociation','#f59e0b'],
+  ['closed_won','Gagné','#10b981'],
+  ['closed_lost','Perdu','#ef4444'],
+];
+
+async function loadPipeline(){
+  const r = await api('GET', `/tenants/${TID}/crm/opportunities/pipeline`);
+  const el = document.getElementById('pipeline');
+  if(r.status!==200){ el.innerHTML = `<div class="empty err">Erreur ${r.status}</div>`; return; }
+  const cols = r.data||[];
+  el.innerHTML = `<div class="pipeline">${cols.map(col=>{
+    const opps = col.opportunities||[];
+    return `<div class="col">
+      <div class="col-h"><span class="col-dot" style="background:${col.color}"></span>${col.label}<span class="col-cnt">${col.count}</span></div>
+      <div class="col-val">${(col.total_value||0).toLocaleString('fr-FR')} €</div>
+      ${opps.map(o=>`<div class="card">
+        <div class="card-t">${esc(o.title)}</div>
+        <div class="card-v">${(o.value||0).toLocaleString('fr-FR')} ${o.currency||'EUR'}</div>
+        <div class="card-c">${o.probability||0}% · ${esc(o.contact_id)}</div>
+        ${pipelineMove(o)}
+      </div>`).join('') || '<div style="color:var(--muted);font-size:12px;padding:8px">Vide</div>'}
+    </div>`;
+  }).join('')}</div>`;
+}
+
+function pipelineMove(o){
+  const idx = STAGES.findIndex(s=>s[0]===o.stage);
+  const prev = idx>0 ? `<button onclick="moveOpp('${o.id}','${STAGES[idx-1][0]}')">←</button>` : '';
+  const next = idx<STAGES.length-1 ? `<button onclick="moveOpp('${o.id}','${STAGES[idx+1][0]}')">→</button>` : '';
+  return `<div class="move">${prev}${next}</div>`;
+}
+
+async function moveOpp(oid, stage){
+  const r = await api('PATCH', `/tenants/${TID}/crm/opportunities/${oid}/stage`, {stage});
+  if(r.status===200) loadPipeline();
+  else alert('Déplacement impossible : ' + r.status);
+}
+
+async function exportCsv(){
+  const r = await fetch(API + `/tenants/${TID}/crm/contacts/export`, {headers:{'Authorization':'Bearer '+TOK}});
+  const blob = await r.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a'); a.href=url; a.download=`contacts_${TID}.csv`; a.click();
+  URL.revokeObjectURL(url);
+}
+
+async function importFile(){
+  const f = document.getElementById('file-input').files[0];
+  if(!f) return;
+  const fd = new FormData(); fd.append('file', f);
+  const el = document.getElementById('import-result');
+  el.innerHTML = '<div class="empty">Import en cours…</div>';
+  const r = await api('POST', `/tenants/${TID}/crm/contacts/import`, fd, true);
+  if(r.status!==200){ el.innerHTML = `<div class="err">Erreur ${r.status}: ${JSON.stringify(r.data)}</div>`; return; }
+  const d = r.data;
+  el.innerHTML = `<div class="panel" style="background:var(--panel2)">
+    <div class="row"><span>Créés</span><b style="color:var(--ok)">${d.created}</b></div>
+    <div class="row"><span>Doublons (skip)</span><b>${d.duplicates}</b></div>
+    <div class="row"><span>Exclus (RGPD)</span><b style="color:var(--warn)">${d.suppressed}</b></div>
+    <div class="row"><span>Erreurs</span><b style="color:var(--err)">${(d.errors||[]).length}</b></div>
+    <div class="row"><span>Total lignes</span><b>${d.total}</b></div>
+    ${(d.errors||[]).map(e=>`<div class="err" style="font-size:12px">Ligne ${e.row}: ${e.email||''} — ${e.error}</div>`).join('')}
+  </div>`;
+  loadContacts();
+}
+
+async function loadSuppression(){
+  const r = await api('GET', `/tenants/${TID}/crm/suppression?limit=100`);
+  const el = document.getElementById('suppression-table');
+  if(r.status!==200){ el.innerHTML = `<div class="empty err">Erreur ${r.status}</div>`; return; }
+  const items = r.data||[];
+  if(!items.length){ el.innerHTML = '<div class="empty">Aucune exclusion.</div>'; return; }
+  const REASON_L = {unsubscribe:'Désinscription',bounced:'Bounce',complaint:'Réclamation'};
+  el.innerHTML = `<table><thead><tr><th>Email</th><th>Raison</th><th>Source</th><th></th></tr></thead>
+    <tbody>${items.map(s=>`<tr>
+      <td>${esc(s.email)}</td>
+      <td><span class="badge" style="background:#ef444433;color:#ef4444">${REASON_L[s.reason]||s.reason}</span></td>
+      <td style="color:var(--muted)">${s.source}</td>
+      <td><button class="btn btn-sm" onclick="delSuppression('${s.id}')">Retirer</button></td>
+    </tr>`).join('')}</tbody></table>`;
+}
+
+async function addSuppression(){
+  const email = document.getElementById('sup-email').value;
+  const reason = document.getElementById('sup-reason').value;
+  if(!email) return;
+  const r = await api('POST', `/tenants/${TID}/crm/suppression`, {email, reason});
+  if(r.status===201){ document.getElementById('sup-email').value=''; loadSuppression(); }
+  else alert('Erreur : ' + r.status);
+}
+
+async function delSuppression(sid){
+  const r = await api('DELETE', `/tenants/${TID}/crm/suppression/${sid}`);
+  if(r.status===200) loadSuppression();
+}
+
+function esc(s){ return (s||'').replace(/[<>&"]/g, c=>({'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;'}[c])); }
+
+// Drag & drop pour l'import.
+const dz = document.getElementById('dropzone');
+['dragover','dragenter'].forEach(e=>dz.addEventListener(e, ev=>{ev.preventDefault(); dz.style.borderColor='var(--accent)';}));
+['dragleave','drop'].forEach(e=>dz.addEventListener(e, ev=>{ev.preventDefault(); dz.style.borderColor='var(--border)';}));
+dz.addEventListener('drop', ev=>{
+  const f = ev.dataTransfer.files[0];
+  if(f){ document.getElementById('file-input').files = ev.dataTransfer.files; importFile(); }
+});
+
+init();
+</script>
+</body>
+</html>

@@ -7,7 +7,7 @@ par `tenant_id` → isolation par espace de travail. Les membres portent aussi u
 import uuid
 from datetime import datetime
 
-from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy import Boolean, Column, Date, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.types import TypeDecorator
 
@@ -200,3 +200,126 @@ class Publication(Base):
     error_detail = Column(Text, nullable=True)
     published_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
+
+
+# ─── P11 : CRM & prospection ───────────────────────────────────────────────────
+# Chaîne : Company (entreprise) → Contact (prospect, rattaché à 0/1 company) →
+# Opportunity (affaire en pipeline) + Task + Note (activités liées au contact ou
+# à l'opportunité). Segment = filtre sauvegardé (critères JSON). SuppressionList
+# = exclusions RGPD (désinscription/bounce/réclamation) — l'import skippe ces emails.
+# Tout est scopé par tenant_id. Contact.email est normalisé (lowercase+strip) et
+# unique par tenant (dédup). Contact.score = heuristique 0-100 calculée à l'insert/update.
+
+
+class Company(Base):
+    """Entreprise/prospect compte, scopée par tenant. Un contact y rattache (0..n)."""
+    __tablename__ = "companies"
+    id = Column(String, primary_key=True, default=lambda: _uid("cmp"))
+    tenant_id = Column(String, ForeignKey("tenants.id"), nullable=False, index=True)
+    name = Column(String, nullable=False)
+    website = Column(String, default="")
+    domain = Column(String, default="", index=True)  # dédup entreprise par domaine
+    industry = Column(String, default="")
+    size = Column(String, default="")  # ex: "1-10", "11-50", "51-200", "201-500", "501-1000", "1000+"
+    country = Column(String, default="")
+    linkedin_url = Column(String, default="")
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class Contact(Base):
+    """Prospect/contact CRM, scopé par tenant. email normalisé (lowercase+strip),
+    unique par tenant → dédup à l'import + à la création manuelle. score = heuristique
+    0-100 (titre senior, taille entreprise, complétude des données). owner_id =
+    commercial attribué (FK users, nullable = non affecté)."""
+    __tablename__ = "contacts"
+    id = Column(String, primary_key=True, default=lambda: _uid("ctc"))
+    tenant_id = Column(String, ForeignKey("tenants.id"), nullable=False, index=True)
+    company_id = Column(String, ForeignKey("companies.id"), nullable=True, index=True)
+    first_name = Column(String, default="", nullable=False)
+    last_name = Column(String, default="", nullable=False)
+    email = Column(String, nullable=False, index=True)  # normalisé (lowercase+strip)
+    phone = Column(String, default="")
+    title = Column(String, default="")
+    linkedin_url = Column(String, default="")
+    score = Column(Integer, default=0, nullable=False)
+    status = Column(String, default="new", nullable=False, index=True)
+    # new | qualified | contacted | nurture | won | lost
+    owner_id = Column(String, ForeignKey("users.id"), nullable=True, index=True)
+    source = Column(String, default="manual", nullable=False)  # manual | import | linkedin
+    created_at = Column(DateTime, default=datetime.utcnow, index=True)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    __table_args__ = (UniqueConstraint("tenant_id", "email", name="uq_tenant_contact_email"),)
+
+
+class Opportunity(Base):
+    """Affaire en pipeline (Kanban), scopée par tenant. stage = colonne Kanban.
+    Probabilité % de closing. value = montant estimé (Integer, dans la currency)."""
+    __tablename__ = "opportunities"
+    id = Column(String, primary_key=True, default=lambda: _uid("opp"))
+    tenant_id = Column(String, ForeignKey("tenants.id"), nullable=False, index=True)
+    contact_id = Column(String, ForeignKey("contacts.id"), nullable=False, index=True)
+    company_id = Column(String, ForeignKey("companies.id"), nullable=True, index=True)
+    title = Column(String, nullable=False)
+    value = Column(Integer, default=0, nullable=False)
+    currency = Column(String, default="EUR", nullable=False)
+    stage = Column(String, default="prospecting", nullable=False, index=True)
+    # prospecting | qualified | proposal | negotiation | closed_won | closed_lost
+    probability = Column(Integer, default=10, nullable=False)
+    expected_close_date = Column(Date, nullable=True)
+    owner_id = Column(String, ForeignKey("users.id"), nullable=True, index=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class Task(Base):
+    """Tâche commerciale (call/demo/relance), scopée par tenant. Liée à un contact
+    et/ou une opportunité (les deux nullable). assignee_id = responsable (FK users)."""
+    __tablename__ = "tasks"
+    id = Column(String, primary_key=True, default=lambda: _uid("tsk"))
+    tenant_id = Column(String, ForeignKey("tenants.id"), nullable=False, index=True)
+    contact_id = Column(String, ForeignKey("contacts.id"), nullable=True, index=True)
+    opportunity_id = Column(String, ForeignKey("opportunities.id"), nullable=True, index=True)
+    title = Column(String, nullable=False)
+    due_date = Column(Date, nullable=True, index=True)
+    status = Column(String, default="todo", nullable=False, index=True)  # todo | in_progress | done
+    priority = Column(String, default="medium", nullable=False)  # low | medium | high
+    assignee_id = Column(String, ForeignKey("users.id"), nullable=True, index=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class Note(Base):
+    """Note/compte-rendu libre sur un contact ou une opportunité, scopée par tenant.
+    Auteur = user courant (FK users). body en Text (non limité en DB)."""
+    __tablename__ = "notes"
+    id = Column(String, primary_key=True, default=lambda: _uid("nte"))
+    tenant_id = Column(String, ForeignKey("tenants.id"), nullable=False, index=True)
+    contact_id = Column(String, ForeignKey("contacts.id"), nullable=True, index=True)
+    opportunity_id = Column(String, ForeignKey("opportunities.id"), nullable=True, index=True)
+    body = Column(Text, nullable=False)
+    author_id = Column(String, ForeignKey("users.id"), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, index=True)
+
+
+class Segment(Base):
+    """Filtre sauvegardé (liste dynamique de contacts), scopé par tenant.
+    criteria = JSON : {search, status, company_id, owner_id, score_min, source}."""
+    __tablename__ = "segments"
+    id = Column(String, primary_key=True, default=lambda: _uid("seg"))
+    tenant_id = Column(String, ForeignKey("tenants.id"), nullable=False, index=True)
+    name = Column(String, nullable=False)
+    criteria = Column(JSONType, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class SuppressionList(Base):
+    """Exclusions RGPD (désinscription/bounce/réclamation), scopées par tenant.
+    L'import de contacts skippe les emails présents ici (respect de la désinscription).
+    UniqueConstraint(tenant_id, email) → pas de doublon. Hard delete possible (RGPD)."""
+    __tablename__ = "suppression_list"
+    id = Column(String, primary_key=True, default=lambda: _uid("sup"))
+    tenant_id = Column(String, ForeignKey("tenants.id"), nullable=False, index=True)
+    email = Column(String, nullable=False, index=True)  # normalisé (lowercase+strip)
+    reason = Column(String, nullable=False)  # unsubscribe | bounced | complaint
+    source = Column(String, default="manual", nullable=False)  # manual | import
+    created_at = Column(DateTime, default=datetime.utcnow)
+    __table_args__ = (UniqueConstraint("tenant_id", "email", name="uq_tenant_suppression_email"),)

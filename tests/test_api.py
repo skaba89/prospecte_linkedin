@@ -49,6 +49,28 @@ def call(method, path, token=None, body=None):
         return 0, {"error": str(e)}
 
 
+def call_upload(path, token, filename, content, content_type="text/csv"):
+    """Upload multipart/form-data (pour /crm/contacts/import). Retourne (status, json)."""
+    boundary = "----revpulse" + str(int(time.time() * 1000))
+    body = (f"--{boundary}\r\n"
+            f'Content-Disposition: form-data; name="file"; filename="{filename}"\r\n'
+            f"Content-Type: {content_type}\r\n\r\n"
+            f"{content}\r\n"
+            f"--{boundary}--\r\n").encode()
+    req = urllib.request.Request(BASE + path, data=body, method="POST")
+    req.add_header("Content-Type", f"multipart/form-data; boundary={boundary}")
+    if token:
+        req.add_header("Authorization", f"Bearer {token}")
+    try:
+        with urllib.request.urlopen(req, timeout=15) as r:
+            return r.status, json.loads(r.read().decode())
+    except urllib.error.HTTPError as e:
+        try:
+            return e.code, json.loads(e.read().decode())
+        except Exception:
+            return e.code, {}
+
+
 def ck(got, expected, label):
     global passed, failed
     if str(got) == str(expected):
@@ -215,6 +237,102 @@ for _i in range(12):
         got_429 = True
         break
 ck(got_429, True, "rate-limit 429 déclenché")
+
+# ─── P11 CRM (26-37) : contacts, pipeline, import, suppression, segments ─────
+print("\n=== 26. GET /crm/contacts (seed démo) ===")
+s, ct = call("GET", "/api/tenants/tnt-demo/crm/contacts", tok)
+ck(s, 200, "list contacts CRM 200")
+# X-Total-Count vient via l'en-tête — call() ne le retourne pas ; on compte la liste.
+ck(len(ct), 4, "seed CRM contacts (Marie/Albert/Niels/Ada)")
+
+print("=== 27. POST /crm/contacts (new, scoring) ===")
+s, nc = call("POST", "/api/tenants/tnt-demo/crm/contacts", tok,
+             {"first_name": "E2E", "last_name": "Test", "email": "e2e.test@crm.io",
+              "title": "CEO", "phone": "+33 1", "linkedin_url": "https://linkedin.com/in/e2e"})
+ck(s, 201, "create contact CRM 201")
+ck(nc.get("score"), 80, "score CEO+email+linkedin+senior+phone = 80")
+ncid = nc.get("id", "")
+
+print("=== 28. POST /crm/contacts (dedup → 409) ===")
+s, _ = call("POST", "/api/tenants/tnt-demo/crm/contacts", tok, {"email": "e2e.test@crm.io"})
+ck(s, 409, "dedup email → 409")
+s, _ = call("POST", "/api/tenants/tnt-demo/crm/contacts", tok, {"email": "E2E.TEST@CRM.IO"})
+ck(s, 409, "dedup case-insensitive → 409")
+
+print("=== 29. GET /crm/companies (seed 2) ===")
+s, cp = call("GET", "/api/tenants/tnt-demo/crm/companies", tok)
+ck(len(cp), 2, "seed companies (Acme + Globex)")
+
+print("=== 30. GET /crm/opportunities/pipeline (6 colonnes Kanban) ===")
+s, cols = call("GET", "/api/tenants/tnt-demo/crm/opportunities/pipeline", tok)
+ck(len(cols), 6, "pipeline 6 stages")
+stages = [c["stage"] for c in cols]
+ck("prospecting" in stages and "closed_won" in stages and "closed_lost" in stages, True,
+   "pipeline stages complets")
+
+print("=== 31. PATCH /crm/opportunities/opp-1/stage (move Kanban) ===")
+s, mv = call("PATCH", "/api/tenants/tnt-demo/crm/opportunities/opp-1/stage", tok, {"stage": "negotiation"})
+ck(mv.get("stage"), "negotiation", "opp déplacée en negotiation")
+s, _ = call("PATCH", "/api/tenants/tnt-demo/crm/opportunities/opp-1/stage", tok, {"stage": "invalid"})
+ck(s, 400, "stage invalide → 400")
+
+print("=== 32. POST /crm/contacts/import (CSV : dédup + suppression + erreur) ===")
+csv_data = ("first_name,last_name,email,title,company,status\n"
+            "Marie,X,marie.curie@acme.com,VP,Acme Corp,qualified\n"
+            "New,E2E,new.e2e.import@crm.io,CTO,Globex,contacted\n"
+            "Opt,Out,opt-out@example.com,Founder,,new\n"
+            "Bad,Row,notanemail,Dir,,new\n")
+s, res = call_upload("/api/tenants/tnt-demo/crm/contacts/import", tok, "test.csv", csv_data)
+ck(s, 200, "import CSV 200")
+ck(res.get("created"), 1, "import created 1 (new.e2e.import)")
+ck(res.get("duplicates"), 1, "import dup 1 (marie.curie existe)")
+ck(res.get("suppressed"), 1, "import suppressed 1 (opt-out RGPD)")
+ck(res.get("total"), 4, "import total 4 lignes")
+
+print("=== 33. GET /crm/contacts/export (CSV RGPD) ===")
+# call() parse en JSON → utilise une requête brute pour vérifier le text/csv.
+req = urllib.request.Request(BASE + "/api/tenants/tnt-demo/crm/contacts/export")
+req.add_header("Authorization", f"Bearer {tok}")
+try:
+    with urllib.request.urlopen(req, timeout=10) as r:
+        exp_status = r.status
+        exp_ct = r.headers.get("Content-Type", "")
+        exp_body = r.read().decode()
+        exp_has = "e2e.test@crm.io" in exp_body
+except urllib.error.HTTPError as e:
+    exp_status, exp_ct, exp_has = e.code, "", False
+ck(exp_status, 200, "export CSV 200")
+ck("text/csv" in exp_ct, True, "export content-type text/csv")
+ck(exp_has, True, "export contient le contact créé")
+
+print("=== 34. POST /crm/suppression (RGPD désinscription) ===")
+s, sup = call("POST", "/api/tenants/tnt-demo/crm/suppression", tok,
+              {"email": "unsubscribe.e2e@crm.io", "reason": "unsubscribe"})
+ck(s, 201, "add suppression 201")
+ck(sup.get("reason"), "unsubscribe", "suppression reason")
+# idempotent : re-add met à jour la raison
+s, sup2 = call("POST", "/api/tenants/tnt-demo/crm/suppression", tok,
+               {"email": "unsubscribe.e2e@crm.io", "reason": "complaint"})
+ck(sup2.get("reason"), "complaint", "suppression idempotent (reason updatée)")
+
+print("=== 35. GET /crm/segments/seg-1/contacts (filtre sauvegardé) ===")
+s, seg = call("GET", "/api/tenants/tnt-demo/crm/segments/seg-1/contacts", tok)
+ck(s, 200, "apply segment 200")
+ck(len(seg) >= 1, True, "segment 'Décideurs tech' matches ≥1")
+ck(all("cto" in (m.get("title", "") + m.get("email", "")).lower() for m in seg), True,
+   "tous les matchs du segment contiennent 'cto'")
+
+print("=== 36. DELETE /crm/contacts/{id} (RGPD droit à l'oubli + cascade) ===")
+s, dele = call("DELETE", f"/api/tenants/tnt-demo/crm/contacts/{ncid}", tok)
+ck(s, 200, "delete contact 200")
+ck(dele.get("deleted"), ncid, "deleted renvoie l'id")
+s, _ = call("GET", f"/api/tenants/tnt-demo/crm/contacts/{ncid}", tok)
+ck(s, 404, "contact supprimé → 404")
+
+print("=== 37. CRM tenant isolation (non-member → 403) ===")
+# pat@test.io (test 13) n'est membre que de son propre tenant → 403 sur tnt-demo CRM.
+s, _ = call("GET", "/api/tenants/tnt-demo/crm/contacts", ptok)
+ck(s, 403, "non-member → 403 sur CRM tnt-demo")
 
 print()
 print(f"RESULT: {passed} passed, {failed} failed")
