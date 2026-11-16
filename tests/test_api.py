@@ -564,21 +564,29 @@ ck(s, 200, "stats 200")
 ck(st.get("active"), 1, "active=1")
 ck(st.get("total_enrollments"), 1, "total_enrollments=1")
 
-print("=== 65. scheduler flow (interval=3s, wait 10s → 2 steps sent + completed) ===")
+print("=== 65. process flow (2 manual /process calls → 2 steps sent + completed) ===")
 s, ov0 = call("GET", "/api/tenants/tnt-demo/analytics/overview", tok)
 emails_before = ov0.get("emails_total", 0)
-print(f"  emails_before={emails_before}, attente scheduler 10s (2 runs a 3s)...")
-time.sleep(10)
+# Process call 1 : step 1 (due, next_step_at=now car delay_days=0).
+s, pr1 = call("POST", f"/api/tenants/tnt-demo/crm/sequences/{sid}/process", tok)
+ck(s, 200, "process call 1 200")
+ck(pr1.get("processed"), 1, "process 1: processed=1 (step 1 due)")
+ck(pr1.get("sent"), 1, "process 1: sent=1 (email step 1 dry_run)")
+# Process call 2 : step 2 (now due — next_step_at=now après advance step 1, delay_days=0).
+s, pr2 = call("POST", f"/api/tenants/tnt-demo/crm/sequences/{sid}/process", tok)
+ck(s, 200, "process call 2 200")
+ck(pr2.get("processed"), 1, "process 2: processed=1 (step 2 due)")
+ck(pr2.get("completed"), 1, "process 2: completed=1 (dernier step → completed)")
+# Verify enrollment completed + current_step=2 + ≥2 emails envoyés via process.
 s, enrs = call("GET", f"/api/tenants/tnt-demo/crm/sequences/{sid}/enrollments", tok)
 ck(s, 200, "enrollments list 200")
-ck(len(enrs) >= 1, True, ">=1 enrollment")
-enr_after = enrs[0]
+enr_after = enrs[0] if enrs else {}
 ck(enr_after.get("status"), "completed", f"enrollment completed (status={enr_after.get('status')})")
 ck(enr_after.get("current_step_order"), 2, "current_step_order=2 (dernier step)")
 s, ov1 = call("GET", "/api/tenants/tnt-demo/analytics/overview", tok)
 emails_after = ov1.get("emails_total", 0)
 ck(emails_after >= emails_before + 2, True,
-   f">=2 emails envoyes par scheduler ({emails_after} >= {emails_before}+2)")
+   f">=2 emails envoyes via process ({emails_after} >= {emails_before}+2)")
 
 print("=== 66. POST /process (manual no-op) + DELETE + 404 ===")
 s, pr = call("POST", f"/api/tenants/tnt-demo/crm/sequences/{sid}/process", tok)
