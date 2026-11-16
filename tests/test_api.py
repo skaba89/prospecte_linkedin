@@ -725,8 +725,6 @@ for _w in _existing:
 print("=== 81. POST /webhooks (create, events contact.created) ===")
 s, wh = call("POST", "/api/tenants/tnt-demo/webhooks", tok,
              {"url": "http://127.0.0.1:9099/wh", "events": ["contact.created"]})
-if s != 201:
-    print(f"  ⚠ DEBUG create webhook HTTP {s}: {wh}")
 ck(s, 201, "create webhook 201")
 ck(wh.get("events"), ["contact.created"], "events retournés filtrés")
 ck("secret" not in wh, True, "secret non exposé en WebhookOut")
