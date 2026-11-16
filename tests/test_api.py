@@ -521,6 +521,82 @@ ck(s, 403, "non-member → 403 sur analytics/overview (get_tenant)")
 s, _ = call("GET", "/api/tenants/tnt-demo/analytics/export", ptok)
 ck(s, 403, "non-member → 403 sur analytics/export (crm.manage)")
 
+# ─── P15 Séquences & automatisation (60-67) : create/enroll/scheduler/process/delete/RBAC ──
+print("=== 60. POST /crm/contacts (fresh contact real email pour sequence) ===")
+s, c = call("POST", "/api/tenants/tnt-demo/crm/contacts", tok,
+            {"first_name": "Seq", "last_name": "Tester", "email": "seq.tester@prospectmail.io",
+             "title": "CTO", "source": "manual"})
+ck(s, 201, "create contact for sequence 201")
+ctid_seq = c["id"]
+
+print("=== 61. POST /crm/sequences (create 2 steps delay_days=0, status=active) ===")
+s, seq = call("POST", "/api/tenants/tnt-demo/crm/sequences", tok,
+              {"name": "Drip E2E P15", "description": "Sequence de test", "status": "active",
+               "steps": [{"template_id": "cold_outreach", "delay_days": 0},
+                         {"template_id": "follow_up", "delay_days": 0}]})
+ck(s, 201, "create sequence 201")
+ck(len(seq.get("steps", [])), 2, "2 steps crees")
+ck(seq.get("status"), "active", "status=active")
+sid = seq["id"]
+
+print("=== 62. GET /crm/sequences (list) + GET /{sid} (detail) ===")
+s, seqs = call("GET", "/api/tenants/tnt-demo/crm/sequences", tok)
+ck(s, 200, "list sequences 200")
+ck(len(seqs) >= 1, True, ">=1 sequence dans la liste")
+s, det = call("GET", f"/api/tenants/tnt-demo/crm/sequences/{sid}", tok)
+ck(s, 200, "detail sequence 200")
+ck(len(det.get("steps", [])), 2, "detail: 2 steps")
+ck(det.get("enrollments_count"), 0, "detail: 0 enrollment avant enroll")
+
+print("=== 63. POST /crm/sequences/{sid}/enroll → 201 active + 409 double ===")
+s, enr = call("POST", f"/api/tenants/tnt-demo/crm/sequences/{sid}/enroll", tok,
+              {"contact_id": ctid_seq})
+ck(s, 201, "enroll 201")
+ck(enr.get("status"), "active", "enrollment active")
+ck(enr.get("current_step_order"), 1, "current_step_order=1 (premier step)")
+s, _ = call("POST", f"/api/tenants/tnt-demo/crm/sequences/{sid}/enroll", tok,
+            {"contact_id": ctid_seq})
+ck(s, 409, "double enroll → 409 conflict")
+
+print("=== 64. GET /crm/sequences/{sid}/stats (active=1, total=1) ===")
+s, st = call("GET", f"/api/tenants/tnt-demo/crm/sequences/{sid}/stats", tok)
+ck(s, 200, "stats 200")
+ck(st.get("active"), 1, "active=1")
+ck(st.get("total_enrollments"), 1, "total_enrollments=1")
+
+print("=== 65. scheduler flow (interval=3s, wait 10s → 2 steps sent + completed) ===")
+s, ov0 = call("GET", "/api/tenants/tnt-demo/analytics/overview", tok)
+emails_before = ov0.get("emails_total", 0)
+print(f"  emails_before={emails_before}, attente scheduler 10s (2 runs a 3s)...")
+time.sleep(10)
+s, enrs = call("GET", f"/api/tenants/tnt-demo/crm/sequences/{sid}/enrollments", tok)
+ck(s, 200, "enrollments list 200")
+ck(len(enrs) >= 1, True, ">=1 enrollment")
+enr_after = enrs[0]
+ck(enr_after.get("status"), "completed", f"enrollment completed (status={enr_after.get('status')})")
+ck(enr_after.get("current_step_order"), 2, "current_step_order=2 (dernier step)")
+s, ov1 = call("GET", "/api/tenants/tnt-demo/analytics/overview", tok)
+emails_after = ov1.get("emails_total", 0)
+ck(emails_after >= emails_before + 2, True,
+   f">=2 emails envoyes par scheduler ({emails_after} >= {emails_before}+2)")
+
+print("=== 66. POST /process (manual no-op) + DELETE + 404 ===")
+s, pr = call("POST", f"/api/tenants/tnt-demo/crm/sequences/{sid}/process", tok)
+ck(s, 200, "process manual 200")
+ck(pr.get("processed"), 0, "processed=0 (rien de du — tout complete)")
+s, d = call("DELETE", f"/api/tenants/tnt-demo/crm/sequences/{sid}", tok)
+ck(s, 200, "delete sequence 200 (retourne {deleted, name})")
+ck(d.get("deleted"), sid, "delete retourne {deleted: sid}")
+s, _ = call("GET", f"/api/tenants/tnt-demo/crm/sequences/{sid}", tok)
+ck(s, 404, "GET after delete → 404")
+
+print("=== 67. sequences RBAC (non-member → 403) ===")
+s, _ = call("POST", "/api/tenants/tnt-demo/crm/sequences", ptok,
+            {"name": "x", "steps": [{"template_id": "cold_outreach"}]})
+ck(s, 403, "non-member → 403 sur create sequence")
+s, _ = call("POST", "/api/tenants/tnt-demo/crm/sequences/x/enroll", ptok, {"contact_id": "x"})
+ck(s, 403, "non-member → 403 sur enroll")
+
 print()
 print(f"RESULT: {passed} passed, {failed} failed")
 sys.exit(0 if failed == 0 else 1)

@@ -64,6 +64,8 @@ jobs:
         run: python tests/test_notifications.py
       - name: P14 Analytics & reporting static checks (overview/pipeline/emails/sources/export/RBAC)
         run: python tests/test_analytics.py
+      - name: P15 Séquences & automatisation static checks (scheduler/enroll/process/stats/RBAC)
+        run: python tests/test_sequences.py
 
   test-api:
     name: API tests (sqlite, sans docker)

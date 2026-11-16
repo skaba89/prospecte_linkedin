@@ -45,32 +45,34 @@ def list_templates_endpoint(tid: str, _t: models.Tenant = Depends(get_tenant)):
     return [schemas.TemplateInfo(**t) for t in templates.list_templates()]
 
 
-@router.post("/tenants/{tid}/crm/contacts/{ctid}/email", response_model=schemas.EmailSendResult)
-def email_contact(tid: str, ctid: str, payload: schemas.EmailSendRequest,
-                  db: Session = Depends(get_db), _t: models.Tenant = Depends(get_tenant),
-                  membership=Depends(require_permission("crm.manage"))):
-    """Envoie un e-mail templated à un contact CRM (P13). RGPD : skip si email en suppression
-    list OU placeholder (@linkedin.sync). Crée une Notification (log durable) + envoie via SMTP
-    (dry_run si smtp_enabled=false). Audit crm.email_contact. Retourne EmailSendResult."""
-    contact = db.query(models.Contact).filter_by(tenant_id=tid, id=ctid).first()
-    if not contact:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Contact introuvable.")
+def send_email_to_contact(db: Session, tenant_id: str, contact: models.Contact,
+                          template_id: str, actor_user_id: str | None, actor_name: str,
+                          tenant_name: str, custom_message: str = "") -> schemas.EmailSendResult:
+    """Envoie un e-mail templated à un contact CRM (helper P13/P15 — réutilisé par l'endpoint
+    email_contact ET par le scheduler de séquences P15). Ne lève PAS d'HTTPException (le scheduler
+    n'a pas de contexte HTTP) ; l'endpoint traduit les cas d'erreur (contact/template) en HTTP.
+
+    RGPD : skip si email en suppression list OU placeholder (@linkedin.sync). Crée une Notification
+    (log durable) + SMTP (dry-run si smtp_enabled=false). Audit crm.email_contact.
+    Retourne EmailSendResult (status: sent|dry_run|failed|skipped)."""
+    tid = tenant_id
+    ctid = contact.id
     email = (contact.email or "").strip().lower()
 
     # RGPD : désinscription respectée (SuppressionList).
     if email and db.query(models.SuppressionList).filter_by(tenant_id=tid, email=email).first():
         notif = models.Notification(
-            tenant_id=tid, user_id=membership.user_id, type="email", channel="email",
+            tenant_id=tid, user_id=actor_user_id, type="email", channel="email",
             recipient_email=email, recipient_contact_id=ctid,
-            subject=f"[SKIPPED-RGPD] {payload.template}",
-            body_text="Désinscription RGPD — envoi bloqué.", template_id=payload.template,
+            subject=f"[SKIPPED-RGPD] {template_id}",
+            body_text="Désinscription RGPD — envoi bloqué.", template_id=template_id,
             status="failed", error_detail="Email en suppression list (RGPD) — envoi bloqué.")
         db.add(notif)
         db.commit()
         db.refresh(notif)
-        log_audit(db, tenant_id=tid, actor_user_id=membership.user_id, actor_name=membership.name,
+        log_audit(db, tenant_id=tid, actor_user_id=actor_user_id, actor_name=actor_name,
                   action="crm.email_contact", target_type="contact", target_id=ctid,
-                  detail={"template": payload.template, "status": "skipped_rgpd", "email": email})
+                  detail={"template": template_id, "status": "skipped_rgpd", "email": email})
         db.commit()
         return schemas.EmailSendResult(
             notification_id=notif.id, status="skipped", email_sent=False,
@@ -79,11 +81,11 @@ def email_contact(tid: str, ctid: str, payload: schemas.EmailSendRequest,
     # Placeholder (sync LinkedIn sans email réel) → skip (pas un destinataire valide).
     if not email or _is_placeholder_email(email):
         notif = models.Notification(
-            tenant_id=tid, user_id=membership.user_id, type="email", channel="email",
+            tenant_id=tid, user_id=actor_user_id, type="email", channel="email",
             recipient_email=email, recipient_contact_id=ctid,
-            subject=f"[SKIPPED-NO-EMAIL] {payload.template}",
+            subject=f"[SKIPPED-NO-EMAIL] {template_id}",
             body_text="Pas d'email réel (placeholder sync LinkedIn) — envoi impossible.",
-            template_id=payload.template, status="failed",
+            template_id=template_id, status="failed",
             error_detail="Email placeholder (@linkedin.sync) ou absent — pas un destinataire réel.")
         db.add(notif)
         db.commit()
@@ -92,43 +94,60 @@ def email_contact(tid: str, ctid: str, payload: schemas.EmailSendRequest,
             notification_id=notif.id, status="skipped", email_sent=False,
             detail="Le contact n'a pas d'email réel (sync LinkedIn sans email exposé).")
 
-    # Rendu du template (KeyError → 400 si template_id inconnu).
+    # Rendu du template (KeyError → result failed ; l'endpoint traduira en 400).
     company_name = ""
     if getattr(contact, "company_id", None):
         comp = db.query(models.Company).filter_by(tenant_id=tid, id=contact.company_id).first()
         company_name = comp.name if comp else ""
     try:
         subject, body_text, body_html = templates.render(
-            payload.template,
+            template_id,
             contact_name=f"{contact.first_name} {contact.last_name}".strip(),
-            company=company_name, tenant_name=_t.name,
-            sender_name=membership.name, topic=contact.title or "",
-            custom_message=payload.custom_message)
+            company=company_name, tenant_name=tenant_name,
+            sender_name=actor_name, topic=contact.title or "",
+            custom_message=custom_message)
     except KeyError:
-        raise HTTPException(
-            status.HTTP_400_BAD_REQUEST,
-            f"Template inconnu : {payload.template}. Disponibles : cold_outreach, follow_up, intro, re_engagement.") from None
+        return schemas.EmailSendResult(
+            notification_id=None, status="failed", email_sent=False,
+            detail=f"Template inconnu : {template_id}. Disponibles : cold_outreach, follow_up, intro, re_engagement.")
 
     # Envoi SMTP (dry-run si smtp_enabled=false).
-    ok, detail = send_email(email, subject, body_text, body_html, from_name=membership.name)
+    ok, detail = send_email(email, subject, body_text, body_html, from_name=actor_name)
     notif_status = "sent" if (ok and settings.smtp_enabled) else ("dry_run" if ok else "failed")
     notif = models.Notification(
-        tenant_id=tid, user_id=membership.user_id, type="email", channel="email",
+        tenant_id=tid, user_id=actor_user_id, type="email", channel="email",
         recipient_email=email, recipient_contact_id=ctid, subject=subject,
-        body_text=body_text, body_html=body_html, template_id=payload.template,
+        body_text=body_text, body_html=body_html, template_id=template_id,
         status=notif_status, sent_at=datetime.utcnow() if ok else None,
         error_detail=None if ok else detail)
     db.add(notif)
     db.commit()
     db.refresh(notif)
-    log_audit(db, tenant_id=tid, actor_user_id=membership.user_id, actor_name=membership.name,
+    log_audit(db, tenant_id=tid, actor_user_id=actor_user_id, actor_name=actor_name,
               action="crm.email_contact", target_type="contact", target_id=ctid,
-              detail={"template": payload.template, "status": notif_status, "email": email})
+              detail={"template": template_id, "status": notif_status, "email": email})
     db.commit()
     return schemas.EmailSendResult(
         notification_id=notif.id, status=notif_status, email_sent=ok,
         detail=detail if not ok else
         f"E-mail {'envoyé' if settings.smtp_enabled else 'simulé (dry-run)'} → {email}.")
+
+
+@router.post("/tenants/{tid}/crm/contacts/{ctid}/email", response_model=schemas.EmailSendResult)
+def email_contact(tid: str, ctid: str, payload: schemas.EmailSendRequest,
+                  db: Session = Depends(get_db), _t: models.Tenant = Depends(get_tenant),
+                  membership=Depends(require_permission("crm.manage"))):
+    """Envoie un e-mail templated à un contact CRM (P13). Délègue à send_email_to_contact
+    (helper réutilisé par le scheduler de séquences P15). Traduit les erreurs en HTTP
+    (404 contact introuvable, 400 template inconnu)."""
+    contact = db.query(models.Contact).filter_by(tenant_id=tid, id=ctid).first()
+    if not contact:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Contact introuvable.")
+    result = send_email_to_contact(db, tid, contact, payload.template, membership.user_id,
+                                   membership.name, _t.name, payload.custom_message)
+    if result.status == "failed" and (result.detail or "").startswith("Template inconnu"):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, result.detail) from None
+    return result
 
 
 @router.get("/tenants/{tid}/notifications", response_model=list[schemas.NotificationOut])
