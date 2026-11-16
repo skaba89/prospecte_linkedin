@@ -13,3 +13,10 @@ backend/.ruff_cache/
 
 # Build / OS
 .DS_Store
+
+# Backups de test (P10.17) — isolés des backups réels, jamais committés
+backups-test/
+
+# Artefacts Playwright
+test-results/
+playwright-report/

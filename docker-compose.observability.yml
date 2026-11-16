@@ -1,7 +1,8 @@
 # Overlay docker-compose — stack observabilité (Prometheus + Grafana).
 # Usage : docker compose -f docker-compose.yml -f docker-compose.observability.yml up
 # Dépend du service `backend` (défini dans docker-compose.yml) pour le scrape /metrics.
-# Prometheus : http://localhost:9090  |  Grafana : http://localhost:3000 (admin/admin)
+# Prometheus : http://localhost:9090  |  Grafana : http://localhost:3000
+# P10.5/P10.11 : admin password via env (pas de défaut) + ports liés à 127.0.0.1 (admin-only).
 services:
   prometheus:
     image: prom/prometheus:v2.54.1
@@ -16,7 +17,7 @@ services:
       - --storage.tsdb.retention.time=15d
       - --web.enable-lifecycle
     ports:
-      - "9090:9090"
+      - "127.0.0.1:9090:9090"
     depends_on:
       - backend
     restart: unless-stopped
@@ -29,11 +30,11 @@ services:
       - ./observability/grafana/dashboards:/var/lib/grafana/dashboards:ro
       - grafana-data:/var/lib/grafana
     environment:
-      - GF_SECURITY_ADMIN_USER=admin
-      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_SECURITY_ADMIN_USER=${GRAFANA_ADMIN_USER:-admin}
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:?GRAFANA_ADMIN_PASSWORD requis (définir dans .env)}
       - GF_USERS_ALLOW_SIGN_UP=false
     ports:
-      - "3000:3000"
+      - "127.0.0.1:3000:3000"
     depends_on:
       - prometheus
     restart: unless-stopped

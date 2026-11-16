@@ -1,0 +1,27 @@
+# CVE acceptées (une par ligne, # = commentaire). pip-audit les ignore via --ignore-vuln.
+# Chaque CVE listée DOIT être justifiée + datée dans SECURITY.md (section « CVE acceptées »),
+# avec une échéance de réévaluation. Format : CVE-YYYY-NNNNN  ou  PYSEC-YYYY-NNN
+#
+# python-jose 3.3.0 → bumpé à 3.4.0 (CVE alg-confusion PYSEC-2024-232/233 + PYSEC-2025-185 fixées).
+# PYSEC-2026-4298 persiste en 3.4.0 (jose non maintenu, pas de fix amont) : RevPulse utilise
+# HS256 avec algorithms= explicite (mitigue la classe alg-confusion) ; migration PyJWT planifiée P18.
+PYSEC-2026-4298
+#
+# ── pyasn1 0.4.8 (transitive via jose→ecdsa→pyasn1, pas d'usage direct ; bump coordonné planifié P18) ──
+PYSEC-2026-3457
+PYSEC-2026-3456
+PYSEC-2026-3455
+PYSEC-2026-2263
+CVE-2026-119196
+CVE-2026-119194
+CVE-2026-119197
+CVE-2026-119195
+# ── starlette 0.50 (transitive via FastAPI ; mitigé par reverse proxy nginx + rate-limit ;
+#    bump FastAPI/starlette coordonné planifié P18) ──
+PYSEC-2026-161
+PYSEC-2026-2281
+PYSEC-2026-2280
+PYSEC-2026-249
+PYSEC-2026-248
+# ── ecdsa 0.19 (transitive via jose ; RevPulse utilise HS256, algos EC non utilisés ; pas de fix amont) ──
+PYSEC-2026-1325

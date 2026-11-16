@@ -1,4 +1,5 @@
 """Point d'entrée FastAPI : CORS, rate-limit, routers, seed au démarrage, static du frontend."""
+import logging
 import os
 
 from fastapi import Depends, FastAPI
@@ -54,18 +55,21 @@ def _startup():
 
 @app.get("/api/health")
 def health(db: Session = Depends(get_db)):
-    """Healthcheck approfondi : ping DB réel (SELECT 1). 200/ok si DB up, 503/degraded sinon."""
-    db_ok, detail = False, ""
+    """Healthcheck : ping DB réel (SELECT 1). 200/ok si DB up, 503/degraded sinon.
+
+    P10.1 : n'expose NI la chaîne de connexion NI le détail d'exception — fuite d'info.
+    Le détail est loggé côté serveur uniquement (structured logging).
+    """
+    db_ok = False
     try:
         db.execute(text("SELECT 1")).first()
         db_ok = True
     except Exception as e:
-        detail = f"{type(e).__name__}: {str(e)[:180]}"
-    status_str = "ok" if db_ok else "degraded"
+        logging.getLogger("revpulse.health").warning(
+            "DB healthcheck failed: %s: %s", type(e).__name__, str(e)[:200])
     return JSONResponse(
-        {"status": status_str, "service": "revpulse-api",
-         "db": settings.database_url.split("///")[-1], "db_ok": db_ok, "detail": detail,
-         "env": settings.env},
+        {"status": "ok" if db_ok else "degraded", "service": "revpulse-api",
+         "db_ok": db_ok, "env": settings.env},
         status_code=200 if db_ok else 503,
     )
 

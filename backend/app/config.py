@@ -56,6 +56,10 @@ class Settings(BaseSettings):
     linkedin_redirect_uri: str = "http://localhost:8000/api/linkedin/callback"
     linkedin_mock: bool = False  # force le mock même si des creds sont présentes (tests)
 
+    # P10.2 : chiffrement Fernet des tokens OAuth (rotation via *_PREVIOUS). Requis en prod.
+    token_encryption_key: str = ""
+    token_encryption_key_previous: str = ""  # ancienne clé (décryptage only, rotation)
+
     # Rate-limiting login (anti brute-force). Désactivable, configurable.
     rate_limit_enabled: bool = True
     login_rate_limit: str = "5/minute"  # syntaxe slowapi : "N/period" (second/minute/hour/day)
@@ -74,9 +78,30 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
     log_format: str = "json"  # json | text
 
+    @property
+    def is_production(self) -> bool:
+        """P10.4 : gate les routes mock + le compte démo (interdits en production)."""
+        return self.env == "production"
+
     @model_validator(mode="after")
     def _fail_fast_secrets(self):
         validate_jwt_secret(self.env, self.jwt_secret)
+        # P10.2 : en production, la clé de chiffrement Fernet des tokens OAuth est requise + valide.
+        if self.is_production:
+            if not self.token_encryption_key:
+                raise ValueError(
+                    "REVPULSE_TOKEN_ENCRYPTION_KEY requis en production "
+                    "(Fernet key, base64-urlsafe 32 bytes : "
+                    'python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())").'
+                )
+            try:
+                from cryptography.fernet import Fernet
+
+                Fernet(self.token_encryption_key.encode())
+            except Exception as exc:
+                raise ValueError(
+                    "REVPULSE_TOKEN_ENCRYPTION_KEY invalide (Fernet key base64-urlsafe 32 bytes attendue)."
+                ) from exc
         return self
 
 

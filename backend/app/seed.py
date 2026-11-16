@@ -131,5 +131,11 @@ def ensure_demo(db: Session) -> models.User:
 
 
 def seed_all(db: Session) -> None:
-    """Appelé au démarrage : garantit le compte démo (n'écrase rien d'existant)."""
+    """Appelé au démarrage : garantit le compte démo (n'écrase rien d'existant).
+
+    P10.4 : aucun seed démo en production (pas de compte démo, pas de tenants démo).
+    Un déploiement prod crée son propre compte + tenant via /api/auth/register.
+    """
+    if settings.is_production:
+        return
     ensure_demo(db)

@@ -1,8 +1,12 @@
-"""Sécurité : hachage bcrypt + JWT (HS256). Utilise le package bcrypt directement
-(pas passlib, incompatible avec bcrypt 4.x)."""
+"""Sécurité : hachage bcrypt, JWT (HS256 + jti pour révocation), chiffrement Fernet des
+tokens OAuth (rotation de clé via REVPULSE_TOKEN_ENCRYPTION_KEY_PREVIOUS), content_hash
+(dédup des publications). Utilise bcrypt directement (pas passlib, incompatible bcrypt 4.x)."""
+import hashlib
+import secrets
 from datetime import UTC, datetime, timedelta
 
 import bcrypt
+from cryptography.fernet import Fernet, InvalidToken
 from jose import JWTError, jwt
 
 from .config import settings
@@ -20,8 +24,13 @@ def verify_password(raw: str, hashed: str) -> bool:
 
 
 def create_access_token(subject: str) -> str:
+    """JWT {sub, exp, jti}. Le jti (unique) permet la révocation (blacklist)."""
     expire = datetime.now(UTC) + timedelta(hours=settings.jwt_expiry_hours)
-    return jwt.encode({"sub": subject, "exp": expire}, settings.jwt_secret, algorithm=settings.jwt_algo)
+    return jwt.encode(
+        {"sub": subject, "exp": expire, "jti": secrets.token_urlsafe(16)},
+        settings.jwt_secret,
+        algorithm=settings.jwt_algo,
+    )
 
 
 def decode_token(token: str) -> dict | None:
@@ -30,3 +39,48 @@ def decode_token(token: str) -> dict | None:
     except JWTError:
         return None
 
+
+# ---- Chiffrement des tokens OAuth (Fernet, rotation de clé) ----
+def _fernet(key: str) -> Fernet | None:
+    if not key:
+        return None
+    try:
+        return Fernet(key.encode() if isinstance(key, str) else key)
+    except Exception:
+        return None
+
+
+def encrypt_token(plaintext: str) -> str:
+    """Chiffre un token OAuth avec la clé courante. ValueError si aucune clé valide."""
+    f = _fernet(settings.token_encryption_key)
+    if f is None:
+        raise ValueError("REVPULSE_TOKEN_ENCRYPTION_KEY absent/invalide — chiffrement impossible.")
+    return f.encrypt(plaintext.encode()).decode()
+
+
+def decrypt_token(ciphertext: str) -> str:
+    """Déchiffre un token OAuth. Gère la rotation : clé courante puis précédente.
+    Pour les valeurs legacy non-Fernet (dev sans clé), retourne tel quel — utile en CI."""
+    if not ciphertext:
+        return ""
+    f = _fernet(settings.token_encryption_key)
+    if f is not None:
+        try:
+            return f.decrypt(ciphertext.encode()).decode()
+        except InvalidToken:
+            pass
+    fp = _fernet(settings.token_encryption_key_previous)
+    if fp is not None:
+        try:
+            return fp.decrypt(ciphertext.encode()).decode()
+        except InvalidToken:
+            pass
+    # legacy plaintext (dev/test sans clé Fernet) — retour tel quel si pas un token Fernet.
+    if not ciphertext.startswith("gAAAA"):
+        return ciphertext
+    raise ValueError("Token OAuth indéchiffrable (clé manquante ou incorrecte).")
+
+
+def content_hash(text: str) -> str:
+    """sha256 du texte normalisé (strip + lower) pour la dédup des publications."""
+    return hashlib.sha256(text.strip().lower().encode("utf-8")).hexdigest()
