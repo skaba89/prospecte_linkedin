@@ -605,6 +605,54 @@ ck(s, 403, "non-member → 403 sur create sequence")
 s, _ = call("POST", "/api/tenants/tnt-demo/crm/sequences/x/enroll", ptok, {"contact_id": "x"})
 ck(s, 403, "non-member → 403 sur enroll")
 
+# ─── P16 Ciblage avancé + batch enrollment (68-74) ───────────────────────────
+print("=== 68. POST /crm/sequences (seq2 for batch enroll) ===")
+s, seq2 = call("POST", "/api/tenants/tnt-demo/crm/sequences", tok,
+               {"name": "Batch E2E P16", "status": "active",
+                "steps": [{"template_id": "cold_outreach", "delay_days": 1}]})
+ck(s, 201, "create seq2 for batch 201")
+sid2 = seq2["id"]
+
+print("=== 69. POST /crm/segments (criteria has_email=true) ===")
+s, seg = call("POST", "/api/tenants/tnt-demo/crm/segments", tok,
+              {"name": "Emailables P16", "criteria": {"has_email": True}})
+ck(s, 201, "create segment has_email 201")
+seg_id = seg["id"]
+
+print("=== 70. GET /crm/segments/{seg_id}/contacts (apply — only real emails) ===")
+s, sc = call("GET", f"/api/tenants/tnt-demo/crm/segments/{seg_id}/contacts", tok)
+ck(s, 200, "apply segment 200")
+ck(len(sc) >= 1, True, "≥1 contact avec email réel (seed Marie etc.)")
+ck(all("@linkedin.sync" not in (c.get("email") or "") and "@local.revpulse.io" not in (c.get("email") or "") for c in sc),
+   True, "aucun contact placeholder dans le segment has_email")
+
+print("=== 71. POST /crm/sequences/{sid2}/enroll-batch {segment_id} ===")
+s, eb = call("POST", f"/api/tenants/tnt-demo/crm/sequences/{sid2}/enroll-batch", tok,
+             {"segment_id": seg_id})
+ck(s, 200, "enroll-batch segment 200")
+ck(eb.get("enrolled", 0) >= 1, True, f"enrolled ≥1 ({eb.get('enrolled')})")
+ck(eb.get("skipped"), 0, "skipped=0 (premier batch)")
+batch_n = eb.get("enrolled", 0)
+
+print("=== 72. GET /crm/sequences/{sid2}/enrollments (count = batch_n) ===")
+s, enrs2 = call("GET", f"/api/tenants/tnt-demo/crm/sequences/{sid2}/enrollments", tok)
+ck(s, 200, "enrollments list 200")
+ck(len(enrs2), batch_n, f"{batch_n} enrollments créés via batch")
+
+print("=== 73. POST enroll-batch AGAIN {segment_id} → enrolled=0, skipped=batch_n (idempotent) ===")
+s, eb2 = call("POST", f"/api/tenants/tnt-demo/crm/sequences/{sid2}/enroll-batch", tok,
+              {"segment_id": seg_id})
+ck(s, 200, "enroll-batch again 200")
+ck(eb2.get("enrolled"), 0, "enrolled=0 (déjà tous actifs)")
+ck(eb2.get("skipped"), batch_n, f"skipped={batch_n} (idempotent — tous déjà actifs)")
+ck(eb2.get("total"), batch_n, f"total={batch_n}")
+
+print("=== 74. enroll-batch {} → 400 + non-member → 403 ===")
+s, _ = call("POST", f"/api/tenants/tnt-demo/crm/sequences/{sid2}/enroll-batch", tok, {})
+ck(s, 400, "enroll-batch empty (no segment_id, no contact_ids) → 400")
+s, _ = call("POST", f"/api/tenants/tnt-demo/crm/sequences/{sid2}/enroll-batch", ptok, {"segment_id": seg_id})
+ck(s, 403, "non-member → 403 sur enroll-batch")
+
 print()
 print(f"RESULT: {passed} passed, {failed} failed")
 sys.exit(0 if failed == 0 else 1)
