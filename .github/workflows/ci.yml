@@ -37,15 +37,19 @@ jobs:
       - run: ruff check backend/app
 
   frontend:
-    name: Frontend security (static checks)
+    name: Static checks (frontend + observability)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+      - name: Install PyYAML (for test_observability)
+        run: pip install pyyaml
       - name: Static security checks (headers nginx, CSP, non-root, esc, no eval, 401)
         run: python tests/test_frontend.py
+      - name: Observability configs (Grafana dashboard + Prometheus alerts + scrape, P7)
+        run: python tests/test_observability.py
 
   test-api:
     name: API tests (sqlite, sans docker)

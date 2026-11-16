@@ -1,0 +1,13 @@
+# Provisionning dashboards Grafana — charge automatiquement les JSON du dossier monté.
+# Les dashboards sont montés depuis ./observability/grafana/dashboards (voir compose).
+apiVersion: 1
+providers:
+  - name: "RevPulse dashboards"
+    orgId: 1
+    folder: ""
+    type: file
+    disableDeletion: false
+    editable: true
+    updateIntervalSeconds: 30
+    options:
+      path: /var/lib/grafana/dashboards

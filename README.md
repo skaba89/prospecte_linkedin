@@ -325,6 +325,30 @@ servie), et la logique autonome `app-enhancements.js` (Studio + panneau audit P5
 étape `playwright install --with-deps chromium` + `python tests/test_e2e.py` (après
 test_metrics, serveur encore up).
 
+## P7 — Grafana dashboard + alert rules (observabilité visualisable)
+
+Clôture la triade observabilité : logs structurés (P3) + audit queryable (P4) + metrics
+Prometheus (P5) + E2E (P6) → **dashboard Grafana + alertes** (P7). Les metrics P5
+deviennent visualisables (QPS, latence p95, taux 5xx) + actionnables (alertes
+automatiques). Vérifié par `tests/test_observability.py` (38 checks statiques).
+
+Configs sous `observability/` :
+  - `prometheus.yml` : scrape le backend sur `/metrics` toutes les 15s (job
+    `revpulse-backend`, target `backend:8000`), référence `alerts.yml`.
+  - `alerts.yml` : 3 règles — `RevPulseBackendDown` (critical, `up == 0` pendant 1m),
+    `RevPulseHighErrorRate` (warning, taux 5xx > 5% pendant 2m),
+    `RevPulseHighLatencyP95` (warning, p95 > 500ms pendant 5m).
+  - `grafana/provisioning/` : datasource Prometheus (uid `prometheus`, auto-chargée) +
+    dashboard provider (charge les JSON du dossier monté).
+  - `grafana/dashboards/revpulse-overview.json` : 6 panels (généré par
+    `scripts/gen_dashboard.py`) — QPS total, taux d'erreur 5xx, répartition par status,
+    QPS par route, latence p95 par route (`histogram_quantile`), top 5 routes par trafic.
+
+`docker-compose.observability.yml` (overlay) : `docker compose -f docker-compose.yml -f
+docker-compose.observability.yml up` → Prometheus (http://localhost:9090) + Grafana
+(http://localhost:3000, admin/admin). Grafana provisionne automatiquement le datasource
++ le dashboard (aucune config manuelle).
+
 ## API
 
 | Méthode | Route | Rôle | Description |
@@ -485,6 +509,14 @@ chargé en `defer` et n'altère pas le rendu existant.
   + `playwright install --with-deps chromium`. **Suite totale : 10 (config) + 23
   (frontend) + 49 (api) + 22 (p3) + 25 (audit) + 12 (metrics) + 14 (e2e) = 155 checks
   verts.**
+- **P7 (observabilité visualisable)** : `tests/test_observability.py` → 38/38 (validation
+  statique : `prometheus.yml` scrape `backend:8000/metrics`, `alerts.yml` 3 règles
+  référençant les métriques P5 + filtre 5xx + `histogram_quantile`, Grafana
+  datasource/dashboard provisioning, `revpulse-overview.json` 6 panels avec
+  `rate`/`histogram_quantile`/filtre 5xx, `docker-compose.observability.yml`
+  prometheus + grafana + mounts) ; `ruff check backend/app` → 0 erreur. **Suite totale :
+  10 (config) + 23 (frontend) + 38 (observability) + 49 (api) + 22 (p3) + 25 (audit) +
+  12 (metrics) + 14 (e2e) = 193 checks verts.**
 
 ## Compte démo
 

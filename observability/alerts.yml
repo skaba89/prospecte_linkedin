@@ -1,0 +1,37 @@
+# Alertes Prometheus — RevPulse.
+# Consomme les métriques P5 (revpulse_http_requests_total,
+# revpulse_http_request_duration_seconds) + le métrique standard `up`.
+# 3 règles : backend down, taux d'erreur 5xx, latence p95.
+groups:
+  - name: revpulse-alerts
+    rules:
+      - alert: RevPulseBackendDown
+        expr: up{job="revpulse-backend"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "RevPulse backend down"
+          description: "Le backend {{ $labels.instance }} est injoignable depuis au moins 1m."
+
+      - alert: RevPulseHighErrorRate
+        expr: |
+          sum(rate(revpulse_http_requests_total{status=~"5.."}[5m]))
+          / sum(rate(revpulse_http_requests_total[5m])) > 0.05
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Taux d'erreur 5xx > 5%"
+          description: "Le taux de réponses 5xx dépasse 5% du trafic total sur les 5 dernières minutes."
+
+      - alert: RevPulseHighLatencyP95
+        expr: |
+          histogram_quantile(0.95, sum(rate(revpulse_http_request_duration_seconds_bucket[5m])) by (le))
+          > 0.5
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Latence p95 > 500ms"
+          description: "La latence p95 globale dépasse 500ms sur les 5 dernières minutes."
