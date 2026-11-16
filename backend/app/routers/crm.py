@@ -8,6 +8,7 @@ Dédup : contact.email normalisé (lowercase+strip), unique par tenant (uq_tenan
 Import CSV/XLSX : skippe les doublons (existants + intra-batch) + les emails en suppression list.
 Score : heuristique 0-100 (email, linkedin, titre senior, taille entreprise, téléphone).
 """
+
 import csv
 import io
 from datetime import datetime, timedelta
@@ -21,6 +22,7 @@ from ..audit import log_audit
 from ..database import get_db
 from ..deps import get_tenant, require_permission
 from ..pagination import Page, page_dep, set_total
+from ..services.webhooks import emit_event
 
 router = APIRouter(prefix="/api/tenants/{tid}/crm", tags=["crm"])
 
@@ -40,8 +42,23 @@ PIPELINE_STAGES = [
     ("closed_lost", "Perdu", "#ef4444"),
 ]
 
-SENIOR_TITLE_KEYWORDS = {"ceo", "cto", "cfo", "coo", "cio", "vp", "vice president", "director",
-                         "head", "founder", "co-founder", "president", "chief", "gm", "managing director"}
+SENIOR_TITLE_KEYWORDS = {
+    "ceo",
+    "cto",
+    "cfo",
+    "coo",
+    "cio",
+    "vp",
+    "vice president",
+    "director",
+    "head",
+    "founder",
+    "co-founder",
+    "president",
+    "chief",
+    "gm",
+    "managing director",
+}
 LARGE_COMPANY_SIZES = {"51-200", "201-500", "501-1000", "1000+"}
 
 
@@ -50,9 +67,14 @@ def _normalize_email(email: str) -> str:
     return (email or "").strip().lower()
 
 
-def _compute_score(c: models.Contact, company: models.Company | None = None,
-                   *, emails_sent: int = 0, last_contact_at: datetime | None = None,
-                   has_active_opportunity: bool = False) -> tuple[int, dict[str, int]]:
+def _compute_score(
+    c: models.Contact,
+    company: models.Company | None = None,
+    *,
+    emails_sent: int = 0,
+    last_contact_at: datetime | None = None,
+    has_active_opportunity: bool = False,
+) -> tuple[int, dict[str, int]]:
     """Heuristique 0-100 : profil P11 (5 critères 20 pts : email/linkedin/senior_title/
     company_size/phone, cap 100) + engagement P17 (emails envoyés +5/email cap 25, opportunité
     active +15, cap 40) - decay P17 (récence : -1/jour depuis dernier e-mail, cap 30). Total
@@ -84,17 +106,27 @@ def _engagement_signals(db: Session, c: models.Contact) -> tuple[int, datetime |
     type=email sent/dry_run, count), date du dernier e-mail (last_contact_at pour le decay),
     opportunité active (Opportunity stage prospecting/qualified/proposal/negotiation). Réutilisé
     par _score_contact + recompute_score (DRY — un seul point de query engagement)."""
-    emails_sent = (db.query(models.Notification)
-                   .filter_by(tenant_id=c.tenant_id, recipient_contact_id=c.id, type="email")
-                   .filter(models.Notification.status.in_(["sent", "dry_run"])).count())
-    last_notif = (db.query(models.Notification)
-                  .filter_by(tenant_id=c.tenant_id, recipient_contact_id=c.id, type="email")
-                  .filter(models.Notification.status.in_(["sent", "dry_run"]))
-                  .order_by(models.Notification.created_at.desc()).first())
+    emails_sent = (
+        db.query(models.Notification)
+        .filter_by(tenant_id=c.tenant_id, recipient_contact_id=c.id, type="email")
+        .filter(models.Notification.status.in_(["sent", "dry_run"]))
+        .count()
+    )
+    last_notif = (
+        db.query(models.Notification)
+        .filter_by(tenant_id=c.tenant_id, recipient_contact_id=c.id, type="email")
+        .filter(models.Notification.status.in_(["sent", "dry_run"]))
+        .order_by(models.Notification.created_at.desc())
+        .first()
+    )
     last_contact_at = last_notif.created_at if last_notif else None
-    has_opp = (db.query(models.Opportunity).filter_by(tenant_id=c.tenant_id, contact_id=c.id)
-               .filter(models.Opportunity.stage.in_(["prospecting", "qualified", "proposal", "negotiation"]))
-               .first() is not None)
+    has_opp = (
+        db.query(models.Opportunity)
+        .filter_by(tenant_id=c.tenant_id, contact_id=c.id)
+        .filter(models.Opportunity.stage.in_(["prospecting", "qualified", "proposal", "negotiation"]))
+        .first()
+        is not None
+    )
     return emails_sent, last_contact_at, has_opp
 
 
@@ -104,15 +136,27 @@ def _score_contact(db: Session, c: models.Contact) -> tuple[int, dict[str, int]]
     recompute_score puisse retourner le détail à l'API. Side-effect : c.score = score."""
     company = db.query(models.Company).filter_by(id=c.company_id).first() if c.company_id else None
     emails_sent, last_contact_at, has_opp = _engagement_signals(db, c)
-    score, breakdown = _compute_score(c, company, emails_sent=emails_sent,
-                                      last_contact_at=last_contact_at, has_active_opportunity=has_opp)
+    score, breakdown = _compute_score(
+        c, company, emails_sent=emails_sent, last_contact_at=last_contact_at, has_active_opportunity=has_opp
+    )
     c.score = score
     return score, breakdown
 
 
-def _apply_contact_filters(q, tid: str, *, search=None, status=None, company_id=None,
-                           owner_id=None, score_min=None, source=None,
-                           has_email=None, no_email_days=None, enrolled_in_sequence=None):
+def _apply_contact_filters(
+    q,
+    tid: str,
+    *,
+    search=None,
+    status=None,
+    company_id=None,
+    owner_id=None,
+    score_min=None,
+    source=None,
+    has_email=None,
+    no_email_days=None,
+    enrolled_in_sequence=None,
+):
     """Applique les filtres search/status/company/owner/score/source + critères avancés P16
     (has_email, no_email_days, enrolled_in_sequence) à une query Contact.
     has_email (bool) : True = email réel (pas placeholder @linkedin.sync) ; False = sans email réel.
@@ -120,12 +164,14 @@ def _apply_contact_filters(q, tid: str, *, search=None, status=None, company_id=
     enrolled_in_sequence (str) : contacts NON activement enrollés dans cette séquence (ciblage batch enroll)."""
     if search:
         like = f"%{search.lower()}%"
-        q = q.filter(or_(
-            models.Contact.first_name.ilike(like),
-            models.Contact.last_name.ilike(like),
-            models.Contact.email.ilike(like),
-            models.Contact.title.ilike(like),
-        ))
+        q = q.filter(
+            or_(
+                models.Contact.first_name.ilike(like),
+                models.Contact.last_name.ilike(like),
+                models.Contact.email.ilike(like),
+                models.Contact.title.ilike(like),
+            )
+        )
     if status:
         q = q.filter(models.Contact.status == status)
     if company_id:
@@ -138,34 +184,53 @@ def _apply_contact_filters(q, tid: str, *, search=None, status=None, company_id=
         q = q.filter(models.Contact.source == source)
     # P16 : has_email — email réel (non null, non vide, non placeholder sync LinkedIn).
     if has_email is True:
-        q = q.filter(models.Contact.email.isnot(None), models.Contact.email != "",
-                     ~models.Contact.email.like("%@linkedin.sync"),
-                     ~models.Contact.email.like("%@local.revpulse.io"))
+        q = q.filter(
+            models.Contact.email.isnot(None),
+            models.Contact.email != "",
+            ~models.Contact.email.like("%@linkedin.sync"),
+            ~models.Contact.email.like("%@local.revpulse.io"),
+        )
     elif has_email is False:
-        q = q.filter(or_(models.Contact.email.is_(None), models.Contact.email == "",
-                         models.Contact.email.like("%@linkedin.sync"),
-                         models.Contact.email.like("%@local.revpulse.io")))
+        q = q.filter(
+            or_(
+                models.Contact.email.is_(None),
+                models.Contact.email == "",
+                models.Contact.email.like("%@linkedin.sync"),
+                models.Contact.email.like("%@local.revpulse.io"),
+            )
+        )
     # P16 : no_email_days — dormants (NOT EXISTS email dans les N derniers jours).
     if no_email_days is not None:
         cutoff = datetime.utcnow() - timedelta(days=no_email_days)
-        q = q.filter(~exists().where(
-            models.Notification.recipient_contact_id == models.Contact.id,
-            models.Notification.type == "email",
-            models.Notification.created_at > cutoff))
+        q = q.filter(
+            ~exists().where(
+                models.Notification.recipient_contact_id == models.Contact.id,
+                models.Notification.type == "email",
+                models.Notification.created_at > cutoff,
+            )
+        )
     # P16 : enrolled_in_sequence — NON activement enrollés (ciblage batch enroll).
     if enrolled_in_sequence is not None:
-        q = q.filter(~exists().where(
-            models.SequenceEnrollment.contact_id == models.Contact.id,
-            models.SequenceEnrollment.sequence_id == enrolled_in_sequence,
-            models.SequenceEnrollment.status == "active"))
+        q = q.filter(
+            ~exists().where(
+                models.SequenceEnrollment.contact_id == models.Contact.id,
+                models.SequenceEnrollment.sequence_id == enrolled_in_sequence,
+                models.SequenceEnrollment.status == "active",
+            )
+        )
     return q
 
 
 # ─── Companies ───────────────────────────────────────────────────────────────
 @router.get("/companies", response_model=list[schemas.CompanyOut])
-def list_companies(tid: str, response: Response, page: Page = Depends(page_dep),
-                   search: str | None = Query(None),
-                   db: Session = Depends(get_db), _t: models.Tenant = Depends(get_tenant)):
+def list_companies(
+    tid: str,
+    response: Response,
+    page: Page = Depends(page_dep),
+    search: str | None = Query(None),
+    db: Session = Depends(get_db),
+    _t: models.Tenant = Depends(get_tenant),
+):
     q = db.query(models.Company).filter_by(tenant_id=tid).order_by(models.Company.name)
     if search:
         like = f"%{search.lower()}%"
@@ -175,22 +240,32 @@ def list_companies(tid: str, response: Response, page: Page = Depends(page_dep),
 
 
 @router.post("/companies", response_model=schemas.CompanyOut, status_code=status.HTTP_201_CREATED)
-def create_company(tid: str, body: schemas.CompanyCreate, db: Session = Depends(get_db),
-                   _t: models.Tenant = Depends(get_tenant),
-                   membership=Depends(require_permission("crm.manage"))):
+def create_company(
+    tid: str,
+    body: schemas.CompanyCreate,
+    db: Session = Depends(get_db),
+    _t: models.Tenant = Depends(get_tenant),
+    membership=Depends(require_permission("crm.manage")),
+):
     c = models.Company(tenant_id=tid, **body.model_dump())
     db.add(c)
-    log_audit(db, tenant_id=tid, actor_user_id=membership.user_id, actor_name=membership.name,
-              action="crm.company.create", target_type="company", target_id=c.id,
-              detail={"name": body.name})
+    log_audit(
+        db,
+        tenant_id=tid,
+        actor_user_id=membership.user_id,
+        actor_name=membership.name,
+        action="crm.company.create",
+        target_type="company",
+        target_id=c.id,
+        detail={"name": body.name},
+    )
     db.commit()
     db.refresh(c)
     return c
 
 
 @router.get("/companies/{cid}", response_model=schemas.CompanyOut)
-def get_company(tid: str, cid: str, db: Session = Depends(get_db),
-                _t: models.Tenant = Depends(get_tenant)):
+def get_company(tid: str, cid: str, db: Session = Depends(get_db), _t: models.Tenant = Depends(get_tenant)):
     c = db.query(models.Company).filter_by(id=cid, tenant_id=tid).first()
     if not c:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Entreprise introuvable")
@@ -198,35 +273,58 @@ def get_company(tid: str, cid: str, db: Session = Depends(get_db),
 
 
 @router.patch("/companies/{cid}", response_model=schemas.CompanyOut)
-def update_company(tid: str, cid: str, body: schemas.CompanyCreate, db: Session = Depends(get_db),
-                   _t: models.Tenant = Depends(get_tenant),
-                   membership=Depends(require_permission("crm.manage"))):
+def update_company(
+    tid: str,
+    cid: str,
+    body: schemas.CompanyCreate,
+    db: Session = Depends(get_db),
+    _t: models.Tenant = Depends(get_tenant),
+    membership=Depends(require_permission("crm.manage")),
+):
     c = db.query(models.Company).filter_by(id=cid, tenant_id=tid).first()
     if not c:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Entreprise introuvable")
     for k, v in body.model_dump().items():
         setattr(c, k, v)
-    log_audit(db, tenant_id=tid, actor_user_id=membership.user_id, actor_name=membership.name,
-              action="crm.company.update", target_type="company", target_id=cid,
-              detail={"name": body.name})
+    log_audit(
+        db,
+        tenant_id=tid,
+        actor_user_id=membership.user_id,
+        actor_name=membership.name,
+        action="crm.company.update",
+        target_type="company",
+        target_id=cid,
+        detail={"name": body.name},
+    )
     db.commit()
     db.refresh(c)
     return c
 
 
 @router.delete("/companies/{cid}", status_code=status.HTTP_200_OK)
-def delete_company(tid: str, cid: str, db: Session = Depends(get_db),
-                   _t: models.Tenant = Depends(get_tenant),
-                   membership=Depends(require_permission("crm.manage"))):
+def delete_company(
+    tid: str,
+    cid: str,
+    db: Session = Depends(get_db),
+    _t: models.Tenant = Depends(get_tenant),
+    membership=Depends(require_permission("crm.manage")),
+):
     c = db.query(models.Company).filter_by(id=cid, tenant_id=tid).first()
     if not c:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Entreprise introuvable")
     # Détache les contacts/opportunités (company_id nullable) avant suppression.
     db.query(models.Contact).filter_by(tenant_id=tid, company_id=cid).update({"company_id": None})
     db.query(models.Opportunity).filter_by(tenant_id=tid, company_id=cid).update({"company_id": None})
-    log_audit(db, tenant_id=tid, actor_user_id=membership.user_id, actor_name=membership.name,
-              action="crm.company.delete", target_type="company", target_id=cid,
-              detail={"name": c.name})
+    log_audit(
+        db,
+        tenant_id=tid,
+        actor_user_id=membership.user_id,
+        actor_name=membership.name,
+        action="crm.company.delete",
+        target_type="company",
+        target_id=cid,
+        detail={"name": c.name},
+    )
     db.delete(c)
     db.commit()
     return {"deleted": cid}
@@ -234,44 +332,95 @@ def delete_company(tid: str, cid: str, db: Session = Depends(get_db),
 
 # ─── Contacts ────────────────────────────────────────────────────────────────
 @router.get("/contacts", response_model=list[schemas.ContactOut])
-def list_contacts(tid: str, response: Response, page: Page = Depends(page_dep),
-                  search: str | None = Query(None), status: str | None = Query(None),
-                  company_id: str | None = Query(None), owner_id: str | None = Query(None),
-                  score_min: int | None = Query(None, ge=0, le=100),
-                  source: str | None = Query(None),
-                  has_email: bool | None = Query(None),
-                  no_email_days: int | None = Query(None, ge=0),
-                  enrolled_in_sequence: str | None = Query(None),
-                  db: Session = Depends(get_db), _t: models.Tenant = Depends(get_tenant)):
+def list_contacts(
+    tid: str,
+    response: Response,
+    page: Page = Depends(page_dep),
+    search: str | None = Query(None),
+    status: str | None = Query(None),
+    company_id: str | None = Query(None),
+    owner_id: str | None = Query(None),
+    score_min: int | None = Query(None, ge=0, le=100),
+    source: str | None = Query(None),
+    has_email: bool | None = Query(None),
+    no_email_days: int | None = Query(None, ge=0),
+    enrolled_in_sequence: str | None = Query(None),
+    db: Session = Depends(get_db),
+    _t: models.Tenant = Depends(get_tenant),
+):
     q = db.query(models.Contact).filter_by(tenant_id=tid)
-    q = _apply_contact_filters(q, tid, search=search, status=status, company_id=company_id,
-                               owner_id=owner_id, score_min=score_min, source=source,
-                               has_email=has_email, no_email_days=no_email_days,
-                               enrolled_in_sequence=enrolled_in_sequence)
+    q = _apply_contact_filters(
+        q,
+        tid,
+        search=search,
+        status=status,
+        company_id=company_id,
+        owner_id=owner_id,
+        score_min=score_min,
+        source=source,
+        has_email=has_email,
+        no_email_days=no_email_days,
+        enrolled_in_sequence=enrolled_in_sequence,
+    )
     q = q.order_by(models.Contact.created_at.desc())
     set_total(response, q.count())
     return q.offset(page.skip).limit(page.limit).all()
 
 
 @router.post("/contacts", response_model=schemas.ContactOut, status_code=status.HTTP_201_CREATED)
-def create_contact(tid: str, body: schemas.ContactCreate, db: Session = Depends(get_db),
-                   _t: models.Tenant = Depends(get_tenant),
-                   membership=Depends(require_permission("crm.manage"))):
+def create_contact(
+    tid: str,
+    body: schemas.ContactCreate,
+    db: Session = Depends(get_db),
+    _t: models.Tenant = Depends(get_tenant),
+    membership=Depends(require_permission("crm.manage")),
+):
     if body.status not in VALID_CONTACT_STATUS:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, f"Statut invalide : {body.status}")
     email = _normalize_email(body.email)
     if db.query(models.Contact).filter_by(tenant_id=tid, email=email).first():
         raise HTTPException(status.HTTP_409_CONFLICT, "Cet e-mail existe déjà pour ce tenant (dédup).")
     c = models.Contact(
-        tenant_id=tid, company_id=body.company_id, first_name=body.first_name, last_name=body.last_name,
-        email=email, phone=body.phone, title=body.title, linkedin_url=body.linkedin_url,
-        status=body.status, owner_id=body.owner_id, source=body.source,
+        tenant_id=tid,
+        company_id=body.company_id,
+        first_name=body.first_name,
+        last_name=body.last_name,
+        email=email,
+        phone=body.phone,
+        title=body.title,
+        linkedin_url=body.linkedin_url,
+        status=body.status,
+        owner_id=body.owner_id,
+        source=body.source,
     )
     _score_contact(db, c)
     db.add(c)
-    log_audit(db, tenant_id=tid, actor_user_id=membership.user_id, actor_name=membership.name,
-              action="crm.contact.create", target_type="contact", target_id=c.id,
-              detail={"email": email, "score": c.score})
+    log_audit(
+        db,
+        tenant_id=tid,
+        actor_user_id=membership.user_id,
+        actor_name=membership.name,
+        action="crm.contact.create",
+        target_type="contact",
+        target_id=c.id,
+        detail={"email": email, "score": c.score},
+    )
+    emit_event(
+        db,
+        tenant_id=tid,
+        event="contact.created",
+        payload={
+            "id": c.id,
+            "tenant_id": tid,
+            "email": email,
+            "first_name": c.first_name,
+            "last_name": c.last_name,
+            "title": c.title,
+            "score": c.score,
+            "source": c.source,
+            "owner_id": c.owner_id,
+        },
+    )
     db.commit()
     db.refresh(c)
     return c
@@ -284,14 +433,46 @@ def export_contacts(tid: str, db: Session = Depends(get_db), _t: models.Tenant =
     q = db.query(models.Contact).filter_by(tenant_id=tid).order_by(models.Contact.created_at.desc())
     buf = io.StringIO()
     writer = csv.writer(buf)
-    writer.writerow(["id", "first_name", "last_name", "email", "phone", "title", "status",
-                     "score", "linkedin_url", "company_id", "owner_id", "source", "created_at"])
+    writer.writerow(
+        [
+            "id",
+            "first_name",
+            "last_name",
+            "email",
+            "phone",
+            "title",
+            "status",
+            "score",
+            "linkedin_url",
+            "company_id",
+            "owner_id",
+            "source",
+            "created_at",
+        ]
+    )
     for c in q.all():
-        writer.writerow([c.id, c.first_name, c.last_name, c.email, c.phone, c.title, c.status,
-                         c.score, c.linkedin_url, c.company_id or "", c.owner_id or "", c.source,
-                         c.created_at.isoformat() if c.created_at else ""])
-    return Response(content=buf.getvalue(), media_type="text/csv",
-                    headers={"Content-Disposition": f"attachment; filename=revpulse_contacts_{tid}.csv"})
+        writer.writerow(
+            [
+                c.id,
+                c.first_name,
+                c.last_name,
+                c.email,
+                c.phone,
+                c.title,
+                c.status,
+                c.score,
+                c.linkedin_url,
+                c.company_id or "",
+                c.owner_id or "",
+                c.source,
+                c.created_at.isoformat() if c.created_at else "",
+            ]
+        )
+    return Response(
+        content=buf.getvalue(),
+        media_type="text/csv",
+        headers={"Content-Disposition": f"attachment; filename=revpulse_contacts_{tid}.csv"},
+    )
 
 
 # --- Import CSV/XLSX + dédup + suppression ---
@@ -303,8 +484,9 @@ def _read_rows(file: UploadFile) -> list[dict]:
         try:
             from openpyxl import load_workbook
         except ImportError as e:
-            raise HTTPException(status.HTTP_501_NOT_IMPLEMENTED,
-                                "Import XLSX non disponible (openpyxl absent). Utilisez CSV.") from e
+            raise HTTPException(
+                status.HTTP_501_NOT_IMPLEMENTED, "Import XLSX non disponible (openpyxl absent). Utilisez CSV."
+            ) from e
         wb = load_workbook(io.BytesIO(raw), read_only=True, data_only=True)
         ws = wb.active
         rows = list(ws.iter_rows(values_only=True))
@@ -313,8 +495,9 @@ def _read_rows(file: UploadFile) -> list[dict]:
         headers = [str(h or "").strip().lower() for h in rows[0]]
         out = []
         for r in rows[1:]:
-            out.append({headers[i]: ("" if r[i] is None else str(r[i]).strip())
-                        for i in range(min(len(headers), len(r)))})
+            out.append(
+                {headers[i]: ("" if r[i] is None else str(r[i]).strip()) for i in range(min(len(headers), len(r)))}
+            )
         return out
     # défaut CSV (utf-8-sig pour BOM Excel)
     text = raw.decode("utf-8-sig", errors="replace")
@@ -322,22 +505,34 @@ def _read_rows(file: UploadFile) -> list[dict]:
 
 
 @router.post("/contacts/import", response_model=schemas.ImportResult)
-def import_contacts(tid: str, file: UploadFile = File(...), db: Session = Depends(get_db),
-                    _t: models.Tenant = Depends(get_tenant),
-                    membership=Depends(require_permission("crm.manage"))):
+def import_contacts(
+    tid: str,
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    _t: models.Tenant = Depends(get_tenant),
+    membership=Depends(require_permission("crm.manage")),
+):
     """Import CSV/XLSX de contacts. Pour chaque ligne :
-      - normalise l'email (lowercase+strip), valide (EmailStr via parse)
-      - skip si email dans suppression_list (RGPD) → suppressed++
-      - skip si contact existant (même email) OU doublon intra-batch → duplicates++
-      - crée sinon (score calculé, source=import) → created++
-      - erreur si email absent/invalide → errors[]
+    - normalise l'email (lowercase+strip), valide (EmailStr via parse)
+    - skip si email dans suppression_list (RGPD) → suppressed++
+    - skip si contact existant (même email) OU doublon intra-batch → duplicates++
+    - crée sinon (score calculé, source=import) → created++
+    - erreur si email absent/invalide → errors[]
     """
     rows = _read_rows(file)
     result = schemas.ImportResult(total=len(rows))
     seen: set[str] = set()
     # Précharge les emails existants + supprimés du tenant (évite N queries).
-    existing = {c.email for c in db.query(models.Contact).filter_by(tenant_id=tid).with_entities(models.Contact.email).all()}
-    suppressed = {s.email for s in db.query(models.SuppressionList).filter_by(tenant_id=tid).with_entities(models.SuppressionList.email).all()}
+    existing = {
+        c.email for c in db.query(models.Contact).filter_by(tenant_id=tid).with_entities(models.Contact.email).all()
+    }
+    suppressed = {
+        s.email
+        for s in db.query(models.SuppressionList)
+        .filter_by(tenant_id=tid)
+        .with_entities(models.SuppressionList.email)
+        .all()
+    }
     for i, row in enumerate(rows, start=2):  # ligne 1 = header (CSV) ou 1 (XLSX)
         raw_email = (row.get("email") or row.get("e-mail") or row.get("courriel") or "").strip()
         if not raw_email:
@@ -366,10 +561,12 @@ def import_contacts(tid: str, file: UploadFile = File(...), db: Session = Depend
                 db.flush()
             company_id = comp.id
         c = models.Contact(
-            tenant_id=tid, company_id=company_id,
+            tenant_id=tid,
+            company_id=company_id,
             first_name=(row.get("first_name") or row.get("firstname") or row.get("prénom") or "").strip(),
             last_name=(row.get("last_name") or row.get("lastname") or row.get("nom") or "").strip(),
-            email=email, phone=(row.get("phone") or row.get("téléphone") or "").strip(),
+            email=email,
+            phone=(row.get("phone") or row.get("téléphone") or "").strip(),
             title=(row.get("title") or row.get("titre") or row.get("fonction") or "").strip(),
             linkedin_url=(row.get("linkedin_url") or row.get("linkedin") or "").strip(),
             status=row.get("status", "new").strip().lower() or "new",
@@ -380,17 +577,27 @@ def import_contacts(tid: str, file: UploadFile = File(...), db: Session = Depend
         _score_contact(db, c)
         db.add(c)
         result.created += 1
-    log_audit(db, tenant_id=tid, actor_user_id=membership.user_id, actor_name=membership.name,
-              action="crm.contact.import", target_type="contact",
-              detail={"created": result.created, "duplicates": result.duplicates,
-                      "suppressed": result.suppressed, "errors": len(result.errors), "total": result.total})
+    log_audit(
+        db,
+        tenant_id=tid,
+        actor_user_id=membership.user_id,
+        actor_name=membership.name,
+        action="crm.contact.import",
+        target_type="contact",
+        detail={
+            "created": result.created,
+            "duplicates": result.duplicates,
+            "suppressed": result.suppressed,
+            "errors": len(result.errors),
+            "total": result.total,
+        },
+    )
     db.commit()
     return result
 
 
 @router.get("/contacts/{ctid}", response_model=schemas.ContactOut)
-def get_contact(tid: str, ctid: str, db: Session = Depends(get_db),
-                _t: models.Tenant = Depends(get_tenant)):
+def get_contact(tid: str, ctid: str, db: Session = Depends(get_db), _t: models.Tenant = Depends(get_tenant)):
     c = db.query(models.Contact).filter_by(id=ctid, tenant_id=tid).first()
     if not c:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Contact introuvable")
@@ -398,9 +605,14 @@ def get_contact(tid: str, ctid: str, db: Session = Depends(get_db),
 
 
 @router.patch("/contacts/{ctid}", response_model=schemas.ContactOut)
-def update_contact(tid: str, ctid: str, body: schemas.ContactUpdate, db: Session = Depends(get_db),
-                   _t: models.Tenant = Depends(get_tenant),
-                   membership=Depends(require_permission("crm.manage"))):
+def update_contact(
+    tid: str,
+    ctid: str,
+    body: schemas.ContactUpdate,
+    db: Session = Depends(get_db),
+    _t: models.Tenant = Depends(get_tenant),
+    membership=Depends(require_permission("crm.manage")),
+):
     c = db.query(models.Contact).filter_by(id=ctid, tenant_id=tid).first()
     if not c:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Contact introuvable")
@@ -417,18 +629,29 @@ def update_contact(tid: str, ctid: str, body: schemas.ContactUpdate, db: Session
         setattr(c, k, v)
     c.updated_at = datetime.utcnow()
     _score_contact(db, c)
-    log_audit(db, tenant_id=tid, actor_user_id=membership.user_id, actor_name=membership.name,
-              action="crm.contact.update", target_type="contact", target_id=ctid,
-              detail={k: v for k, v in data.items() if k != "email"} | {"score": c.score})
+    log_audit(
+        db,
+        tenant_id=tid,
+        actor_user_id=membership.user_id,
+        actor_name=membership.name,
+        action="crm.contact.update",
+        target_type="contact",
+        target_id=ctid,
+        detail={k: v for k, v in data.items() if k != "email"} | {"score": c.score},
+    )
     db.commit()
     db.refresh(c)
     return c
 
 
 @router.delete("/contacts/{ctid}", status_code=status.HTTP_200_OK)
-def delete_contact(tid: str, ctid: str, db: Session = Depends(get_db),
-                   _t: models.Tenant = Depends(get_tenant),
-                   membership=Depends(require_permission("crm.manage"))):
+def delete_contact(
+    tid: str,
+    ctid: str,
+    db: Session = Depends(get_db),
+    _t: models.Tenant = Depends(get_tenant),
+    membership=Depends(require_permission("crm.manage")),
+):
     """Supprime un contact + cascade ses opportunités/tâches/notes (RGPD droit à l'oubli).
     L'audit log survit (tenant_id sans FK)."""
     c = db.query(models.Contact).filter_by(id=ctid, tenant_id=tid).first()
@@ -437,48 +660,77 @@ def delete_contact(tid: str, ctid: str, db: Session = Depends(get_db),
     # Cascade manuelle : opps → tasks/notes liés, puis tasks/notes du contact.
     opp_ids = [o.id for o in db.query(models.Opportunity).filter_by(tenant_id=tid, contact_id=ctid).all()]
     if opp_ids:
-        db.query(models.Task).filter(models.Task.tenant_id == tid,
-                                     models.Task.opportunity_id.in_(opp_ids)).delete(synchronize_session=False)
-        db.query(models.Note).filter(models.Note.tenant_id == tid,
-                                     models.Note.opportunity_id.in_(opp_ids)).delete(synchronize_session=False)
+        db.query(models.Task).filter(models.Task.tenant_id == tid, models.Task.opportunity_id.in_(opp_ids)).delete(
+            synchronize_session=False
+        )
+        db.query(models.Note).filter(models.Note.tenant_id == tid, models.Note.opportunity_id.in_(opp_ids)).delete(
+            synchronize_session=False
+        )
         db.query(models.Opportunity).filter_by(tenant_id=tid, contact_id=ctid).delete(synchronize_session=False)
     db.query(models.Task).filter_by(tenant_id=tid, contact_id=ctid).delete(synchronize_session=False)
     db.query(models.Note).filter_by(tenant_id=tid, contact_id=ctid).delete(synchronize_session=False)
-    log_audit(db, tenant_id=tid, actor_user_id=membership.user_id, actor_name=membership.name,
-              action="crm.contact.delete", target_type="contact", target_id=ctid,
-              detail={"email": c.email})
+    log_audit(
+        db,
+        tenant_id=tid,
+        actor_user_id=membership.user_id,
+        actor_name=membership.name,
+        action="crm.contact.delete",
+        target_type="contact",
+        target_id=ctid,
+        detail={"email": c.email},
+    )
     db.delete(c)
     db.commit()
     return {"deleted": ctid}
 
 
 @router.post("/contacts/{ctid}/score", response_model=schemas.ScoreBreakdown)
-def recompute_score(tid: str, ctid: str, db: Session = Depends(get_db),
-                    _t: models.Tenant = Depends(get_tenant),
-                    membership=Depends(require_permission("crm.manage"))):
+def recompute_score(
+    tid: str,
+    ctid: str,
+    db: Session = Depends(get_db),
+    _t: models.Tenant = Depends(get_tenant),
+    membership=Depends(require_permission("crm.manage")),
+):
     """Recalcule le score d'un contact (profil P11 + engagement P17 + decay) + retourne le détail."""
     c = db.query(models.Contact).filter_by(id=ctid, tenant_id=tid).first()
     if not c:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Contact introuvable")
     score, breakdown = _score_contact(db, c)
     c.updated_at = datetime.utcnow()
+    emit_event(
+        db,
+        tenant_id=tid,
+        event="contact.scored",
+        payload={"id": c.id, "tenant_id": tid, "email": c.email, "score": score, "breakdown": breakdown},
+    )
     db.commit()
     return schemas.ScoreBreakdown(score=score, breakdown=breakdown)
 
 
 @router.post("/contacts/score-recompute", response_model=schemas.ScoreRecomputeResult)
-def recompute_all_scores(tid: str, db: Session = Depends(get_db),
-                         _t: models.Tenant = Depends(get_tenant),
-                         membership=Depends(require_permission("crm.manage"))):
+def recompute_all_scores(
+    tid: str,
+    db: Session = Depends(get_db),
+    _t: models.Tenant = Depends(get_tenant),
+    membership=Depends(require_permission("crm.manage")),
+):
     """Batch recompute (P17) : recalcule le score de tous les contacts du tenant (profil P11
     + engagement P17 emails/opportunité + decay récence). Utile après import massif ou pour
     rafraîchir le decay. Retourne {recomputed, avg_score}. Audit crm.score_recompute_batch."""
     contacts = db.query(models.Contact).filter_by(tenant_id=tid).all()
     for c in contacts:
         _score_contact(db, c)
-    log_audit(db, tenant_id=tid, actor_user_id=membership.user_id, actor_name=membership.name,
-              action="crm.score_recompute_batch", target_type="tenant", target_id=tid,
-              detail={"recomputed": len(contacts)})
+    log_audit(
+        db,
+        tenant_id=tid,
+        actor_user_id=membership.user_id,
+        actor_name=membership.name,
+        action="crm.score_recompute_batch",
+        target_type="tenant",
+        target_id=tid,
+        detail={"recomputed": len(contacts)},
+    )
     db.commit()
     avg = sum(c.score for c in contacts) / len(contacts) if contacts else 0
     return schemas.ScoreRecomputeResult(recomputed=len(contacts), avg_score=round(avg, 1))
@@ -486,10 +738,16 @@ def recompute_all_scores(tid: str, db: Session = Depends(get_db),
 
 # ─── Opportunities + pipeline Kanban ─────────────────────────────────────────
 @router.get("/opportunities", response_model=list[schemas.OpportunityOut])
-def list_opportunities(tid: str, response: Response, page: Page = Depends(page_dep),
-                       stage: str | None = Query(None), contact_id: str | None = Query(None),
-                       owner_id: str | None = Query(None),
-                       db: Session = Depends(get_db), _t: models.Tenant = Depends(get_tenant)):
+def list_opportunities(
+    tid: str,
+    response: Response,
+    page: Page = Depends(page_dep),
+    stage: str | None = Query(None),
+    contact_id: str | None = Query(None),
+    owner_id: str | None = Query(None),
+    db: Session = Depends(get_db),
+    _t: models.Tenant = Depends(get_tenant),
+):
     q = db.query(models.Opportunity).filter_by(tenant_id=tid)
     if stage:
         q = q.filter(models.Opportunity.stage == stage)
@@ -503,23 +761,56 @@ def list_opportunities(tid: str, response: Response, page: Page = Depends(page_d
 
 
 @router.post("/opportunities", response_model=schemas.OpportunityOut, status_code=status.HTTP_201_CREATED)
-def create_opportunity(tid: str, body: schemas.OpportunityCreate, db: Session = Depends(get_db),
-                       _t: models.Tenant = Depends(get_tenant),
-                       membership=Depends(require_permission("crm.manage"))):
+def create_opportunity(
+    tid: str,
+    body: schemas.OpportunityCreate,
+    db: Session = Depends(get_db),
+    _t: models.Tenant = Depends(get_tenant),
+    membership=Depends(require_permission("crm.manage")),
+):
     if body.stage not in VALID_OPP_STAGE:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, f"Stage invalide : {body.stage}")
     # Vérifie que le contact existe + appartient au tenant.
     if not db.query(models.Contact).filter_by(id=body.contact_id, tenant_id=tid).first():
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Contact introuvable pour ce tenant")
     o = models.Opportunity(
-        tenant_id=tid, contact_id=body.contact_id, company_id=body.company_id, title=body.title,
-        value=body.value, currency=body.currency, stage=body.stage, probability=body.probability,
-        expected_close_date=body.expected_close_date, owner_id=body.owner_id,
+        tenant_id=tid,
+        contact_id=body.contact_id,
+        company_id=body.company_id,
+        title=body.title,
+        value=body.value,
+        currency=body.currency,
+        stage=body.stage,
+        probability=body.probability,
+        expected_close_date=body.expected_close_date,
+        owner_id=body.owner_id,
     )
     db.add(o)
-    log_audit(db, tenant_id=tid, actor_user_id=membership.user_id, actor_name=membership.name,
-              action="crm.opportunity.create", target_type="opportunity", target_id=o.id,
-              detail={"title": body.title, "value": body.value, "stage": body.stage})
+    log_audit(
+        db,
+        tenant_id=tid,
+        actor_user_id=membership.user_id,
+        actor_name=membership.name,
+        action="crm.opportunity.create",
+        target_type="opportunity",
+        target_id=o.id,
+        detail={"title": body.title, "value": body.value, "stage": body.stage},
+    )
+    emit_event(
+        db,
+        tenant_id=tid,
+        event="opportunity.created",
+        payload={
+            "id": o.id,
+            "tenant_id": tid,
+            "contact_id": o.contact_id,
+            "title": o.title,
+            "value": o.value,
+            "currency": o.currency,
+            "stage": o.stage,
+            "probability": o.probability,
+        },
+    )
     db.commit()
     db.refresh(o)
     return o
@@ -535,16 +826,21 @@ def get_pipeline(tid: str, db: Session = Depends(get_db), _t: models.Tenant = De
     cols = []
     for stage, label, color in PIPELINE_STAGES:
         items = by_stage.get(stage, [])
-        cols.append(schemas.PipelineColumn(
-            stage=stage, label=label, color=color, opportunities=items,
-            count=len(items), total_value=sum(o.value for o in items),
-        ))
+        cols.append(
+            schemas.PipelineColumn(
+                stage=stage,
+                label=label,
+                color=color,
+                opportunities=items,
+                count=len(items),
+                total_value=sum(o.value for o in items),
+            )
+        )
     return cols
 
 
 @router.get("/opportunities/{oid}", response_model=schemas.OpportunityOut)
-def get_opportunity(tid: str, oid: str, db: Session = Depends(get_db),
-                    _t: models.Tenant = Depends(get_tenant)):
+def get_opportunity(tid: str, oid: str, db: Session = Depends(get_db), _t: models.Tenant = Depends(get_tenant)):
     o = db.query(models.Opportunity).filter_by(id=oid, tenant_id=tid).first()
     if not o:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Opportunité introuvable")
@@ -552,9 +848,14 @@ def get_opportunity(tid: str, oid: str, db: Session = Depends(get_db),
 
 
 @router.patch("/opportunities/{oid}", response_model=schemas.OpportunityOut)
-def update_opportunity(tid: str, oid: str, body: schemas.OpportunityUpdate, db: Session = Depends(get_db),
-                       _t: models.Tenant = Depends(get_tenant),
-                       membership=Depends(require_permission("crm.manage"))):
+def update_opportunity(
+    tid: str,
+    oid: str,
+    body: schemas.OpportunityUpdate,
+    db: Session = Depends(get_db),
+    _t: models.Tenant = Depends(get_tenant),
+    membership=Depends(require_permission("crm.manage")),
+):
     o = db.query(models.Opportunity).filter_by(id=oid, tenant_id=tid).first()
     if not o:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Opportunité introuvable")
@@ -564,17 +865,30 @@ def update_opportunity(tid: str, oid: str, body: schemas.OpportunityUpdate, db: 
     for k, v in data.items():
         setattr(o, k, v)
     o.updated_at = datetime.utcnow()
-    log_audit(db, tenant_id=tid, actor_user_id=membership.user_id, actor_name=membership.name,
-              action="crm.opportunity.update", target_type="opportunity", target_id=oid, detail=data)
+    log_audit(
+        db,
+        tenant_id=tid,
+        actor_user_id=membership.user_id,
+        actor_name=membership.name,
+        action="crm.opportunity.update",
+        target_type="opportunity",
+        target_id=oid,
+        detail=data,
+    )
     db.commit()
     db.refresh(o)
     return o
 
 
 @router.patch("/opportunities/{oid}/stage", response_model=schemas.OpportunityOut)
-def move_opportunity(tid: str, oid: str, body: schemas.StageUpdate, db: Session = Depends(get_db),
-                     _t: models.Tenant = Depends(get_tenant),
-                     membership=Depends(require_permission("crm.manage"))):
+def move_opportunity(
+    tid: str,
+    oid: str,
+    body: schemas.StageUpdate,
+    db: Session = Depends(get_db),
+    _t: models.Tenant = Depends(get_tenant),
+    membership=Depends(require_permission("crm.manage")),
+):
     """Déplacement Kanban (drag-and-drop) : change uniquement le stage."""
     if body.stage not in VALID_OPP_STAGE:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, f"Stage invalide : {body.stage}")
@@ -584,27 +898,45 @@ def move_opportunity(tid: str, oid: str, body: schemas.StageUpdate, db: Session 
     old = o.stage
     o.stage = body.stage
     o.updated_at = datetime.utcnow()
-    log_audit(db, tenant_id=tid, actor_user_id=membership.user_id, actor_name=membership.name,
-              action="crm.opportunity.move", target_type="opportunity", target_id=oid,
-              detail={"old": old, "new": body.stage})
+    log_audit(
+        db,
+        tenant_id=tid,
+        actor_user_id=membership.user_id,
+        actor_name=membership.name,
+        action="crm.opportunity.move",
+        target_type="opportunity",
+        target_id=oid,
+        detail={"old": old, "new": body.stage},
+    )
     db.commit()
     db.refresh(o)
     return o
 
 
 @router.delete("/opportunities/{oid}", status_code=status.HTTP_200_OK)
-def delete_opportunity(tid: str, oid: str, db: Session = Depends(get_db),
-                       _t: models.Tenant = Depends(get_tenant),
-                       membership=Depends(require_permission("crm.manage"))):
+def delete_opportunity(
+    tid: str,
+    oid: str,
+    db: Session = Depends(get_db),
+    _t: models.Tenant = Depends(get_tenant),
+    membership=Depends(require_permission("crm.manage")),
+):
     o = db.query(models.Opportunity).filter_by(id=oid, tenant_id=tid).first()
     if not o:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Opportunité introuvable")
     # Cascade tasks/notes liées à l'opportunité.
     db.query(models.Task).filter_by(tenant_id=tid, opportunity_id=oid).delete(synchronize_session=False)
     db.query(models.Note).filter_by(tenant_id=tid, opportunity_id=oid).delete(synchronize_session=False)
-    log_audit(db, tenant_id=tid, actor_user_id=membership.user_id, actor_name=membership.name,
-              action="crm.opportunity.delete", target_type="opportunity", target_id=oid,
-              detail={"title": o.title})
+    log_audit(
+        db,
+        tenant_id=tid,
+        actor_user_id=membership.user_id,
+        actor_name=membership.name,
+        action="crm.opportunity.delete",
+        target_type="opportunity",
+        target_id=oid,
+        detail={"title": o.title},
+    )
     db.delete(o)
     db.commit()
     return {"deleted": oid}
@@ -612,10 +944,17 @@ def delete_opportunity(tid: str, oid: str, db: Session = Depends(get_db),
 
 # ─── Tasks ───────────────────────────────────────────────────────────────────
 @router.get("/tasks", response_model=list[schemas.TaskOut])
-def list_tasks(tid: str, response: Response, page: Page = Depends(page_dep),
-               status: str | None = Query(None), contact_id: str | None = Query(None),
-               opportunity_id: str | None = Query(None), assignee_id: str | None = Query(None),
-               db: Session = Depends(get_db), _t: models.Tenant = Depends(get_tenant)):
+def list_tasks(
+    tid: str,
+    response: Response,
+    page: Page = Depends(page_dep),
+    status: str | None = Query(None),
+    contact_id: str | None = Query(None),
+    opportunity_id: str | None = Query(None),
+    assignee_id: str | None = Query(None),
+    db: Session = Depends(get_db),
+    _t: models.Tenant = Depends(get_tenant),
+):
     q = db.query(models.Task).filter_by(tenant_id=tid)
     if status:
         q = q.filter(models.Task.status == status)
@@ -631,19 +970,38 @@ def list_tasks(tid: str, response: Response, page: Page = Depends(page_dep),
 
 
 @router.post("/tasks", response_model=schemas.TaskOut, status_code=status.HTTP_201_CREATED)
-def create_task(tid: str, body: schemas.TaskCreate, db: Session = Depends(get_db),
-                _t: models.Tenant = Depends(get_tenant),
-                membership=Depends(require_permission("crm.manage"))):
+def create_task(
+    tid: str,
+    body: schemas.TaskCreate,
+    db: Session = Depends(get_db),
+    _t: models.Tenant = Depends(get_tenant),
+    membership=Depends(require_permission("crm.manage")),
+):
     if body.status not in VALID_TASK_STATUS:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, f"Statut invalide : {body.status}")
     if body.priority not in VALID_TASK_PRIORITY:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, f"Priorité invalide : {body.priority}")
-    t = models.Task(tenant_id=tid, contact_id=body.contact_id, opportunity_id=body.opportunity_id,
-                    title=body.title, due_date=body.due_date, status=body.status,
-                    priority=body.priority, assignee_id=body.assignee_id)
+    t = models.Task(
+        tenant_id=tid,
+        contact_id=body.contact_id,
+        opportunity_id=body.opportunity_id,
+        title=body.title,
+        due_date=body.due_date,
+        status=body.status,
+        priority=body.priority,
+        assignee_id=body.assignee_id,
+    )
     db.add(t)
-    log_audit(db, tenant_id=tid, actor_user_id=membership.user_id, actor_name=membership.name,
-              action="crm.task.create", target_type="task", target_id=t.id, detail={"title": body.title})
+    log_audit(
+        db,
+        tenant_id=tid,
+        actor_user_id=membership.user_id,
+        actor_name=membership.name,
+        action="crm.task.create",
+        target_type="task",
+        target_id=t.id,
+        detail={"title": body.title},
+    )
     db.commit()
     db.refresh(t)
     return t
@@ -658,9 +1016,14 @@ def get_task(tid: str, tkid: str, db: Session = Depends(get_db), _t: models.Tena
 
 
 @router.patch("/tasks/{tkid}", response_model=schemas.TaskOut)
-def update_task(tid: str, tkid: str, body: schemas.TaskUpdate, db: Session = Depends(get_db),
-                _t: models.Tenant = Depends(get_tenant),
-                membership=Depends(require_permission("crm.manage"))):
+def update_task(
+    tid: str,
+    tkid: str,
+    body: schemas.TaskUpdate,
+    db: Session = Depends(get_db),
+    _t: models.Tenant = Depends(get_tenant),
+    membership=Depends(require_permission("crm.manage")),
+):
     t = db.query(models.Task).filter_by(id=tkid, tenant_id=tid).first()
     if not t:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Tâche introuvable")
@@ -671,22 +1034,42 @@ def update_task(tid: str, tkid: str, body: schemas.TaskUpdate, db: Session = Dep
         raise HTTPException(status.HTTP_400_BAD_REQUEST, f"Priorité invalide : {data['priority']}")
     for k, v in data.items():
         setattr(t, k, v)
-    log_audit(db, tenant_id=tid, actor_user_id=membership.user_id, actor_name=membership.name,
-              action="crm.task.update", target_type="task", target_id=tkid, detail=data)
+    log_audit(
+        db,
+        tenant_id=tid,
+        actor_user_id=membership.user_id,
+        actor_name=membership.name,
+        action="crm.task.update",
+        target_type="task",
+        target_id=tkid,
+        detail=data,
+    )
     db.commit()
     db.refresh(t)
     return t
 
 
 @router.delete("/tasks/{tkid}", status_code=status.HTTP_200_OK)
-def delete_task(tid: str, tkid: str, db: Session = Depends(get_db),
-                _t: models.Tenant = Depends(get_tenant),
-                membership=Depends(require_permission("crm.manage"))):
+def delete_task(
+    tid: str,
+    tkid: str,
+    db: Session = Depends(get_db),
+    _t: models.Tenant = Depends(get_tenant),
+    membership=Depends(require_permission("crm.manage")),
+):
     t = db.query(models.Task).filter_by(id=tkid, tenant_id=tid).first()
     if not t:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Tâche introuvable")
-    log_audit(db, tenant_id=tid, actor_user_id=membership.user_id, actor_name=membership.name,
-              action="crm.task.delete", target_type="task", target_id=tkid, detail={"title": t.title})
+    log_audit(
+        db,
+        tenant_id=tid,
+        actor_user_id=membership.user_id,
+        actor_name=membership.name,
+        action="crm.task.delete",
+        target_type="task",
+        target_id=tkid,
+        detail={"title": t.title},
+    )
     db.delete(t)
     db.commit()
     return {"deleted": tkid}
@@ -694,9 +1077,15 @@ def delete_task(tid: str, tkid: str, db: Session = Depends(get_db),
 
 # ─── Notes ───────────────────────────────────────────────────────────────────
 @router.get("/notes", response_model=list[schemas.NoteOut])
-def list_notes(tid: str, response: Response, page: Page = Depends(page_dep),
-               contact_id: str | None = Query(None), opportunity_id: str | None = Query(None),
-               db: Session = Depends(get_db), _t: models.Tenant = Depends(get_tenant)):
+def list_notes(
+    tid: str,
+    response: Response,
+    page: Page = Depends(page_dep),
+    contact_id: str | None = Query(None),
+    opportunity_id: str | None = Query(None),
+    db: Session = Depends(get_db),
+    _t: models.Tenant = Depends(get_tenant),
+):
     q = db.query(models.Note).filter_by(tenant_id=tid)
     if contact_id:
         q = q.filter(models.Note.contact_id == contact_id)
@@ -708,31 +1097,58 @@ def list_notes(tid: str, response: Response, page: Page = Depends(page_dep),
 
 
 @router.post("/notes", response_model=schemas.NoteOut, status_code=status.HTTP_201_CREATED)
-def create_note(tid: str, body: schemas.NoteCreate, db: Session = Depends(get_db),
-                _t: models.Tenant = Depends(get_tenant),
-                membership=Depends(require_permission("crm.manage"))):
+def create_note(
+    tid: str,
+    body: schemas.NoteCreate,
+    db: Session = Depends(get_db),
+    _t: models.Tenant = Depends(get_tenant),
+    membership=Depends(require_permission("crm.manage")),
+):
     if not body.contact_id and not body.opportunity_id:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Une note doit être liée à un contact ou une opportunité.")
-    n = models.Note(tenant_id=tid, contact_id=body.contact_id, opportunity_id=body.opportunity_id,
-                    body=body.body, author_id=membership.user_id)
+    n = models.Note(
+        tenant_id=tid,
+        contact_id=body.contact_id,
+        opportunity_id=body.opportunity_id,
+        body=body.body,
+        author_id=membership.user_id,
+    )
     db.add(n)
-    log_audit(db, tenant_id=tid, actor_user_id=membership.user_id, actor_name=membership.name,
-              action="crm.note.create", target_type="note", target_id=n.id,
-              detail={"contact_id": body.contact_id, "opportunity_id": body.opportunity_id})
+    log_audit(
+        db,
+        tenant_id=tid,
+        actor_user_id=membership.user_id,
+        actor_name=membership.name,
+        action="crm.note.create",
+        target_type="note",
+        target_id=n.id,
+        detail={"contact_id": body.contact_id, "opportunity_id": body.opportunity_id},
+    )
     db.commit()
     db.refresh(n)
     return n
 
 
 @router.delete("/notes/{nid}", status_code=status.HTTP_200_OK)
-def delete_note(tid: str, nid: str, db: Session = Depends(get_db),
-                _t: models.Tenant = Depends(get_tenant),
-                membership=Depends(require_permission("crm.manage"))):
+def delete_note(
+    tid: str,
+    nid: str,
+    db: Session = Depends(get_db),
+    _t: models.Tenant = Depends(get_tenant),
+    membership=Depends(require_permission("crm.manage")),
+):
     n = db.query(models.Note).filter_by(id=nid, tenant_id=tid).first()
     if not n:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Note introuvable")
-    log_audit(db, tenant_id=tid, actor_user_id=membership.user_id, actor_name=membership.name,
-              action="crm.note.delete", target_type="note", target_id=nid)
+    log_audit(
+        db,
+        tenant_id=tid,
+        actor_user_id=membership.user_id,
+        actor_name=membership.name,
+        action="crm.note.delete",
+        target_type="note",
+        target_id=nid,
+    )
     db.delete(n)
     db.commit()
     return {"deleted": nid}
@@ -740,56 +1156,97 @@ def delete_note(tid: str, nid: str, db: Session = Depends(get_db),
 
 # ─── Segments (filtres sauvegardés) ──────────────────────────────────────────
 @router.get("/segments", response_model=list[schemas.SegmentOut])
-def list_segments(tid: str, response: Response, page: Page = Depends(page_dep),
-                  db: Session = Depends(get_db), _t: models.Tenant = Depends(get_tenant)):
+def list_segments(
+    tid: str,
+    response: Response,
+    page: Page = Depends(page_dep),
+    db: Session = Depends(get_db),
+    _t: models.Tenant = Depends(get_tenant),
+):
     q = db.query(models.Segment).filter_by(tenant_id=tid).order_by(models.Segment.created_at.desc())
     set_total(response, q.count())
     return q.offset(page.skip).limit(page.limit).all()
 
 
 @router.post("/segments", response_model=schemas.SegmentOut, status_code=status.HTTP_201_CREATED)
-def create_segment(tid: str, body: schemas.SegmentCreate, db: Session = Depends(get_db),
-                   _t: models.Tenant = Depends(get_tenant),
-                   membership=Depends(require_permission("crm.manage"))):
+def create_segment(
+    tid: str,
+    body: schemas.SegmentCreate,
+    db: Session = Depends(get_db),
+    _t: models.Tenant = Depends(get_tenant),
+    membership=Depends(require_permission("crm.manage")),
+):
     s = models.Segment(tenant_id=tid, name=body.name, criteria=body.criteria)
     db.add(s)
-    log_audit(db, tenant_id=tid, actor_user_id=membership.user_id, actor_name=membership.name,
-              action="crm.segment.create", target_type="segment", target_id=s.id,
-              detail={"name": body.name})
+    log_audit(
+        db,
+        tenant_id=tid,
+        actor_user_id=membership.user_id,
+        actor_name=membership.name,
+        action="crm.segment.create",
+        target_type="segment",
+        target_id=s.id,
+        detail={"name": body.name},
+    )
     db.commit()
     db.refresh(s)
     return s
 
 
 @router.get("/segments/{sid}/contacts", response_model=list[schemas.ContactOut])
-def apply_segment(tid: str, sid: str, response: Response, page: Page = Depends(page_dep),
-                  db: Session = Depends(get_db), _t: models.Tenant = Depends(get_tenant)):
+def apply_segment(
+    tid: str,
+    sid: str,
+    response: Response,
+    page: Page = Depends(page_dep),
+    db: Session = Depends(get_db),
+    _t: models.Tenant = Depends(get_tenant),
+):
     """Applique le critère du segment + retourne les contacts matchés (paginé)."""
     s = db.query(models.Segment).filter_by(id=sid, tenant_id=tid).first()
     if not s:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Segment introuvable")
     criteria = s.criteria or {}
     q = db.query(models.Contact).filter_by(tenant_id=tid)
-    q = _apply_contact_filters(q, tid, search=criteria.get("search"), status=criteria.get("status"),
-                               company_id=criteria.get("company_id"), owner_id=criteria.get("owner_id"),
-                               score_min=criteria.get("score_min"), source=criteria.get("source"),
-                               has_email=criteria.get("has_email"),
-                               no_email_days=criteria.get("no_email_days"),
-                               enrolled_in_sequence=criteria.get("enrolled_in_sequence"))
+    q = _apply_contact_filters(
+        q,
+        tid,
+        search=criteria.get("search"),
+        status=criteria.get("status"),
+        company_id=criteria.get("company_id"),
+        owner_id=criteria.get("owner_id"),
+        score_min=criteria.get("score_min"),
+        source=criteria.get("source"),
+        has_email=criteria.get("has_email"),
+        no_email_days=criteria.get("no_email_days"),
+        enrolled_in_sequence=criteria.get("enrolled_in_sequence"),
+    )
     q = q.order_by(models.Contact.created_at.desc())
     set_total(response, q.count())
     return q.offset(page.skip).limit(page.limit).all()
 
 
 @router.delete("/segments/{sid}", status_code=status.HTTP_200_OK)
-def delete_segment(tid: str, sid: str, db: Session = Depends(get_db),
-                   _t: models.Tenant = Depends(get_tenant),
-                   membership=Depends(require_permission("crm.manage"))):
+def delete_segment(
+    tid: str,
+    sid: str,
+    db: Session = Depends(get_db),
+    _t: models.Tenant = Depends(get_tenant),
+    membership=Depends(require_permission("crm.manage")),
+):
     s = db.query(models.Segment).filter_by(id=sid, tenant_id=tid).first()
     if not s:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Segment introuvable")
-    log_audit(db, tenant_id=tid, actor_user_id=membership.user_id, actor_name=membership.name,
-              action="crm.segment.delete", target_type="segment", target_id=sid, detail={"name": s.name})
+    log_audit(
+        db,
+        tenant_id=tid,
+        actor_user_id=membership.user_id,
+        actor_name=membership.name,
+        action="crm.segment.delete",
+        target_type="segment",
+        target_id=sid,
+        detail={"name": s.name},
+    )
     db.delete(s)
     db.commit()
     return {"deleted": sid}
@@ -797,17 +1254,26 @@ def delete_segment(tid: str, sid: str, db: Session = Depends(get_db),
 
 # ─── Suppression list (RGPD — désinscription/bounce/réclamation) ──────────────
 @router.get("/suppression", response_model=list[schemas.SuppressionOut])
-def list_suppression(tid: str, response: Response, page: Page = Depends(page_dep),
-                     db: Session = Depends(get_db), _t: models.Tenant = Depends(get_tenant)):
+def list_suppression(
+    tid: str,
+    response: Response,
+    page: Page = Depends(page_dep),
+    db: Session = Depends(get_db),
+    _t: models.Tenant = Depends(get_tenant),
+):
     q = db.query(models.SuppressionList).filter_by(tenant_id=tid).order_by(models.SuppressionList.created_at.desc())
     set_total(response, q.count())
     return q.offset(page.skip).limit(page.limit).all()
 
 
 @router.post("/suppression", response_model=schemas.SuppressionOut, status_code=status.HTTP_201_CREATED)
-def add_suppression(tid: str, body: schemas.SuppressionCreate, db: Session = Depends(get_db),
-                    _t: models.Tenant = Depends(get_tenant),
-                    membership=Depends(require_permission("crm.manage"))):
+def add_suppression(
+    tid: str,
+    body: schemas.SuppressionCreate,
+    db: Session = Depends(get_db),
+    _t: models.Tenant = Depends(get_tenant),
+    membership=Depends(require_permission("crm.manage")),
+):
     if body.reason not in VALID_SUPPRESSION_REASON:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, f"Raison invalide : {body.reason}")
     email = _normalize_email(body.email)
@@ -821,24 +1287,42 @@ def add_suppression(tid: str, body: schemas.SuppressionCreate, db: Session = Dep
         return existing
     s = models.SuppressionList(tenant_id=tid, email=email, reason=body.reason, source=body.source)
     db.add(s)
-    log_audit(db, tenant_id=tid, actor_user_id=membership.user_id, actor_name=membership.name,
-              action="crm.suppression.add", target_type="suppression", target_id=s.id,
-              detail={"email": email, "reason": body.reason})
+    log_audit(
+        db,
+        tenant_id=tid,
+        actor_user_id=membership.user_id,
+        actor_name=membership.name,
+        action="crm.suppression.add",
+        target_type="suppression",
+        target_id=s.id,
+        detail={"email": email, "reason": body.reason},
+    )
     db.commit()
     db.refresh(s)
     return s
 
 
 @router.delete("/suppression/{sid}", status_code=status.HTTP_200_OK)
-def remove_suppression(tid: str, sid: str, db: Session = Depends(get_db),
-                       _t: models.Tenant = Depends(get_tenant),
-                       membership=Depends(require_permission("crm.manage"))):
+def remove_suppression(
+    tid: str,
+    sid: str,
+    db: Session = Depends(get_db),
+    _t: models.Tenant = Depends(get_tenant),
+    membership=Depends(require_permission("crm.manage")),
+):
     s = db.query(models.SuppressionList).filter_by(id=sid, tenant_id=tid).first()
     if not s:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Entrée de suppression introuvable")
-    log_audit(db, tenant_id=tid, actor_user_id=membership.user_id, actor_name=membership.name,
-              action="crm.suppression.remove", target_type="suppression", target_id=sid,
-              detail={"email": s.email})
+    log_audit(
+        db,
+        tenant_id=tid,
+        actor_user_id=membership.user_id,
+        actor_name=membership.name,
+        action="crm.suppression.remove",
+        target_type="suppression",
+        target_id=sid,
+        detail={"email": s.email},
+    )
     db.delete(s)
     db.commit()
     return {"deleted": sid}

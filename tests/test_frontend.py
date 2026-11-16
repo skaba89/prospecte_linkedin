@@ -183,6 +183,20 @@ def _():
     assert "condition: service_healthy" in fblock
 
 
+@check("webhooks.html: page webhooks P18 (gate démo + events + test/deliveries/retry)")
+def _():
+    w = read("frontend/public/webhooks.html")
+    assert "Connexion démo" in w, "gate Connexion démo (1-clic)"
+    assert "demoLogin()" in w, "demoLogin (1-clic via /auth/demo)"
+    assert "/auth/demo" in w, "appel /auth/demo"
+    assert "/webhooks" in w, "endpoint webhooks"
+    assert "contact.created" in w and "email.sent" in w, "events contact.created + email.sent listés"
+    assert "testWebhook" in w, "bouton test ping"
+    assert "loadDeliveries" in w, "vue deliveries"
+    assert "retryDelivery" in w, "bouton retry delivery"
+    assert "X-RevPulse-Signature" in w, "mention signature HMAC (doc UI)"
+
+
 def main():
     fails = 0
     for name, fn in CHECKS:

@@ -1,0 +1,239 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>RevPulse Webhooks</title>
+<style>
+  :root{--bg:#0a0e1a;--panel:#131826;--panel2:#1a2030;--border:#232a3d;--text:#e5e7eb;--muted:#8b95a8;
+        --accent:#635bff;--accent2:#0a66c2;--ok:#10b981;--warn:#f59e0b;--err:#ef4444;--grad:linear-gradient(135deg,#635bff,#0a66c2)}
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:var(--bg);color:var(--text);min-height:100vh}
+  a{color:var(--accent);text-decoration:none}
+  .topbar{display:flex;align-items:center;gap:16px;padding:14px 24px;background:var(--panel);border-bottom:1px solid var(--border);position:sticky;top:0;z-index:10}
+  .topbar h1{font-size:18px;font-weight:700;background:var(--grad);-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent}
+  .topbar .sub{color:var(--muted);font-size:13px}
+  .topbar .spacer{flex:1}
+  .topbar a{font-size:13px;padding:6px 12px;border:1px solid var(--border);border-radius:8px}
+  .topbar a:hover{background:var(--panel2)}
+  .wrap{max-width:1100px;margin:0 auto;padding:24px}
+  .login{max-width:380px;margin:80px auto;background:var(--panel);border:1px solid var(--border);border-radius:14px;padding:24px}
+  .login h2{margin-bottom:12px;font-size:16px}
+  .login p{color:var(--muted);font-size:13px;margin-bottom:14px}
+  .login button{width:100%;padding:10px;margin-top:8px;background:var(--grad);color:#fff;border:none;border-radius:8px;font-weight:600;cursor:pointer;font-size:14px}
+  .head{display:flex;align-items:center;gap:12px;margin-bottom:20px}
+  .head h2{font-size:20px;flex:1}
+  .btn{padding:8px 14px;background:var(--grad);color:#fff;border:none;border-radius:8px;font-weight:600;cursor:pointer;font-size:13px}
+  .btn.sec{background:var(--panel2);border:1px solid var(--border)}
+  .btn.sm{padding:5px 10px;font-size:12px}
+  .btn.danger{background:rgba(239,68,68,.15);color:var(--err);border:1px solid rgba(239,68,68,.3)}
+  .card{background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:18px;margin-bottom:16px}
+  .card h3{font-size:14px;margin-bottom:12px;display:flex;align-items:center;gap:8px}
+  .wh-url{font-family:monospace;font-size:12px;color:var(--accent);word-break:break-all}
+  .wh-meta{font-size:12px;color:var(--muted);margin:6px 0}
+  .wh-meta b{color:var(--text)}
+  .badge{display:inline-block;padding:2px 8px;border-radius:8px;font-size:11px;font-weight:600;margin:2px}
+  .badge.ev{background:rgba(99,91,255,.15);color:var(--accent)}
+  .badge.active{background:rgba(16,185,129,.15);color:var(--ok)}
+  .badge.inactive{background:rgba(139,149,168,.15);color:var(--muted)}
+  .badge.success{background:rgba(16,185,129,.15);color:var(--ok)}
+  .badge.pending{background:rgba(245,158,11,.15);color:var(--warn)}
+  .badge.failed{background:rgba(239,68,68,.15);color:var(--err)}
+  table{width:100%;border-collapse:collapse;font-size:12px}
+  th,td{text-align:left;padding:7px 10px;border-bottom:1px solid var(--border)}
+  th{color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.5px}
+  td.num{text-align:right;font-variant-numeric:tabular-nums}
+  .empty{color:var(--muted);text-align:center;padding:18px;font-size:13px}
+  input,select,textarea{width:100%;padding:8px;border:1px solid var(--border);border-radius:8px;background:var(--panel2);color:var(--text);font-size:14px}
+  label{font-size:12px;color:var(--muted);display:block;margin:8px 0 4px}
+  .events-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:6px;margin:6px 0}
+  .ev-opt{display:flex;align-items:center;gap:6px;padding:6px 8px;background:var(--panel2);border:1px solid var(--border);border-radius:6px;font-size:12px;cursor:pointer}
+  .ev-opt input{width:auto}
+  .err-msg{color:var(--err);font-size:12px;font-family:monospace;word-break:break-all;background:rgba(239,68,68,.08);padding:4px 6px;border-radius:4px;margin-top:4px}
+  .back-link{font-size:12px;color:var(--muted);cursor:pointer;margin-bottom:12px;display:inline-block}
+  .back-link:hover{color:var(--text)}
+</style>
+</head>
+<body>
+<div class="topbar">
+  <h1>RevPulse Webhooks</h1>
+  <span class="sub" id="tenant-name"></span>
+  <div class="spacer"></div>
+  <a href="index.html">← Dashboard</a>
+  <a href="crm.html">CRM</a>
+  <a href="analytics.html">Analytics</a>
+  <a href="sequences.html">Séquences</a>
+</div>
+
+<div class="wrap" id="content" style="display:none">
+  <div id="list-view">
+    <div class="head">
+      <h2>Webhooks sortants</h2>
+      <button class="btn" onclick="showCreate()">+ Nouveau webhook</button>
+    </div>
+    <div id="wh-list"></div>
+  </div>
+
+  <div id="create-form" class="card" style="display:none">
+    <h3>Créer un webhook</h3>
+    <p class="wh-meta">Notifie un système externe (Slack, Zapier, CRM) sur les événements RevPulse. Chaque livraison est signée HMAC-SHA256 (header <b>X-RevPulse-Signature</b>).</p>
+    <label>URL de destination (recevra un POST JSON)</label>
+    <input id="wf-url" placeholder="https://hooks.slack.com/services/… ou https://your-app.com/webhook">
+    <label>Événements à notifier</label>
+    <div class="events-grid" id="wf-events"></div>
+    <label><input type="checkbox" id="wf-active" checked style="width:auto;margin-right:6px"> Actif immédiatement</label>
+    <div style="margin-top:14px"><button class="btn" onclick="createWebhook()">Créer le webhook</button> <button class="btn sec" onclick="document.getElementById('create-form').style.display='none'">Annuler</button></div>
+  </div>
+
+  <div id="deliveries-view" style="display:none">
+    <span class="back-link" onclick="showList()">← Retour aux webhooks</span>
+    <div class="head"><h2 id="deliv-title">Livraisons</h2> <button class="btn sm sec" onclick="loadDeliveries(currentWid)">↻ Rafraîchir</button></div>
+    <div id="deliv-list"></div>
+  </div>
+</div>
+
+<div class="login" id="login" style="display:none">
+  <h2>Accès Webhooks</h2>
+  <p>Connecte-toi au dashboard RevPulse pour gérer les webhooks, ou utilise le compte démo.</p>
+  <button onclick="demoLogin()">Connexion démo</button>
+</div>
+
+<script>
+const API = (location.protocol === 'https:' ? 'https://' : 'http://') + location.host + '/api';
+const EVENTS = [
+  {id:'contact.created', label:'Contact créé'},
+  {id:'contact.scored', label:'Score recalculé'},
+  {id:'sequence.enrolled', label:'Contact enrollé en séquence'},
+  {id:'sequence.step_completed', label:'Step de séquence envoyé'},
+  {id:'email.sent', label:'E-mail envoyé'},
+  {id:'opportunity.created', label:'Opportunité créée'},
+];
+let TOK = localStorage.getItem('revpulse_jwt');
+let TID = null;
+try { const s = JSON.parse(localStorage.getItem('revpulse_session') || '{}'); TID = s.activeTenantId; } catch(e){}
+let currentWid = null;
+
+function esc(s){ return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])) }
+function fmtDate(iso){ if(!iso) return '—'; try { return new Date(iso).toLocaleString('fr-FR', {dateStyle:'short', timeStyle:'short'}); } catch(e){ return iso } }
+
+async function api(method, path, body){
+  const opts = {method, headers: {'Authorization': 'Bearer ' + TOK, 'Content-Type': 'application/json'}};
+  if(body) opts.body = JSON.stringify(body);
+  try { const r = await fetch(API + path, opts); let d; try { d = await r.json() } catch(e){ d = null } return {status: r.status, data: d}; }
+  catch(e){ return {status: 0, data: null}; }
+}
+
+async function demoLogin(){
+  const r = await fetch(API + '/auth/demo', {method:'POST'});
+  if(!r.ok){ alert('Login démo échoué'); return; }
+  const d = await r.json();
+  TOK = d.token; localStorage.setItem('revpulse_jwt', TOK);
+  const ts = await fetch(API + '/tenants', {headers:{'Authorization':'Bearer '+TOK}});
+  const tenants = await ts.json();
+  TID = tenants[0]?.id;
+  if(TID){ localStorage.setItem('revpulse_session', JSON.stringify({activeTenantId: TID})); init(); }
+}
+
+function init(){
+  if(!TOK || !TID){ document.getElementById('login').style.display='block'; return; }
+  document.getElementById('login').style.display='none';
+  document.getElementById('content').style.display='block';
+  document.getElementById('tenant-name').textContent = '· ' + TID;
+  loadWebhooks();
+}
+
+async function loadWebhooks(){
+  const {status, data} = await api('GET', '/tenants/' + TID + '/webhooks');
+  if(status !== 200 || !data){ document.getElementById('wh-list').innerHTML = '<div class="card"><div class="empty">Erreur chargement webhooks (RBAC workspace.manage requis).</div></div>'; return; }
+  if(!data.length){ document.getElementById('wh-list').innerHTML = '<div class="card"><div class="empty">Aucun webhook. Cliquez « + Nouveau webhook » pour notifier un système externe.</div></div>'; return; }
+  document.getElementById('wh-list').innerHTML = data.map(w => `
+    <div class="card">
+      <h3>🔗 <span class="wh-url">${esc(w.url)}</span> <span class="badge ${w.active?'active':'inactive'}">${w.active?'actif':'suspendu'}</span></h3>
+      <div class="wh-meta">Événements : ${(w.events||[]).map(e => `<span class="badge ev">${esc(e)}</span>`).join('')}</div>
+      <div class="wh-meta">Créé le <b>${fmtDate(w.created_at)}</b></div>
+      <div style="margin-top:12px">
+        <button class="btn sm" onclick="testWebhook('${w.id}')">⚡ Test ping</button>
+        <button class="btn sec sm" onclick="toggleWebhook('${w.id}', ${!w.active})">${w.active?'⏸ Suspendre':'▶ Activer'}</button>
+        <button class="btn sec sm" onclick="showDeliveries('${w.id}', '${esc(w.url)}')">📋 Livraisons</button>
+        <button class="btn danger sm" onclick="deleteWebhook('${w.id}')">Supprimer</button>
+      </div>
+    </div>`).join('');
+}
+
+function showCreate(){
+  document.getElementById('create-form').style.display = 'block';
+  document.getElementById('wf-url').value = '';
+  document.getElementById('wf-events').innerHTML = EVENTS.map(e =>
+    `<label class="ev-opt"><input type="checkbox" value="${e.id}" checked> ${esc(e.label)} <code style="color:var(--muted);font-size:11px">${e.id}</code></label>`).join('');
+}
+
+async function createWebhook(){
+  const url = document.getElementById('wf-url').value.trim();
+  if(!url || url.length < 8){ alert('URL invalide (min 8 chars).'); return; }
+  const events = [...document.querySelectorAll('#wf-events input:checked')].map(c => c.value);
+  if(!events.length){ alert('Sélectionnez au moins un événement.'); return; }
+  const active = document.getElementById('wf-active').checked;
+  const {status, data} = await api('POST', '/tenants/' + TID + '/webhooks', {url, events, active});
+  if(status === 201){ document.getElementById('create-form').style.display='none'; await loadWebhooks(); }
+  else { alert('Création échouée : ' + (data?.detail || status)); }
+}
+
+async function toggleWebhook(wid, active){
+  const {status} = await api('PATCH', '/tenants/' + TID + '/webhooks/' + wid, {active});
+  if(status === 200) loadWebhooks();
+  else alert('Mise à jour échouée : ' + status);
+}
+
+async function deleteWebhook(wid){
+  if(!confirm('Supprimer ce webhook ? Les livraisons associées seront supprimées (CASCADE).')) return;
+  const {status} = await api('DELETE', '/tenants/' + TID + '/webhooks/' + wid);
+  if(status === 200) loadWebhooks();
+  else alert('Suppression échouée : ' + status);
+}
+
+async function testWebhook(wid){
+  const {status, data} = await api('POST', '/tenants/' + TID + '/webhooks/' + wid + '/test');
+  if(status === 200){
+    alert('Test ping — statut: ' + data.status + (data.response_code ? ' (HTTP ' + data.response_code + ')' : '') + (data.error ? '\nErreur: ' + data.error : ''));
+  } else { alert('Test échoué : ' + status); }
+}
+
+function showList(){ document.getElementById('deliveries-view').style.display='none'; document.getElementById('list-view').style.display='block'; }
+
+function showDeliveries(wid, url){
+  currentWid = wid;
+  document.getElementById('list-view').style.display='none';
+  document.getElementById('deliveries-view').style.display='block';
+  document.getElementById('deliv-title').textContent = 'Livraisons — ' + url.slice(0, 50);
+  loadDeliveries(wid);
+}
+
+async function loadDeliveries(wid){
+  const {status, data} = await api('GET', '/tenants/' + TID + '/webhooks/' + wid + '/deliveries');
+  if(status !== 200 || !data){ document.getElementById('deliv-list').innerHTML = '<div class="card"><div class="empty">Erreur chargement livraisons.</div></div>'; return; }
+  if(!data.length){ document.getElementById('deliv-list').innerHTML = '<div class="card"><div class="empty">Aucune livraison. Déclenchez un événement (créer un contact, envoyer un e-mail…) ou cliquez « Test ping ».</div></div>'; return; }
+  document.getElementById('deliv-list').innerHTML = `
+    <div class="card">
+      <table><thead><tr><th>Événement</th><th>Statut</th><th class="num">HTTP</th><th class="num">Essais</th><th>Créé</th><th>Erreur</th><th></th></tr></thead>
+        <tbody>${data.map(d => `<tr>
+          <td><span class="badge ev">${esc(d.event)}</span></td>
+          <td><span class="badge ${d.status}">${esc(d.status)}</span></td>
+          <td class="num">${d.response_code ?? '—'}</td>
+          <td class="num">${d.attempts}/${d.max_attempts}</td>
+          <td>${fmtDate(d.created_at)}</td>
+          <td>${d.last_error ? '<div class="err-msg">' + esc(d.last_error) + '</div>' : '—'}</td>
+          <td>${d.status !== 'success' ? '<button class="btn sm sec" onclick="retryDelivery(\'' + d.webhook_id + '\',\'' + d.id + '\')">↻ Retry</button>' : ''}</td>
+        </tr>`).join('')}</tbody></table>
+    </div>`;
+}
+
+async function retryDelivery(wid, did){
+  const {status} = await api('POST', '/tenants/' + TID + '/webhooks/' + wid + '/deliveries/' + did + '/retry');
+  if(status === 200) loadDeliveries(wid);
+  else alert('Retry échoué : ' + status);
+}
+
+init();
+</script>
+</body>
+</html>
