@@ -45,7 +45,7 @@ docker exec "$CONTAINER" psql -U "$PGUSER" -d "$PGDB" -v ON_ERROR_STOP=1 --quiet
 echo "  seed: 1 user, 1 tenant"
 
 echo "=== 5/7 backup ==="
-PGHOST=localhost PGPORT="$PGPORT" PGUSER="$PGUSER" PG_DB="$PGDB" BACKUP_DIR=./backups-test \
+PGPASSWORD="$PGPASS" PGHOST=localhost PGPORT="$PGPORT" PGUSER="$PGUSER" PG_DB="$PGDB" BACKUP_DIR=./backups-test \
   ./scripts/backup_db.sh
 DUMP="$(ls -1t ./backups-test/revpulse_*.sql.gz | head -1)"
 echo "  dump: $DUMP"
@@ -55,7 +55,7 @@ docker exec "$CONTAINER" psql -U "$PGUSER" -d "$PGDB" -v ON_ERROR_STOP=1 --quiet
   -c "DROP SCHEMA public CASCADE; CREATE SCHEMA public;"
 
 echo "=== 7/7 restore + verify ==="
-PGHOST=localhost PGPORT="$PGPORT" PGUSER="$PGUSER" PG_DB="$PGDB" \
+PGPASSWORD="$PGPASS" PGHOST=localhost PGPORT="$PGPORT" PGUSER="$PGUSER" PG_DB="$PGDB" \
   ./scripts/restore_db.sh "$DUMP" --yes
 
 T="$(docker exec "$CONTAINER" psql -U "$PGUSER" -d "$PGDB" -tAc "SELECT count(*) FROM tenants;")"
