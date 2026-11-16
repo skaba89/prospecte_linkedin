@@ -26,7 +26,9 @@ if [ "$FORCE" != "--yes" ]; then
 fi
 
 echo "→ Restauration en cours..."
-if command -v psql >/dev/null 2>&1; then
+if [ -n "${BACKUP_CONTAINER:-}" ]; then
+  gunzip -c "$DUMP" | docker exec -i "$BACKUP_CONTAINER" psql -U "$PG_USER" -d "$PG_DB" -v ON_ERROR_STOP=1 --quiet
+elif command -v psql >/dev/null 2>&1; then
   gunzip -c "$DUMP" | psql -U "$PG_USER" -d "$PG_DB" -v ON_ERROR_STOP=1 --quiet
 elif command -v docker >/dev/null 2>&1 && docker compose ps --services 2>/dev/null | grep -qx "$COMPOSE_SERVICE"; then
   gunzip -c "$DUMP" | docker compose exec -T "$COMPOSE_SERVICE" psql -U "$PG_USER" -d "$PG_DB" -v ON_ERROR_STOP=1 --quiet

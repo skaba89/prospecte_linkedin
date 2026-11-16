@@ -90,7 +90,8 @@ ck(sum(1 for m in mb if m["status"] == "invited"), 1, "invited count (Inès)")
 print("=== 5. GET /api/tenants/tnt-demo/approvals ===")
 s, ap = call("GET", "/api/tenants/tnt-demo/approvals", tok)
 ck(len(ap), 6, "pending approvals")
-aid = ap[0]["id"]
+# P10.10 : publier un approval type "post" (les dm/comment routent vers manual_required).
+aid = next(a["id"] for a in ap if a.get("type") == "post")
 
 print(f"=== 6. POST /api/tenants/tnt-demo/approvals/{aid}/approve ===")
 call("POST", f"/api/tenants/tnt-demo/approvals/{aid}/approve", tok)

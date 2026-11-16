@@ -4,9 +4,10 @@ services:
   db:
     image: postgres:16-alpine
     environment:
-      POSTGRES_USER: revpulse
-      POSTGRES_PASSWORD: revpulse
-      POSTGRES_DB: revpulse
+      # P10.5 : aucun mot de passe par défaut en production (fail-fast via :?).
+      POSTGRES_USER: ${POSTGRES_USER:-revpulse}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD requis (définir dans .env, aucun défaut)}
+      POSTGRES_DB: ${POSTGRES_DB:-revpulse}
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
@@ -20,10 +21,20 @@ services:
     build: ./backend
     environment:
       REVPULSE_ENV: production
-      REVPULSE_DATABASE_URL: postgresql+psycopg2://revpulse:revpulse@db:5432/revpulse
-      # ⚠️ Fail-fast : en production, ce secret doit être ≥ 32 chars et non défaut.
-      # Sans .env le conteneur crash au démarrage avec un message clair (voulu).
-      REVPULSE_JWT_SECRET: ${REVPULSE_JWT_SECRET:-change-me-in-production}
+      # P10.5 : URL construite depuis les vars (aucun mot de passe en clair dans le compose).
+      REVPULSE_DATABASE_URL: postgresql+psycopg2://${POSTGRES_USER:-revpulse}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-revpulse}
+      # P10.5 : pas de secret par défaut — fail-fast si absent (validate_jwt_secret exige ≥32 chars).
+      REVPULSE_JWT_SECRET: ${REVPULSE_JWT_SECRET:?REVPULSE_JWT_SECRET requis (≥32 chars en production)}
+      # P10.2 : clé de chiffrement Fernet des tokens OAuth (rotation via *_PREVIOUS).
+      # gen → python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+      REVPULSE_TOKEN_ENCRYPTION_KEY: ${REVPULSE_TOKEN_ENCRYPTION_KEY:?REVPULSE_TOKEN_ENCRYPTION_KEY requis (Fernet base64-urlsafe 32 bytes)}
+      REVPULSE_TOKEN_ENCRYPTION_KEY_PREVIOUS: ${REVPULSE_TOKEN_ENCRYPTION_KEY_PREVIOUS:-}
+      # P10.6 : variables OAuth LinkedIn (App : https://www.linkedin.com/developers/apps).
+      REVPULSE_LINKEDIN_CLIENT_ID: ${REVPULSE_LINKEDIN_CLIENT_ID:-}
+      REVPULSE_LINKEDIN_CLIENT_SECRET: ${REVPULSE_LINKEDIN_CLIENT_SECRET:-}
+      REVPULSE_LINKEDIN_REDIRECT_URI: ${REVPULSE_LINKEDIN_REDIRECT_URI:-http://localhost:8080/api/linkedin/callback}
+      # P10.4 : mock interdit en production (forcé à false côté backend si env=production).
+      REVPULSE_LINKEDIN_MOCK: ${REVPULSE_LINKEDIN_MOCK:-false}
       REVPULSE_FRONTEND_DIR: /nonexistent
       REVPULSE_CORS_ORIGINS: ${REVPULSE_CORS_ORIGINS:-http://localhost:8080}
       REVPULSE_APP_BASE_URL: ${REVPULSE_APP_BASE_URL:-http://localhost:8080}
@@ -39,7 +50,8 @@ services:
       db:
         condition: service_healthy
     ports:
-      - "8000:8000"
+      # P10.11 : API liée à localhost uniquement (le frontend nginx proxie via le réseau docker).
+      - "127.0.0.1:8000:8000"
     restart: unless-stopped
 
   frontend:

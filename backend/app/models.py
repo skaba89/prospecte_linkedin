@@ -160,3 +160,43 @@ class AuditLog(Base):
     detail = Column(JSONType, nullable=True)
     request_id = Column(String, default="", nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow, index=True)
+
+
+class OAuthState(Base):
+    """State OAuth à usage unique (anti-CSRF + anti-rejeu). nonce aléatoire stocké,
+    marqué 'used' au callback → un même state ne peut être rejoué (P10.3)."""
+    __tablename__ = "oauth_states"
+    id = Column(String, primary_key=True, default=lambda: _uid("ost"))
+    tenant_id = Column(String, nullable=False, index=True)
+    nonce = Column(String, nullable=False, unique=True, index=True)
+    expires_at = Column(DateTime, nullable=False, index=True)
+    used = Column(Boolean, default=False, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class RevokedToken(Base):
+    """JTI révoqué (logout / révocation manuelle). La vérification se fait dans
+    get_current_user (query par jti) — decode_token reste pur. Nettoyage : rows où
+    expires_at < now (P10.7)."""
+    __tablename__ = "revoked_tokens"
+    jti = Column(String, primary_key=True)
+    user_id = Column(String, nullable=True, index=True)
+    expires_at = Column(DateTime, nullable=False, index=True)
+    revoked_at = Column(DateTime, default=datetime.utcnow)
+
+
+class Publication(Base):
+    """Trace durable + dédup des publications LinkedIn (post/comment/dm). content_hash
+    = sha256(texte normalisé) → empêche la double publication du même contenu (P10.9).
+    status durable : published | failed | pending (survit au redémarrage)."""
+    __tablename__ = "publications"
+    id = Column(String, primary_key=True, default=lambda: _uid("pub"))
+    tenant_id = Column(String, ForeignKey("tenants.id"), nullable=False, index=True)
+    approval_id = Column(String, ForeignKey("approvals.id"), nullable=True, index=True)
+    kind = Column(String, nullable=False)  # post | comment | dm
+    content_hash = Column(String, nullable=False, index=True)
+    linkedin_urn = Column(String, nullable=True)
+    status = Column(String, nullable=False)  # published | failed | pending
+    error_detail = Column(Text, nullable=True)
+    published_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)

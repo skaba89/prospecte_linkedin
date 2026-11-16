@@ -1,16 +1,23 @@
-"""Auth : register, login, demo, me. Retourne un JWT + l'utilisateur.
+"""Auth : register, login, demo, me, logout. Retourne un JWT + l'utilisateur.
+
+P10.4 : /api/auth/demo + le compte démo sont interdits en production (404).
+        Le hint d'identifiants démo sur 401 login est retiré en production.
+P10.7 : /api/auth/logout révoque le JIT courant (blacklist revoked_tokens) ;
+        get_current_user (deps) vérifie la révocation à chaque requête.
 
 Rate-limiting (slowapi) sur login/register/demo : anti brute-force, configurable
 via REVPULSE_LOGIN_RATE_LIMIT (défaut 5/minute), désactivable via
 REVPULSE_RATE_LIMIT_ENABLED.
 """
+from datetime import UTC, datetime
+
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy.orm import Session
 
 from .. import models, schemas, security
 from ..config import settings
 from ..database import get_db
-from ..deps import get_current_user
+from ..deps import get_current_user, oauth2_scheme
 from ..extensions import limiter
 from ..seed import ensure_demo
 
@@ -35,22 +42,39 @@ def register(request: Request, body: schemas.UserCreate, db: Session = Depends(g
 def login(request: Request, body: schemas.UserLogin, db: Session = Depends(get_db)):
     email = body.email.lower()
     user = db.query(models.User).filter_by(email=email).first()
-    # Répare le compte démo à la volée si l'utilisateur saisit les identifiants démo
-    if not user and email == "demo@revpulse.io":
-        user = ensure_demo(db)
+    # P10.4 : réparation du compte démo + hint d'identifiants only hors production.
+    if not settings.is_production and not user and email == settings.demo_email.lower():
+        ensure_demo(db)
         user = db.query(models.User).filter_by(email=email).first()
     if not user or not security.verify_password(body.password, user.password_hash):
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Identifiants invalides. Démo : demo@revpulse.io / demo1234")
+        hint = "" if settings.is_production else f" Démo : {settings.demo_email} / {settings.demo_password}"
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, f"Identifiants invalides.{hint}")
     return schemas.Token(token=security.create_access_token(user.id), user=user)
 
 
 @router.post("/demo", response_model=schemas.Token)
 @limiter.limit(settings.login_rate_limit)
 def demo(request: Request, db: Session = Depends(get_db)):
-    """Accès démo en 1 clic : garantit le seed puis connecte Alex Démo."""
+    """Accès démo en 1 clic (dev/CI). P10.4 : 404 en production."""
+    if settings.is_production:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Compte démo indisponible en production.")
     ensure_demo(db)
-    user = db.query(models.User).filter_by(email="demo@revpulse.io").first()
+    user = db.query(models.User).filter_by(email=settings.demo_email.lower()).first()
     return schemas.Token(token=security.create_access_token(user.id), user=user)
+
+
+@router.post("/logout")
+def logout(user: models.User = Depends(get_current_user), token: str = Depends(oauth2_scheme),
+           db: Session = Depends(get_db)):
+    """P10.7 : révoque le JIT courant (blacklist revoked_tokens). Invalidation immédiate."""
+    payload = security.decode_token(token)
+    if not payload or not payload.get("jti"):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Token sans jti — non révocable.")
+    exp = payload.get("exp")
+    expires_at = datetime.fromtimestamp(exp, tz=UTC).replace(tzinfo=None) if exp else datetime.utcnow()
+    db.add(models.RevokedToken(jti=payload["jti"], user_id=user.id, expires_at=expires_at))
+    db.commit()
+    return {"revoked": True}
 
 
 @router.get("/me", response_model=schemas.UserOut)

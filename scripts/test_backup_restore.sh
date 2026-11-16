@@ -5,7 +5,8 @@
 #         → backup → DROP SCHEMA (simule une perte) → restore → vérifie les comptes.
 #
 # Prérequis : docker + deps backend (alembic, sqlalchemy, psycopg2-binary).
-# CI : NON exécuté (pas de docker en CI) — lancer localement : make backup-test
+# CI : exécuté dans le job `docker` (P10.15) + localement : make backup-test.
+# P10.17 : dump isolé dans ./backups-test/ (jamais mélangé aux backups réels ./backups/).
 set -euo pipefail
 
 PGPORT="${PGPORT:-55432}"
@@ -15,14 +16,14 @@ PGPASS="revpulse"
 CONTAINER="revpulse-backup-test"
 
 cd "$(dirname "$0")/.."
-mkdir -p ./backups
+mkdir -p ./backups-test
 
 echo "=== 1/7 démarre postgres éphémère (port $PGPORT) ==="
 docker rm -f "$CONTAINER" >/dev/null 2>&1 || true
 docker run -d --name "$CONTAINER" \
   -e POSTGRES_USER="$PGUSER" -e POSTGRES_PASSWORD="$PGPASS" -e POSTGRES_DB="$PGDB" \
   -p "$PGPORT:5432" postgres:16-alpine >/dev/null
-trap 'docker rm -f "$CONTAINER" >/dev/null 2>&1 || true' EXIT
+trap 'docker rm -f "$CONTAINER" >/dev/null 2>&1 || true; rm -rf ./backups-test' EXIT
 
 echo "=== 2/7 attend que postgres soit prêt ==="
 ready=no
@@ -44,9 +45,9 @@ docker exec "$CONTAINER" psql -U "$PGUSER" -d "$PGDB" -v ON_ERROR_STOP=1 --quiet
 echo "  seed: 1 user, 1 tenant"
 
 echo "=== 5/7 backup ==="
-PGHOST=localhost PGPORT="$PGPORT" PGUSER="$PGUSER" PG_DB="$PGDB" BACKUP_DIR=./backups \
+BACKUP_CONTAINER="$CONTAINER" PGUSER="$PGUSER" PG_DB="$PGDB" BACKUP_DIR=./backups-test \
   ./scripts/backup_db.sh
-DUMP="$(ls -1t ./backups/revpulse_*.sql.gz | head -1)"
+DUMP="$(ls -1t ./backups-test/revpulse_*.sql.gz | head -1)"
 echo "  dump: $DUMP"
 
 echo "=== 6/7 drop schéma public (simule une perte de données) ==="
@@ -54,7 +55,7 @@ docker exec "$CONTAINER" psql -U "$PGUSER" -d "$PGDB" -v ON_ERROR_STOP=1 --quiet
   -c "DROP SCHEMA public CASCADE; CREATE SCHEMA public;"
 
 echo "=== 7/7 restore + verify ==="
-PGHOST=localhost PGPORT="$PGPORT" PGUSER="$PGUSER" PG_DB="$PGDB" \
+BACKUP_CONTAINER="$CONTAINER" PGUSER="$PGUSER" PG_DB="$PGDB" \
   ./scripts/restore_db.sh "$DUMP" --yes
 
 T="$(docker exec "$CONTAINER" psql -U "$PGUSER" -d "$PGDB" -tAc "SELECT count(*) FROM tenants;")"

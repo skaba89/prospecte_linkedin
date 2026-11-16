@@ -27,6 +27,11 @@ def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(
     payload = security.decode_token(token)
     if not payload:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Token invalide ou expiré")
+    # P10.7 : vérifie la révocation JIT (blacklist revoked_tokens). Les tokens sans jti
+    # (legacy, antérieurs à P10) restent valides — seuls les nouveaux tokens sont révocables.
+    jti = payload.get("jti")
+    if jti and db.query(models.RevokedToken).filter_by(jti=jti).first():
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Token révoqué")
     user = db.query(models.User).filter_by(id=payload.get("sub")).first()
     if not user:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Utilisateur introuvable")
@@ -59,6 +64,9 @@ def get_membership(tenant: models.Tenant = Depends(get_tenant), user: models.Use
 
 def require_permission(perm: str):
     def _dep(membership: models.Member = Depends(get_membership)) -> models.Member:
+        # P10.8 : un membre inactif (invitation en attente / expirée / suspendu) n'a aucune permission.
+        if membership.status != "active":
+            raise HTTPException(status.HTTP_403_FORBIDDEN, "Membre inactif ou invitation en attente.")
         if perm not in ROLE_PERMISSIONS.get(membership.role, set()):
             raise HTTPException(status.HTTP_403_FORBIDDEN, f"Permission requise : {perm} (rôle {membership.role})")
         return membership
