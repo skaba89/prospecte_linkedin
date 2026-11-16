@@ -63,29 +63,41 @@ def create_webhook(
         events = wh_service._validate_events(body.events)
     except ValueError as e:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(e)) from e
-    wh = models.Webhook(
-        tenant_id=tid,
-        url=body.url,
-        events=events,
-        active=body.active,
-        secret=body.secret or wh_service.gen_secret(),
-        created_by=membership.user_id,
-    )
-    db.add(wh)
-    db.flush()
-    log_audit(
-        db,
-        tenant_id=tid,
-        actor_user_id=membership.user_id,
-        actor_name=membership.name,
-        action="webhook.create",
-        target_type="webhook",
-        target_id=wh.id,
-        detail={"url": wh.url, "events": events},
-    )
-    db.commit()
-    db.refresh(wh)
-    return wh
+    try:
+        wh = models.Webhook(
+            tenant_id=tid,
+            url=body.url,
+            events=events,
+            active=body.active,
+            secret=body.secret or wh_service.gen_secret(),
+            created_by=membership.user_id,
+        )
+        db.add(wh)
+        db.flush()
+        log_audit(
+            db,
+            tenant_id=tid,
+            actor_user_id=membership.user_id,
+            actor_name=membership.name,
+            action="webhook.create",
+            target_type="webhook",
+            target_id=wh.id,
+            detail={"url": wh.url, "events": events},
+        )
+        db.commit()
+        db.refresh(wh)
+        return wh
+    except Exception as e:
+        import logging
+        import traceback
+
+        logging.getLogger("revpulse.webhooks").error(
+            "create_webhook failed: %s: %s\n%s", type(e).__name__, e, traceback.format_exc()
+        )
+        db.rollback()
+        raise HTTPException(
+            status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"create_webhook failed: {type(e).__name__}: {e}"
+        ) from e
 
 
 @router.get("/{wid}", response_model=schemas.WebhookOut)
