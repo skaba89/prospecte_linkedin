@@ -35,7 +35,7 @@ def upgrade() -> None:
         sa.Column("url", sa.String(), nullable=False),
         sa.Column("secret", sa.String(), nullable=False),
         sa.Column("events", sa.Text(), nullable=False),  # JSON array (JSONType portable)
-        sa.Column("active", sa.Boolean(), nullable=False, server_default=sa.text("1")),
+        sa.Column("active", sa.Boolean(), nullable=False, server_default=sa.text("true")),
         sa.Column("created_by", sa.String(), nullable=True),
         sa.Column("created_at", sa.DateTime(), nullable=False),
         sa.Column("updated_at", sa.DateTime(), nullable=False),
