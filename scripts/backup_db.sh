@@ -31,7 +31,11 @@ OUT="$BACKUP_DIR/revpulse_${TS}.sql.gz"
 
 echo "→ Backup de la base '$PG_DB' → $OUT"
 
-if command -v pg_dump >/dev/null 2>&1; then
+if [ -n "${BACKUP_CONTAINER:-}" ]; then
+  # P10-fix : pg_dump du conteneur (version-matched, ex PG 16) — évite l'incompatibilité
+  # de version (pg_dump host PG 17+ émet SET transaction_timeout que PG 16 rejette).
+  docker exec "$BACKUP_CONTAINER" pg_dump -U "$PG_USER" -d "$PG_DB" --clean --if-exists | gzip > "$OUT"
+elif command -v pg_dump >/dev/null 2>&1; then
   pg_dump -U "$PG_USER" -d "$PG_DB" --clean --if-exists | gzip > "$OUT"
 elif command -v docker >/dev/null 2>&1 && docker compose ps --services 2>/dev/null | grep -qx "$COMPOSE_SERVICE"; then
   docker compose exec -T "$COMPOSE_SERVICE" pg_dump -U "$PG_USER" -d "$PG_DB" --clean --if-exists | gzip > "$OUT"
