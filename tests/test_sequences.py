@@ -131,9 +131,9 @@ ck("SequenceProcessResult" in sch and "processed" in sch and "sent" in sch, True
 # ─── Helper send_email_to_contact extrait (P13/P15 réutilisé) ─────────────────
 print("\n=== Helper send_email_to_contact (extraction P13 → réutilisé P15) ===")
 nt = read("backend/app/routers/notifications.py")
-ck("def send_email_to_contact(db: Session" in nt, True, "helper send_email_to_contact défini (module-level)")
+ck("def send_email_to_contact(" in nt and "db: Session," in nt, True, "helper send_email_to_contact défini (module-level)")
 ck("def email_contact(" in nt, True, "endpoint email_contact toujours présent")
-ck("send_email_to_contact(db, tid, contact, payload.template" in nt, True, "endpoint appelle le helper")
+ck("send_email_to_contact(" in nt and "db, tid, contact, payload.template" in nt, True, "endpoint appelle le helper")
 ck('result.status == "failed"' in nt and '"Template inconnu"' in nt, True, "endpoint traduit result failed → 400")
 ck("raise HTTPException" in nt and "from None" in nt, True, "B904 : raise ... from None (template inconnu)")
 

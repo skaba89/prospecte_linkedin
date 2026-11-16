@@ -70,6 +70,8 @@ jobs:
         run: python tests/test_segments_dyn.py
       - name: P17 Scoring avancé static checks (engagement+decay+opportunity, hook notifications, batch recompute)
         run: python tests/test_scoring.py
+      - name: P18 Webhooks outbound static checks (models/service/router/hooks HMAC/retry/RBAC audit)
+        run: python tests/test_webhooks.py
 
   test-api:
     name: API tests (sqlite, sans docker)

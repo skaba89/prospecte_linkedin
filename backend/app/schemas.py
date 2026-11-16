@@ -1,4 +1,5 @@
 """Schémas Pydantic (validation + sérialisation)."""
+
 from datetime import date, datetime
 from typing import Any
 
@@ -85,6 +86,7 @@ class MemberOut(BaseModel):
 
 class InviteResult(MemberOut):
     """Résultat d'une invitation : le membre créé + le statut d'envoi de l'e-mail."""
+
     email_sent: bool = True
 
 
@@ -164,6 +166,7 @@ class PublishResult(BaseModel):
 
 class SyncResult(BaseModel):
     """Résultat d'une sync LinkedIn → CRM (P12) : compteurs + id du run pour traçabilité."""
+
     sync_run_id: str
     status: str  # completed | failed
     total: int = 0
@@ -175,6 +178,7 @@ class SyncResult(BaseModel):
 
 class SyncRunOut(BaseModel):
     """Ligne d'historique d'un sync run (P12) — pour GET /linkedin/sync-runs."""
+
     model_config = ConfigDict(from_attributes=True)
     id: str
     status: str
@@ -189,6 +193,7 @@ class SyncRunOut(BaseModel):
 # ---- Notifications & e-mails (P13) ----
 class NotificationOut(BaseModel):
     """Notification (e-mail envoyé ou in-app feed), scopée par tenant (P13)."""
+
     model_config = ConfigDict(from_attributes=True)
     id: str
     type: str
@@ -208,6 +213,7 @@ class NotificationOut(BaseModel):
 
 class EmailSendRequest(BaseModel):
     """Envoi d'un e-mail templated à un contact CRM (P13). template + message perso optionnel."""
+
     template: str  # cold_outreach | follow_up | intro | re_engagement
     custom_message: str = ""
 
@@ -221,6 +227,7 @@ class TemplateInfo(BaseModel):
 class EmailSendResult(BaseModel):
     """Résultat d'un envoi e-mail (P13) : la notification créée + statut d'envoi.
     notification_id nullable (None si template inconnu — pas de notif créée, helper P15 send_email_to_contact)."""
+
     notification_id: str | None = None
     status: str  # sent | failed | dry_run | skipped
     email_sent: bool
@@ -282,6 +289,7 @@ class ContactCreate(BaseModel):
 
 class ContactUpdate(BaseModel):
     """Mise à jour partielle : tous les champs optionnels (seuls ceux fournis sont appliqués)."""
+
     first_name: str | None = None
     last_name: str | None = None
     email: EmailStr | None = None
@@ -356,6 +364,7 @@ class OpportunityOut(BaseModel):
 
 class StageUpdate(BaseModel):
     """Déplacement d'une opportunité entre colonnes Kanban (PATCH /opportunities/{id}/stage)."""
+
     stage: str
 
 
@@ -449,6 +458,7 @@ class ImportRowError(BaseModel):
 class ImportResult(BaseModel):
     """Résultat d'un import CSV/XLSX de contacts : créés, doublons (skip), supprimés
     (RGPD — dans la suppression list), erreurs (lignes invalides)."""
+
     created: int = 0
     duplicates: int = 0
     suppressed: int = 0
@@ -458,18 +468,21 @@ class ImportResult(BaseModel):
 
 class ScoreBreakdown(BaseModel):
     """Détail du scoring d'un contact (heuristique 0-100)."""
+
     score: int
     breakdown: dict[str, int]
 
 
 class ScoreRecomputeResult(BaseModel):
     """Résultat du batch recompute (P17) : nb de contacts recalculés + score moyen."""
+
     recomputed: int
     avg_score: float
 
 
 class PipelineColumn(BaseModel):
     """Colonne Kanban : stage + opportunités + total valeur."""
+
     stage: str
     label: str
     color: str
@@ -481,6 +494,7 @@ class PipelineColumn(BaseModel):
 # ---- Analytics & reporting (P14) ----
 class PipelineStageStat(BaseModel):
     """Stats agrégées d'un stage de pipeline (P14 analytics)."""
+
     stage: str
     count: int
     total_value: int = 0
@@ -489,6 +503,7 @@ class PipelineStageStat(BaseModel):
 
 class EmailStat(BaseModel):
     """Stats e-mail par template (P14 analytics) + breakdown par statut."""
+
     template_id: str | None = None
     count: int
     by_status: dict[str, int] = {}
@@ -496,6 +511,7 @@ class EmailStat(BaseModel):
 
 class SourceStat(BaseModel):
     """Stats contact par source (P14 analytics) + taux de conversion."""
+
     source: str
     count: int
     conversion_pct: float = 0.0  # % de contacts « convertis » (won/contacted/qualified)
@@ -503,6 +519,7 @@ class SourceStat(BaseModel):
 
 class AnalyticsOverview(BaseModel):
     """Vue d'ensemble KPIs (P14) : CRM (contacts + opportunités) + e-mails + sync LinkedIn."""
+
     contacts_total: int
     contacts_by_source: dict[str, int] = {}
     contacts_by_status: dict[str, int] = {}
@@ -521,6 +538,7 @@ class AnalyticsOverview(BaseModel):
 
 class AnalyticsPipeline(BaseModel):
     """Pipeline agrégé par stage (P14) + win rate + valeur totale."""
+
     stages: list[PipelineStageStat] = []
     win_rate_pct: float = 0.0  # closed_won / total
     total_value: int = 0
@@ -529,6 +547,7 @@ class AnalyticsPipeline(BaseModel):
 
 class AnalyticsEmails(BaseModel):
     """Stats e-mail (P14) : par template + par statut + taux de succès (sent/(sent+failed))."""
+
     by_template: list[EmailStat] = []
     by_status: dict[str, int] = {}
     success_rate_pct: float = 0.0
@@ -537,6 +556,7 @@ class AnalyticsEmails(BaseModel):
 
 class AnalyticsSources(BaseModel):
     """Stats contacts par source (P14) + conversion."""
+
     by_source: list[SourceStat] = []
     total: int = 0
 
@@ -544,12 +564,14 @@ class AnalyticsSources(BaseModel):
 # ---- Séquences & automatisation (P15) ----
 class SequenceStepCreate(BaseModel):
     """Step d'une séquence à la création (P15). template_id = template P13, delay_days = délai."""
+
     template_id: str  # cold_outreach | follow_up | intro | re_engagement
     delay_days: int = 0  # délai avant envoi après le step précédent (0 = immédiat)
 
 
 class SequenceStepOut(BaseModel):
     """Step d'une séquence sérialisé (P15)."""
+
     id: str
     step_order: int
     template_id: str
@@ -558,6 +580,7 @@ class SequenceStepOut(BaseModel):
 
 class SequenceCreate(BaseModel):
     """Création d'une séquence + ses steps (P15)."""
+
     name: str
     description: str = ""
     status: str = "draft"  # draft | active | paused
@@ -566,6 +589,7 @@ class SequenceCreate(BaseModel):
 
 class SequenceUpdate(BaseModel):
     """Mise à jour partielle d'une séquence (P15). Au moins un champ."""
+
     name: str | None = None
     description: str | None = None
     status: str | None = None  # draft | active | paused
@@ -573,6 +597,7 @@ class SequenceUpdate(BaseModel):
 
 class SequenceOut(BaseModel):
     """Séquence sérialisée (P15) avec steps + count enrollments."""
+
     id: str
     tenant_id: str
     name: str
@@ -587,11 +612,13 @@ class SequenceOut(BaseModel):
 
 class EnrollRequest(BaseModel):
     """Enrollment d'un contact dans une séquence (P15)."""
+
     contact_id: str
 
 
 class SequenceEnrollmentOut(BaseModel):
     """Enrollment sérialisé (P15)."""
+
     id: str
     sequence_id: str
     contact_id: str
@@ -606,6 +633,7 @@ class SequenceEnrollmentOut(BaseModel):
 
 class SequenceProcessResult(BaseModel):
     """Résultat d'une passe du scheduler sur une séquence (P15)."""
+
     sequence_id: str
     processed: int
     sent: int
@@ -616,6 +644,7 @@ class SequenceProcessResult(BaseModel):
 
 class SequenceStats(BaseModel):
     """Stats d'une séquence (P15) : counts par statut d'enrollment."""
+
     sequence_id: str
     total_enrollments: int
     active: int
@@ -627,12 +656,71 @@ class SequenceStats(BaseModel):
 # ---- Batch enrollment (P16 — ciblage segment → séquence) ----
 class EnrollBatchRequest(BaseModel):
     """Batch enrollment (P16) : segment_id (applique le criteria du segment) OU contact_ids explicites."""
+
     segment_id: str | None = None
     contact_ids: list[str] = []
 
 
 class EnrollBatchResult(BaseModel):
     """Résultat d'un batch enrollment (P16) : enrolled + skipped (déjà active) + total."""
+
     enrolled: int
     skipped: int
     total: int
+
+
+# ---- Webhooks outbound (P18) ----
+class WebhookCreate(BaseModel):
+    """Création d'un webhook (P18). url = endpoint POST cible. events = souscriptions
+    (liste blanche SUPPORTED_EVENTS du service). secret auto-généré (32 hex) si absent."""
+
+    url: str = Field(..., min_length=8, max_length=500)
+    events: list[str] = Field(..., min_length=1)
+    secret: str | None = None  # auto-généré si null
+    active: bool = True
+
+
+class WebhookUpdate(BaseModel):
+    """Mise à jour partielle d'un webhook (P18). Tous champs optionnels."""
+
+    url: str | None = Field(None, min_length=8, max_length=500)
+    events: list[str] | None = None
+    active: bool | None = None
+
+
+class WebhookOut(BaseModel):
+    """Webhook sérialisé (P18). secret jamais exposé en lecture (secrets non leakés)."""
+
+    id: str
+    url: str
+    events: list[str]
+    active: bool
+    created_by: str | None = None
+    created_at: datetime
+    model_config = ConfigDict(from_attributes=True)
+
+
+class WebhookDeliveryOut(BaseModel):
+    """Livraison d'un webhook (P18). payload = JSON envoyé (snap à l'émission)."""
+
+    id: str
+    webhook_id: str
+    event: str
+    payload: dict
+    status: str
+    response_code: int | None = None
+    attempts: int
+    max_attempts: int
+    last_error: str | None = None
+    created_at: datetime
+    delivered_at: datetime | None = None
+    model_config = ConfigDict(from_attributes=True)
+
+
+class WebhookTestResult(BaseModel):
+    """Résultat d'un test ping (P18) : crée + livre une delivery `webhook.test`."""
+
+    delivery_id: str
+    status: str
+    response_code: int | None = None
+    error: str | None = None
