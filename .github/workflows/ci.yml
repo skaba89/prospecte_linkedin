@@ -107,9 +107,11 @@ jobs:
       - name: Run P10 security tests (crypto round-trip + static)
         run: python tests/test_p10_security.py
       - name: Install Playwright + chromium (for E2E)
+        # P10-fix : ubuntu-latest = ubuntu 26.04 (non supporté par playwright 1.57.0 → "Failed to install browsers").
+        # Bump 1.57.0 → 1.65.2 (supporte ubuntu 26.04) + drop --with-deps (l'image runner pré-installe les libs navigateur).
         run: |
-          pip install playwright==1.57.0
-          playwright install --with-deps chromium
+          pip install playwright==1.65.2
+          playwright install chromium
       - name: Run P6 E2E tests (Playwright)
         run: python tests/test_e2e.py
         env:
@@ -176,6 +178,13 @@ jobs:
   docker:
     name: Docker (compose validate + build + nginx -t + backup round-trip, P10.15)
     runs-on: ubuntu-latest
+    # P10.5 : vars :? (fail-fast prod) — valeurs dummy pour la substitution compose en CI
+    # (le job ne démarre pas le backend ; ces valeurs ne sont jamais utilisées à l'exécution).
+    env:
+      POSTGRES_PASSWORD: ci-validate-dummy
+      REVPULSE_JWT_SECRET: ci-validate-dummy-secret-at-least-32-chars-long
+      REVPULSE_TOKEN_ENCRYPTION_KEY: ci-validate-dummy
+      GRAFANA_ADMIN_PASSWORD: ci-validate-dummy
     steps:
       - uses: actions/checkout@v4
       - name: Validate compose files
