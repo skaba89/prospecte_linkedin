@@ -93,6 +93,14 @@ def delete_tenant(tid: str, db: Session = Depends(get_db), tenant: models.Tenant
     db.query(models.Approval).filter_by(tenant_id=tid).delete()
     db.query(models.Member).filter_by(tenant_id=tid).delete()
     db.query(models.Profile).filter_by(tenant_id=tid).delete()
+    # P11 : cascade CRM (suppression, segments, notes, tâches, opportunités, contacts, entreprises).
+    db.query(models.SuppressionList).filter_by(tenant_id=tid).delete(synchronize_session=False)
+    db.query(models.Segment).filter_by(tenant_id=tid).delete(synchronize_session=False)
+    db.query(models.Note).filter_by(tenant_id=tid).delete(synchronize_session=False)
+    db.query(models.Task).filter_by(tenant_id=tid).delete(synchronize_session=False)
+    db.query(models.Opportunity).filter_by(tenant_id=tid).delete(synchronize_session=False)
+    db.query(models.Contact).filter_by(tenant_id=tid).delete(synchronize_session=False)
+    db.query(models.Company).filter_by(tenant_id=tid).delete(synchronize_session=False)
     db.delete(tenant)
     db.commit()
     return {"deleted": tid, "remaining": [_serialize(t, db, tenant.owner_id).id for t in

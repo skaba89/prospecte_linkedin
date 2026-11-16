@@ -148,7 +148,7 @@ def _():
 @check("backend/Dockerfile: USER non-root + healthcheck")
 def _():
     c = read("backend/Dockerfile")
-    assert re.search(r"^USER\s+app", c, re.M)
+    assert re.search(r"^USER\s+app", c, re.MULTILINE)
     assert "HEALTHCHECK" in c
 
 

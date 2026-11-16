@@ -76,6 +76,79 @@ def _seed_approvals(db: Session, tenant_id: str) -> None:
         db.add(models.Approval(id=f"apr-{uuid.uuid4().hex[:10]}", tenant_id=tenant_id, **a))
 
 
+# ─── P11 : CRM démo (entreprises, prospects, pipeline, tâches, notes, segment, suppression) ──
+_SEED_COMPANIES = [
+    {"id": "cmp-acme", "name": "Acme Corp", "domain": "acme.com", "industry": "SaaS",
+     "size": "201-500", "country": "France", "website": "https://acme.com"},
+    {"id": "cmp-globex", "name": "Globex", "domain": "globex.io", "industry": "Manufacturing",
+     "size": "1000+", "country": "Germany", "website": "https://globex.io"},
+]
+# score = heuristique 0-100 (email 20 + linkedin 20 + titre senior 20 + taille entreprise 20 + téléphone 20).
+_SEED_CONTACTS = [
+    {"id": "ctc-1", "company_id": "cmp-acme", "first_name": "Marie", "last_name": "Curie",
+     "email": "marie.curie@acme.com", "title": "VP Sales", "phone": "+33 1 23 45 67 89",
+     "linkedin_url": "https://linkedin.com/in/mariecurie", "status": "qualified", "source": "manual", "score": 100},
+    {"id": "ctc-2", "company_id": "cmp-globex", "first_name": "Albert", "last_name": "Einstein",
+     "email": "albert.einstein@globex.io", "title": "CTO", "phone": "+49 30 1234 5678",
+     "linkedin_url": "https://linkedin.com/in/alberteinstein", "status": "contacted", "source": "import", "score": 100},
+    {"id": "ctc-3", "company_id": "cmp-acme", "first_name": "Niels", "last_name": "Bohr",
+     "email": "niels.bohr@acme.com", "title": "Director of Engineering", "phone": "",
+     "linkedin_url": "", "status": "new", "source": "import", "score": 60},
+    {"id": "ctc-4", "first_name": "Ada", "last_name": "Lovelace",
+     "email": "ada.lovelace@example.com", "title": "Founder", "phone": "+44 20 7946 0958",
+     "linkedin_url": "https://linkedin.com/in/adalovelace", "status": "nurture", "source": "manual", "score": 80},
+]
+_SEED_OPPORTUNITIES = [
+    {"id": "opp-1", "contact_id": "ctc-1", "company_id": "cmp-acme", "title": "Acme — plan Enterprise",
+     "value": 48000, "currency": "EUR", "stage": "proposal", "probability": 60},
+    {"id": "opp-2", "contact_id": "ctc-2", "company_id": "cmp-globex", "title": "Globex — pilote 3 mois",
+     "value": 12000, "currency": "EUR", "stage": "qualified", "probability": 40},
+]
+_SEED_TASKS = [
+    {"id": "tsk-1", "contact_id": "ctc-1", "opportunity_id": "opp-1", "title": "Call démo Marie Curie",
+     "status": "todo", "priority": "high"},
+]
+_SEED_NOTES = [
+    {"id": "nte-1", "contact_id": "ctc-1", "body": "Très intéressée par l'automatisation du pipeline. Budget Q1 validé.",
+     "author_id": None},
+]
+_SEED_SEGMENTS = [
+    {"id": "seg-1", "name": "Décideurs tech", "criteria": {"search": "cto"}},
+]
+_SEED_SUPPRESSION = [
+    {"id": "sup-1", "email": "opt-out@example.com", "reason": "unsubscribe", "source": "import"},
+]
+
+
+def _seed_crm(db: Session, tenant_id: str) -> None:
+    """Seed idempotent des données CRM démo (entreprises, prospects scorés, pipeline,
+    tâches, notes, segment, suppression). N'écrase rien d'existant (skip si contacts déjà là)."""
+    if db.query(models.Contact).filter_by(tenant_id=tenant_id).first():
+        return
+    for c in _SEED_COMPANIES:
+        db.add(models.Company(id=c["id"], tenant_id=tenant_id, **{k: v for k, v in c.items() if k != "id"}))
+    db.flush()
+    for c in _SEED_CONTACTS:
+        db.add(models.Contact(id=c["id"], tenant_id=tenant_id,
+                              **{k: v for k, v in c.items() if k != "id"}))
+    db.flush()
+    for o in _SEED_OPPORTUNITIES:
+        db.add(models.Opportunity(id=o["id"], tenant_id=tenant_id,
+                                  **{k: v for k, v in o.items() if k != "id"}))
+    db.flush()
+    for t in _SEED_TASKS:
+        db.add(models.Task(id=t["id"], tenant_id=tenant_id,
+                           **{k: v for k, v in t.items() if k != "id"}))
+    for n in _SEED_NOTES:
+        db.add(models.Note(id=n["id"], tenant_id=tenant_id, author_id=n.get("author_id"),
+                           contact_id=n.get("contact_id"), opportunity_id=n.get("opportunity_id"), body=n["body"]))
+    for s in _SEED_SEGMENTS:
+        db.add(models.Segment(id=s["id"], tenant_id=tenant_id, name=s["name"], criteria=s["criteria"]))
+    for s in _SEED_SUPPRESSION:
+        db.add(models.SuppressionList(id=s["id"], tenant_id=tenant_id, email=s["email"].lower(),
+                                      reason=s["reason"], source=s["source"]))
+
+
 def ensure_demo(db: Session) -> models.User:
     """Crée (ou répare) le compte démo + ses deux workspaces. Idempotent."""
     email = settings.demo_email.lower()
@@ -113,6 +186,7 @@ def ensure_demo(db: Session) -> models.User:
                              token="a8k2m9qx4f", added_at=now - timedelta(days=2)))
     _seed_approvals(db, t1.id)
     _seed_modules(db, t1.id, _load_modules())
+    _seed_crm(db, t1.id)
 
     # Workspace 2 : Acme Growth (multi-tenant, profil à configurer)
     t2 = db.query(models.Tenant).filter_by(id="tnt-acme").first()

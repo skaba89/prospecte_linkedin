@@ -9,9 +9,10 @@ tenant_id est un String indexé SANS ForeignKey : la trace d'audit doit survivre
 casserait au DELETE). detail utilise JSONB sous Postgres / Text sous SQLite
 (identique au TypeDecorator JSONType du modèle).
 """
-from alembic import op
 import sqlalchemy as sa
 from sqlalchemy.dialects.postgresql import JSONB
+
+from alembic import op
 
 revision = "0002_audit_log"
 down_revision = "0001_initial"

@@ -10,12 +10,12 @@ from pathlib import Path
 # Garantit que le package `app` est importable quel que soit le cwd.
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from alembic import context  # noqa: E402
-from sqlalchemy import engine_from_config, pool  # noqa: E402
+from sqlalchemy import engine_from_config, pool
 
-from app.config import settings  # noqa: E402
-from app.database import Base  # noqa: E402
-from app import models  # noqa: E401,F401 — enregistre les modèles sur Base.metadata
+from alembic import context
+from app import models  # noqa: F401 — enregistre les modèles sur Base.metadata
+from app.config import settings
+from app.database import Base
 
 config = context.config
 config.set_main_option("sqlalchemy.url", settings.database_url)

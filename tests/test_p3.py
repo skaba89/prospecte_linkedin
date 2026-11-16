@@ -7,8 +7,8 @@ import json
 import os
 import sys
 import time
-import urllib.request
 import urllib.error
+import urllib.request
 
 BASE = os.environ.get("BACKEND_URL", "http://127.0.0.1:8000").rstrip("/")
 passed = failed = 0

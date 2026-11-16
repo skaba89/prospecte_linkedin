@@ -9,9 +9,10 @@ Schéma de référence (source de vérité Alembic). Reflète exactement app/mod
 linkedin_connections). Le payload JSON utilise JSONB sous Postgres / Text sous
 SQLite (identique au TypeDecorator JSONType du modèle).
 """
-from alembic import op
 import sqlalchemy as sa
 from sqlalchemy.dialects.postgresql import JSONB
+
+from alembic import op
 
 revision = "0001_initial"
 down_revision = None
