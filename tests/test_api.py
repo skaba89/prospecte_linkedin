@@ -389,6 +389,77 @@ print("=== 44. sync-contacts RBAC (non-member → 403) ===")
 s, _ = call("POST", "/api/tenants/tnt-demo/linkedin/sync-contacts", ptok)
 ck(s, 403, "non-member → 403 sur sync-contacts")
 
+# ─── P13 Notifications & e-mails (45-53) : envoi, dry-run, feed, RGPD, placeholder, RBAC ─
+print("=== 45. POST /crm/contacts/{id}/email (envoi e-mail dry-run) ===")
+# Crée un contact avec un email réel pour tester l'envoi (smtp_enabled=false → dry_run).
+s, nc = call("POST", "/api/tenants/tnt-demo/crm/contacts", tok,
+             {"first_name": "Sophie", "last_name": "Lambert",
+              "email": "sophie.lambert@techcorp.com", "title": "CTO", "status": "qualified"})
+ck(s, 201, "create contact pour email test 201")
+ncid = nc.get("id")
+s, res = call("POST", f"/api/tenants/tnt-demo/crm/contacts/{ncid}/email", tok,
+              {"template": "cold_outreach", "custom_message": "Hello Sophie, idée pour TechCorp !"})
+ck(s, 200, "email_contact 200")
+ck(res.get("status"), "dry_run", "email_contact status dry_run (smtp_enabled=false)")
+ck(res.get("email_sent"), True, "email_sent True (dry-run = OK)")
+ck(bool(res.get("notification_id")), True, "notification_id retourné (traçabilité)")
+
+print("=== 46. GET /notifications (liste paginée) ===")
+s, ns = call("GET", "/api/tenants/tnt-demo/notifications", tok)
+ck(s, 200, "notifications list 200")
+ck(len(ns) >= 1, True, f"≥1 notification ({len(ns)})")
+ck(any(n.get("status") == "dry_run" for n in ns), True, "≥1 notif status dry_run")
+
+print("=== 47. GET /notifications/feed (in-app non lus) ===")
+s, feed = call("GET", "/api/tenants/tnt-demo/notifications/feed", tok)
+ck(s, 200, "feed 200")
+ck(len(feed) >= 1, True, f"≥1 notif non lue ({len(feed)})")
+ck(all(f.get("read_at") is None for f in feed), True, "feed = uniquement non lus (read_at null)")
+
+print("=== 48. POST /notifications/{id}/read (marque lu) ===")
+nid = feed[0].get("id")
+s, nr = call("POST", f"/api/tenants/tnt-demo/notifications/{nid}/read", tok)
+ck(s, 200, "mark read 200")
+ck(bool(nr.get("read_at")), True, "read_at set après mark read")
+s, feed2 = call("GET", "/api/tenants/tnt-demo/notifications/feed", tok)
+ck(len(feed2) < len(feed), True, f"feed réduit après mark read ({len(feed)}→{len(feed2)})")
+
+print("=== 49. GET /notifications/templates (4 templates) ===")
+s, ts = call("GET", "/api/tenants/tnt-demo/notifications/templates", tok)
+ck(s, 200, "templates list 200")
+ck(len(ts) == 4, True, f"4 templates ({len(ts)})")
+ck(any(t.get("id") == "cold_outreach" for t in ts), True, "template cold_outreach présent")
+ck(all("name" in t and "description" in t for t in ts), True, "chaque template a name + description")
+
+print("=== 50. email_contact template inconnu → 400 ===")
+s, _ = call("POST", f"/api/tenants/tnt-demo/crm/contacts/{ncid}/email", tok, {"template": "unknown_tpl"})
+ck(s, 400, "template inconnu → 400")
+
+print("=== 51. email_contact placeholder (@linkedin.sync) → skipped ===")
+# Un contact syncé LinkedIn (P12) a un email @linkedin.sync — pas un destinataire réel.
+s, cs = call("GET", "/api/tenants/tnt-demo/crm/contacts?source=linkedin", tok)
+ck(s == 200 and len(cs) >= 1, True, f"contact LinkedIn présent pour test placeholder ({len(cs)})")
+if cs:
+    s, res2 = call("POST", f"/api/tenants/tnt-demo/crm/contacts/{cs[0]['id']}/email", tok,
+                   {"template": "intro"})
+    ck(s, 200, "email placeholder 200")
+    ck(res2.get("status"), "skipped", "placeholder @linkedin.sync → skipped")
+    ck(res2.get("email_sent"), False, "email_sent False (skipped)")
+else:
+    ck(False, True, "contact LinkedIn présent (test placeholder)")
+
+print("=== 52. email_contact RGPD (suppression list) → skipped ===")
+call("POST", "/api/tenants/tnt-demo/crm/suppression", tok,
+     {"email": "sophie.lambert@techcorp.com", "reason": "unsubscribe"})
+s, res3 = call("POST", f"/api/tenants/tnt-demo/crm/contacts/{ncid}/email", tok, {"template": "follow_up"})
+ck(s, 200, "email RGPD 200")
+ck(res3.get("status"), "skipped", "email en suppression → skipped (RGPD)")
+ck(res3.get("email_sent"), False, "email_sent False (RGPD bloqué)")
+
+print("=== 53. email_contact RBAC (non-member → 403) ===")
+s, _ = call("POST", f"/api/tenants/tnt-demo/crm/contacts/{ncid}/email", ptok, {"template": "cold_outreach"})
+ck(s, 403, "non-member → 403 sur email_contact")
+
 print()
 print(f"RESULT: {passed} passed, {failed} failed")
 sys.exit(0 if failed == 0 else 1)

@@ -42,10 +42,12 @@ for cls in ["Company", "Contact", "Opportunity", "Task", "Note", "Segment", "Sup
 # multi-tenant : chaque table a tenant_id FK tenants.id
 for tbl in ["companies", "contacts", "opportunities", "tasks", "notes", "segments", "suppression_list"]:
     ck(f'__tablename__ = "{tbl}"' in models, True, f"table {tbl}")
-# multi-tenant : chaque table CRM a tenant_id FK tenants.id (compté dans le bloc P11 uniquement).
-crm_models_block = models.split("# ─── P11 : CRM")[1] if "# ─── P11 : CRM" in models else models
+# multi-tenant : chaque table CRM a tenant_id FK tenants.id (compté dans le bloc P11 uniquement,
+# borné par le marker P13 pour exclure Notification — table P13 elle aussi tenant-scopée).
+_p11, _p13 = "# ─── P11 : CRM", "# ─── P13 : Notifications"
+crm_models_block = (models.split(_p11)[1].split(_p13)[0] if _p11 in models else models)
 ck(crm_models_block.count('ForeignKey("tenants.id")'), 7,
-   "7 tables CRM ont tenant_id FK tenants.id")
+   "7 tables CRM P11 ont tenant_id FK tenants.id (Notification P13 exclue via marker)")
 # Contact : email normalisé + unique par tenant (dédup) + score + status + owner_id
 ck('uq_tenant_contact_email' in models, True, "UniqueConstraint contact (tenant_id, email) — dédup")
 ck("score = Column(Integer" in models, True, "Contact.score (Integer)")

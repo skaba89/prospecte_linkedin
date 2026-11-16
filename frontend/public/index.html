@@ -2846,7 +2846,28 @@ function switchTenant(tid){
 
 function toggleWs(e){if(e)e.stopPropagation();$('#ws-switcher').classList.toggle('open');$('#user-menu').classList.remove('open');$('#notif-bell').classList.remove('open')}
 function toggleUser(e){if(e)e.stopPropagation();$('#user-menu').classList.toggle('open');$('#ws-switcher').classList.remove('open');$('#notif-bell').classList.remove('open')}
-function toggleNotifs(e){if(e)e.stopPropagation();$('#notif-bell').classList.toggle('open');$('#ws-switcher').classList.remove('open');$('#user-menu').classList.remove('open');if($('#notif-bell').classList.contains('open'))renderNotifs()}
+async function loadEmailNotifFeed(){
+  const s=loadSess(); if(!s||!s.activeTenantId) return;
+  const panel=$('#notif-panel'); if(!panel) return;
+  try{
+    const feed=await apiFetch('/api/tenants/'+s.activeTenantId+'/notifications/feed');
+    if(!Array.isArray(feed)||!feed.length) return;
+    const sec=`<div class="notif-sec" style="margin-top:6px">E-mails envoyés <span class="notif-sec-cnt">${feed.length}</span></div>`;
+    const items=feed.map(n=>`<div class="notif-item" onclick="markNotifRead('${n.id}')">
+      <div class="ni-ic" style="background:${n.status==='failed'?'#ef4444':n.status==='skipped'?'#f59e0b':'#0a66c2'}">✉</div>
+      <div class="ni-tx"><div class="ni-title">${esc(n.subject||n.template_id||'E-mail')}</div>
+      <div class="ni-sub">${esc(n.status)} · ${esc(n.recipient_email||'—')} · ${n.created_at?new Date(n.created_at).toLocaleString('fr-FR'):''}</div></div>
+    </div>`).join('');
+    panel.insertAdjacentHTML('afterbegin', sec+items);
+    const b=$('#notif-badge'); if(b){ const cur=parseInt(b.textContent||'0',10)||0; b.textContent=cur+feed.length; b.classList.add('show'); }
+  }catch(e){ /* feed indispo (pas de backend en mode mock démo) — silently skip */ }
+}
+async function markNotifRead(id){
+  const s=loadSess(); if(!s||!s.activeTenantId) return;
+  try{ await apiFetch('/api/tenants/'+s.activeTenantId+'/notifications/'+id+'/read',{method:'POST'}); }catch(e){}
+  renderNotifs(); loadEmailNotifFeed();
+}
+function toggleNotifs(e){if(e)e.stopPropagation();$('#notif-bell').classList.toggle('open');$('#ws-switcher').classList.remove('open');$('#user-menu').classList.remove('open');if($('#notif-bell').classList.contains('open')){renderNotifs();loadEmailNotifFeed()}}
 function goWorkspaces(){toggleUser();$('#auth-gate').classList.remove('hide');renderWorkspaces()}
 
 function doLogout(){

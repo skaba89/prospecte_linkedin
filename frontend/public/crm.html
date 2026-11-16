@@ -163,6 +163,22 @@
   </div>
 </div>
 
+<div id="email-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:100;align-items:center;justify-content:center">
+  <div class="panel" style="max-width:480px;width:90%;background:var(--bg);border:1px solid var(--border);border-radius:14px;padding:24px">
+    <h3 style="margin-bottom:12px">✉ E-mail de prospection</h3>
+    <div style="margin-bottom:12px;font-size:13px;color:var(--muted)">À : <span id="em-to"></span></div>
+    <label style="font-size:12px;color:var(--muted)">Template</label>
+    <select id="em-template" style="width:100%;margin:4px 0 12px;box-sizing:border-box"></select>
+    <label style="font-size:12px;color:var(--muted)">Message personnalisé (optionnel)</label>
+    <textarea id="em-custom" rows="4" placeholder="Ajoute un message personnalisé inséré dans le template…" style="width:100%;margin:4px 0 12px;box-sizing:border-box"></textarea>
+    <div id="em-result" class="result"></div>
+    <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px">
+      <button class="btn btn-sm" onclick="closeEmailModal()">Annuler</button>
+      <button class="btn btn-primary btn-sm" onclick="sendEmailToContact()">Envoyer</button>
+    </div>
+  </div>
+</div>
+
 <script>
 const API = window.location.origin + '/api';
 let TOK = localStorage.getItem('revpulse_jwt');
@@ -230,7 +246,7 @@ async function loadContacts(){
   const total = r.headers.get('X-Total-Count') || items.length;
   if(!items.length){ el.innerHTML = '<div class="empty">Aucun contact. Importe-en ou crée-en un.</div>'; return; }
   el.innerHTML = `<div style="margin-bottom:8px"><span class="stat"><b>${total}</b> contact(s)</span></div>
-    <table><thead><tr><th>Nom</th><th>Email</th><th>Titre</th><th>Statut</th><th>Score</th><th>Source</th></tr></thead>
+    <table><thead><tr><th>Nom</th><th>Email</th><th>Titre</th><th>Statut</th><th>Score</th><th>Source</th><th>Actions</th></tr></thead>
     <tbody>${items.map(c=>`<tr>
       <td>${esc(c.first_name)} ${esc(c.last_name)}</td>
       <td>${esc(c.email)}</td>
@@ -238,6 +254,7 @@ async function loadContacts(){
       <td><span class="badge" style="background:${STATUS_COLORS[c.status]||'#8b95a8'}33;color:${STATUS_COLORS[c.status]||'#8b95a8'}">${STATUS_LABELS[c.status]||c.status}</span></td>
       <td><span class="score" style="color:${c.score>=80?'#10b981':c.score>=40?'#f59e0b':'#ef4444'}">${c.score}</span></td>
       <td style="color:var(--muted)">${c.source}</td>
+      <td><button class="btn btn-sm" onclick="emailContact('${c.id}')" title="Envoyer un e-mail de prospection">✉</button></td>
     </tr>`).join('')}</tbody></table>`;
 }
 
@@ -411,6 +428,46 @@ async function loadSyncRuns(){
       + td(run.total||0) + td(run.imported||0) + td(run.updated||0) + td(run.skipped||0)
       + '</tr>').join('') + '</tbody></table>';
 }
+
+let EM_CONTACT_ID = null;
+async function emailContact(id){
+  EM_CONTACT_ID = id;
+  const r = await api('GET', `/tenants/${TID}/crm/contacts/${id}`);
+  if(r.status!==200){ alert('Contact introuvable'); return; }
+  const c = r.data || {};
+  document.getElementById('em-to').textContent = `${c.first_name||''} ${c.last_name||''} <${c.email||'—'}>`;
+  document.getElementById('em-result').innerHTML = '';
+  document.getElementById('em-custom').value = '';
+  await loadEmailTemplates();
+  document.getElementById('email-modal').style.display = 'flex';
+}
+async function loadEmailTemplates(){
+  const sel = document.getElementById('em-template');
+  if(sel.options.length) return;
+  const r = await api('GET', `/tenants/${TID}/notifications/templates`);
+  if(r.status===200 && Array.isArray(r.data)){
+    sel.innerHTML = r.data.map(t=>`<option value="${t.id}">${esc(t.name)} — ${esc(t.description)}</option>`).join('');
+  }
+}
+async function sendEmailToContact(){
+  if(!EM_CONTACT_ID) return;
+  const template = document.getElementById('em-template').value;
+  const custom = document.getElementById('em-custom').value;
+  const el = document.getElementById('em-result');
+  el.innerHTML = '<span style="color:var(--muted)">Envoi…</span>';
+  const r = await api('POST', `/tenants/${TID}/crm/contacts/${EM_CONTACT_ID}/email`, {template, custom_message: custom});
+  if(r.status===200 && r.data){
+    const d = r.data;
+    const color = d.status==='skipped' ? '#f59e0b' : (d.email_sent ? '#10b981' : '#ef4444');
+    const ic = d.email_sent ? '✓' : '⚠';
+    el.innerHTML = `<div class="card" style="border-color:${color}"><strong>${ic} ${esc(d.status)}</strong><div style="color:var(--muted);font-size:12px;margin-top:4px">${esc(d.detail||'')}</div></div>`;
+  } else if(r.status===400){
+    el.innerHTML = '<div class="card" style="border-color:#ef4444">Template inconnu.</div>';
+  } else {
+    el.innerHTML = `<div class="card" style="border-color:#ef4444">Erreur ${r.status}.</div>`;
+  }
+}
+function closeEmailModal(){ document.getElementById('email-modal').style.display='none'; EM_CONTACT_ID=null; }
 
 init();
 </script>

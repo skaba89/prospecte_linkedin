@@ -60,6 +60,8 @@ jobs:
         run: python tests/test_crm.py
       - name: P12 LinkedIn sync static checks (client/sync/dedup/RBAC/retry)
         run: python tests/test_linkedin.py
+      - name: P13 Notifications & e-mails static checks (model/migration/mailer/templates/RBAC/RGPD)
+        run: python tests/test_notifications.py
 
   test-api:
     name: API tests (sqlite, sans docker)
