@@ -1426,3 +1426,79 @@ class ForecastOut(BaseModel):
     raw_pipeline: int
     weighted_forecast: int
     currency: str
+
+
+# ─── P34 — Career : référentiel métiers + CV (espace candidat isolé) ─────────
+
+
+class CareerProfileRequest(BaseModel):
+    """Upsert profil Career (P34). target_job_title = métier visé. contract_types = CDI|CDD|freelance.
+    salary_min/max (annuel brut) + tjm_min (freelance/jour). mobility = accepte relocalisation."""
+    target_job_title: str | None = None
+    preferred_location: str | None = None
+    mobility: bool = False
+    contract_types: list[str] | None = None
+    salary_min: int | None = Field(default=None, ge=0)
+    salary_max: int | None = Field(default=None, ge=0)
+    tjm_min: int | None = Field(default=None, ge=0)
+    currency: str = "EUR"
+    languages: list[str] | None = None
+
+
+class CareerProfileOut(BaseModel):
+    """Profil Career (P34). user_id unique — isolation stricte (pas de tenant_id, accessible que par le user)."""
+    id: str
+    user_id: str
+    target_job_title: str | None = None
+    preferred_location: str | None = None
+    mobility: bool
+    contract_types: list[str] | None = None
+    salary_min: int | None = None
+    salary_max: int | None = None
+    tjm_min: int | None = None
+    currency: str
+    languages: list[str] | None = None
+    created_at: datetime
+    updated_at: datetime
+    model_config = ConfigDict(from_attributes=True)
+
+
+class CVTextImport(BaseModel):
+    """Import CV depuis texte brut (P34). title = libellé affiché. text = contenu. locale = fr|en."""
+    title: str = Field(..., max_length=200)
+    text: str = Field(..., min_length=10, max_length=50000)
+    locale: str = Field(default="fr", max_length=5)
+
+
+class CVOut(BaseModel):
+    """CV importé (P34). source_type = text|pdf|docx. parsed_data = {skills, experiences, certifications,
+    education, heuristic}. version = auto-incrément par profile. is_active = 1 seul actif."""
+    id: str
+    career_profile_id: str
+    title: str
+    source_type: str
+    source_filename: str | None = None
+    locale: str
+    version: int
+    is_active: bool
+    parsed_data: dict | None = None
+    created_at: datetime
+    model_config = ConfigDict(from_attributes=True)
+
+
+class JobReferenceOut(BaseModel):
+    """Métier du référentiel (P34). code = ROME/ESCO/O*NET. source = rome|esco|onet. category = domaine."""
+    id: str
+    code: str
+    source: str
+    label: str
+    category: str
+    locale: str
+    model_config = ConfigDict(from_attributes=True)
+
+
+class TransferrableSkillsOut(BaseModel):
+    """Compétences transférables détectées (P34). Soft skills cross-domain — utiles pour un changement
+    de métier (P36 matching). Détectées via detect_transferrable_skills (heuristic v1)."""
+    cv_id: str
+    transferrable_skills: list[str]

@@ -838,3 +838,69 @@ class WarmupMessage(Base):
     opened = Column(Boolean, default=False, nullable=False)
     replied = Column(Boolean, default=False, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+
+# ─── P34 — Career : référentiel métiers + CV (espace candidat isolé du Business) ─────────────
+
+
+class CareerProfile(Base):
+    """Profil Career d'un candidat (P34). Espace personnel ISOLÉ du Business tenant — un user peut
+    être Member d'un tenant Business (côté prospecteur) ET avoir un CareerProfile (côté candidat) ;
+    les données Career ne sont JAMAIS accessibles via le tenant Business (pas de tenant_id, scoped par
+    user_id unique). target_job_title = métier visé (ex. "Product Owner"). contract_types = JSON array
+    (CDI|CDD|freelance|stage|alternance). salary_min/max + tjm_min + currency = préférences rémunération.
+    mobility = accepte relocalisation. languages = JSON array (fr|en|es...). CASCADE sur delete user."""
+
+    __tablename__ = "career_profiles"
+    id = Column(String, primary_key=True, default=lambda: _uid("crp"))
+    user_id = Column(String, ForeignKey("users.id", ondelete="CASCADE"), unique=True, nullable=False, index=True)
+    target_job_title = Column(String, nullable=True)  # métier visé (libre OU code ROME/ESCO)
+    preferred_location = Column(String, nullable=True)  # ex. "Paris, France" ou "remote"
+    mobility = Column(Boolean, default=False, nullable=False)  # accepte relocalisation
+    contract_types = Column(JSONType, nullable=True)  # ["CDI","CDD","freelance"]
+    salary_min = Column(Integer, nullable=True)  # rémunération min (annuel brut, EUR par défaut)
+    salary_max = Column(Integer, nullable=True)
+    tjm_min = Column(Integer, nullable=True)  # TJM min (freelance, EUR/jour)
+    currency = Column(String, default="EUR", nullable=False)
+    languages = Column(JSONType, nullable=True)  # ["fr","en","es"]
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+
+class CV(Base):
+    """CV d'un candidat (P34). career_profile_id FK (CASCADE). source_type = text|pdf|docx (import).
+    raw_text = texte extrait (pdfminer pour PDF, python-docx pour Word). parsed_data = JSON structuré
+    (skills, experiences, certifications, education) extrait par services/career_cv.parse_cv. version =
+    auto-incrément par profile (versioning). is_active = le CV actif (1 seul par profile — set_active
+    désactive les autres). locale = langue du CV (fr|en...)."""
+
+    __tablename__ = "cvs"
+    id = Column(String, primary_key=True, default=lambda: _uid("cv"))
+    career_profile_id = Column(String, ForeignKey("career_profiles.id", ondelete="CASCADE"), nullable=False, index=True)
+    title = Column(String, nullable=False)  # libellé affiché (ex. "CV Product Owner 2026")
+    source_type = Column(String, nullable=False)  # text|pdf|docx
+    source_filename = Column(String, nullable=True)  # nom du fichier original (pdf/docx)
+    raw_text = Column(Text, nullable=False)  # texte extrait (jamais le binaire)
+    locale = Column(String, default="fr", nullable=False)  # fr|en|es...
+    version = Column(Integer, default=1, nullable=False)  # versionning par profile
+    is_active = Column(Boolean, default=False, nullable=False, index=True)
+    parsed_data = Column(JSONType, nullable=True)  # {skills:[], experiences:[], certifications:[], education:[]}
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+
+class JobReference(Base):
+    """Référentiel métiers universel (P34). code = identifiant (ROME "M1805", ESCO "...", O*NET "15-1131").
+    source = rome|esco|onet. label = libellé métier. category = domaine (finance|product|data|...).
+    locale = fr|en. UniqueConstraint (code, source) — un même code existe une fois par source. Seeded
+    via services/career_referential.seed_referential (subset MVP — v2 : import complet ROME/ESCO/O*NET
+    selon licences)."""
+
+    __tablename__ = "job_references"
+    __table_args__ = (UniqueConstraint("code", "source", name="uq_job_reference_code_source"),)
+    id = Column(String, primary_key=True, default=lambda: _uid("jrf"))
+    code = Column(String, nullable=False, index=True)  # ROME/ESCO/O*NET code
+    source = Column(String, nullable=False)  # rome|esco|onet
+    label = Column(String, nullable=False)  # libellé métier
+    category = Column(String, nullable=False)  # finance|product|data|cyber|rh|...
+    locale = Column(String, default="fr", nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)

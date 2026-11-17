@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session
 
 from . import models, security
 from .config import settings
+from .services import career_referential
 
 _HERE = os.path.dirname(__file__)
 _SEED_PATH = os.path.join(_HERE, "seed_data.json")
@@ -213,3 +214,5 @@ def seed_all(db: Session) -> None:
     if settings.is_production:
         return
     ensure_demo(db)
+    # P34 : seed du référentiel métiers (ROME MVP subset) — idempotent.
+    career_referential.seed_referential(db)

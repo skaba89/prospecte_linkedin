@@ -26,6 +26,7 @@ from .routers import (
     audit,
     auth,
     billing,
+    career,
     content,
     content_studio,
     crm,
@@ -121,6 +122,7 @@ def health(db: Session = Depends(get_db)):
 # Routers métier
 for r in (
     auth.router,
+    career.router,             # P34 : Career (espace candidat isolé du Business — user-scoped, pas tenant)
     tenants.router,
     members.router,
     approvals.router,
