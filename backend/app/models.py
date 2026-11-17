@@ -15,6 +15,17 @@ from sqlalchemy.types import TypeDecorator
 from .database import Base
 
 
+def _json_default(o):
+    """Encoder JSON fallback : sérialise datetime/date → isoformat (audit detail, segment criteria,
+    etc.). Évite le TypeError « Object of type datetime is not JSON serializable » quand un router
+    loggue un dict contenant des timestamps (ex: P23 task.update avec completed_at)."""
+    from datetime import date as _date
+    from datetime import datetime as _dt
+    if isinstance(o, (_dt, _date)):
+        return o.isoformat()
+    raise TypeError(f"Object of type {o.__class__.__name__} is not JSON serializable")
+
+
 class JSONType(TypeDecorator):
     """JSON portable : JSONB sous Postgres, JSON sinon (SQLite)."""
 
@@ -31,7 +42,7 @@ class JSONType(TypeDecorator):
 
         if value is None:
             return None
-        return json.dumps(value, ensure_ascii=False)
+        return json.dumps(value, ensure_ascii=False, default=_json_default)
 
     def process_result_value(self, value, dialect):
         import json
@@ -309,7 +320,10 @@ class Opportunity(Base):
 
 class Task(Base):
     """Tâche commerciale (call/demo/relance), scopée par tenant. Liée à un contact
-    et/ou une opportunité (les deux nullable). assignee_id = responsable (FK users)."""
+    et/ou une opportunité (les deux nullable). assignee_id = responsable (FK users).
+    P23 : reminder_at = instant où le scheduler déclenche une Notification in-app (feed) vers
+    l'assignee ; reminder_sent évite les doublons (flip True après envoi). completed_at = timestamp
+    auto-set quand status→done (analytics de productivité : temps de résolution)."""
 
     __tablename__ = "tasks"
     id = Column(String, primary_key=True, default=lambda: _uid("tsk"))
@@ -321,6 +335,9 @@ class Task(Base):
     status = Column(String, default="todo", nullable=False, index=True)  # todo | in_progress | done
     priority = Column(String, default="medium", nullable=False)  # low | medium | high
     assignee_id = Column(String, ForeignKey("users.id"), nullable=True, index=True)
+    reminder_at = Column(DateTime, nullable=True, index=True)  # P23 : instant du rappel (scheduler)
+    reminder_sent = Column(Boolean, default=False, nullable=False)  # P23 : évite les doublons de rappel
+    completed_at = Column(DateTime, nullable=True)  # P23 : auto-set quand status→done
     created_at = Column(DateTime, default=datetime.utcnow)
 
 

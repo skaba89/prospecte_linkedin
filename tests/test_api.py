@@ -980,6 +980,87 @@ ck(len(after_delete), 0, "contact a 0 tag après delete Cold-Lead (cascade)")
 # Cleanup : delete le tag VIP restant
 call("DELETE", f"/api/tenants/tnt-demo/tags/{tag_vip['id']}", tok)
 
+# ─── P23 : Tasks & reminders avancés ──────────────────────────────────────────
+# Setup : fetch members (pour user_id assignee) + un contact existant
+s, _members = call("GET", "/api/tenants/tnt-demo/members?limit=50", tok)
+ck(s, 200, "fetch members pour assignee")
+assert _members and len(_members) > 0, "Aucun member pour tester les tasks"
+_assignee_uid = next((m["user_id"] for m in _members if m.get("user_id")), None)
+ck(_assignee_uid is not None, True, "MemberOut expose user_id (P23) — assignee récupérable")
+s, _cts = call("GET", "/api/tenants/tnt-demo/crm/contacts?limit=1", tok)
+_ctc_id2 = _cts[0]["id"] if _cts else None
+
+print("=== 115. POST /tasks avec reminder_at (passé) + assignee ===")
+from datetime import datetime as _dt, timedelta as _td
+_past_iso = (_dt.utcnow() - _td(hours=1)).isoformat()
+s, task_rem = call("POST", "/api/tenants/tnt-demo/crm/tasks", tok, {
+    "title": "Call découverte P23", "contact_id": _ctc_id2, "assignee_id": _assignee_uid,
+    "priority": "high", "due_date": str(_dt.utcnow().date() + _td(days=2)),
+    "reminder_at": _past_iso,
+})
+ck(s, 201, "create task avec reminder_at 201")
+ck(task_rem["reminder_at"] is not None, True, "task reminder_at stocké")
+ck(task_rem["reminder_sent"], False, "task reminder_sent=False (pas encore traité)")
+ck(task_rem["completed_at"], None, "task completed_at=None (status=todo)")
+
+print("=== 116. POST /tasks/process-reminders (trigger scheduler manuel) ===")
+s, rem_result = call("POST", "/api/tenants/tnt-demo/crm/tasks/process-reminders", tok)
+ck(s, 200, "process-reminders 200")
+ck(rem_result["sent"] >= 1, True, f"scheduler: ≥1 reminder envoyé (sent={rem_result['sent']})")
+# Re-trigger → idempotent (reminder_sent=True maintenant)
+s, rem_result2 = call("POST", "/api/tenants/tnt-demo/crm/tasks/process-reminders", tok)
+ck(rem_result2["sent"], 0, "scheduler idempotent : 2e trigger → 0 envoyé")
+
+print("=== 117. GET /notifications/feed (reminder dans le feed in-app) ===")
+s, feed = call("GET", "/api/tenants/tnt-demo/notifications/feed?limit=100", tok)
+ck(s, 200, "notifications feed 200")
+ck(any("Call découverte P23" in (n.get("subject") or "") for n in feed), True, "reminder notification dans le feed (subject contient le titre)")
+
+print("=== 118. GET /tasks?overdue=true (filtre overdue) ===")
+s, task_overdue = call("POST", "/api/tenants/tnt-demo/crm/tasks", tok, {
+    "title": "Tâche en retard", "due_date": str(_dt.utcnow().date() - _td(days=3)),
+})
+ck(s, 201, "create task overdue (due_date passé)")
+s, overdue_list = call("GET", "/api/tenants/tnt-demo/crm/tasks?overdue=true&limit=100", tok)
+ck(s, 200, "filtre overdue 200")
+ck(any(t["id"] == task_overdue["id"] for t in overdue_list), True, "task overdue dans le filtre")
+ck(all(t["status"] != "done" for t in overdue_list), True, "aucune tâche done dans overdue")
+
+print("=== 119. GET /tasks?priority=high (filtre priority) ===")
+s, high_list = call("GET", "/api/tenants/tnt-demo/crm/tasks?priority=high&limit=100", tok)
+ck(s, 200, "filtre priority=high 200")
+ck(all(t["priority"] == "high" for t in high_list), True, "toutes les tâches retournées sont high")
+ck(any(t["id"] == task_rem["id"] for t in high_list), True, "task_rem (high) dans le filtre")
+
+print("=== 120. PATCH /tasks/{id} status→done (auto completed_at) ===")
+s, done_task = call("PATCH", f"/api/tenants/tnt-demo/crm/tasks/{task_rem['id']}", tok, {"status": "done"})
+ck(s, 200, "patch status=done 200")
+ck(done_task["status"], "done", "status=done")
+ck(done_task["completed_at"] is not None, True, "auto-set completed_at sur status→done")
+# Retour arrière : done→todo → clear completed_at
+s, back_task = call("PATCH", f"/api/tenants/tnt-demo/crm/tasks/{task_rem['id']}", tok, {"status": "todo"})
+ck(back_task["completed_at"], None, "retour arrière done→todo → clear completed_at")
+
+print("=== 121. PATCH /tasks/{id} reminder_at (reset reminder_sent) ===")
+# task_rem a reminder_sent=True (traité en 116). Changer reminder_at → reset reminder_sent=False.
+_future_iso = (_dt.utcnow() + _td(hours=2)).isoformat()
+s, reset_task = call("PATCH", f"/api/tenants/tnt-demo/crm/tasks/{task_rem['id']}", tok, {"reminder_at": _future_iso})
+ck(s, 200, "patch reminder_at 200")
+ck(reset_task["reminder_sent"], False, "update reminder_at → reset reminder_sent=False (nouveau rappel)")
+
+print("=== 122. GET /tasks?due_today=true (filtre due_today) ===")
+s, task_today = call("POST", "/api/tenants/tnt-demo/crm/tasks", tok, {
+    "title": "Tâche du jour", "due_date": str(_dt.utcnow().date()),
+})
+ck(s, 201, "create task due_date=today")
+s, today_list = call("GET", "/api/tenants/tnt-demo/crm/tasks?due_today=true&limit=100", tok)
+ck(s, 200, "filtre due_today 200")
+ck(any(t["id"] == task_today["id"] for t in today_list), True, "task du jour dans le filtre due_today")
+ck(all(t["status"] != "done" for t in today_list), True, "aucune tâche done dans due_today")
+# Cleanup : delete les tasks créées
+for _tid_t in [task_rem["id"], task_overdue["id"], task_today["id"]]:
+    call("DELETE", f"/api/tenants/tnt-demo/crm/tasks/{_tid_t}", tok)
+
 print()
 print(f"RESULT: {passed} passed, {failed} failed")
 sys.exit(0 if failed == 0 else 1)

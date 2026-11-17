@@ -23,6 +23,7 @@ from sqlalchemy.orm import Session
 
 from ..database import SessionLocal
 from ..models import Contact, EmailSequence, SequenceEnrollment, SequenceStep, Tenant
+from .task_reminders import process_due_task_reminders  # P23 : rappels de tâches dans le même loop
 from .webhooks import emit_event
 
 _log = logging.getLogger("revpulse.sequences")
@@ -198,6 +199,7 @@ def start_scheduler() -> None:
             db = SessionLocal()
             try:
                 process_due_enrollments(db)
+                process_due_task_reminders(db)  # P23 : rappels de tâches (même thread, après séquences)
             except Exception as e:  # scheduler ne doit jamais crasher (catch large volontaire)
                 _log.exception("Sequence scheduler error: %s", e)
             finally:

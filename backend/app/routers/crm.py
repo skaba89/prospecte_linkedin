@@ -985,6 +985,9 @@ def list_tasks(
     contact_id: str | None = Query(None),
     opportunity_id: str | None = Query(None),
     assignee_id: str | None = Query(None),
+    priority: str | None = Query(None),
+    overdue: bool | None = Query(None, description="P23 : due_date < today AND status != done"),
+    due_today: bool | None = Query(None, description="P23 : due_date == today AND status != done"),
     db: Session = Depends(get_db),
     _t: models.Tenant = Depends(get_tenant),
 ):
@@ -997,6 +1000,17 @@ def list_tasks(
         q = q.filter(models.Task.opportunity_id == opportunity_id)
     if assignee_id:
         q = q.filter(models.Task.assignee_id == assignee_id)
+    if priority:
+        q = q.filter(models.Task.priority == priority)
+    today = datetime.utcnow().date()
+    if overdue is True:
+        q = q.filter(
+            models.Task.due_date.isnot(None),
+            models.Task.due_date < today,
+            models.Task.status != "done",
+        )
+    if due_today is True:
+        q = q.filter(models.Task.due_date == today, models.Task.status != "done")
     q = q.order_by(models.Task.due_date.asc().nullslast(), models.Task.created_at.desc())
     set_total(response, q.count())
     return q.offset(page.skip).limit(page.limit).all()
@@ -1023,6 +1037,7 @@ def create_task(
         status=body.status,
         priority=body.priority,
         assignee_id=body.assignee_id,
+        reminder_at=body.reminder_at,
     )
     db.add(t)
     log_audit(
@@ -1065,6 +1080,14 @@ def update_task(
         raise HTTPException(status.HTTP_400_BAD_REQUEST, f"Statut invalide : {data['status']}")
     if "priority" in data and data["priority"] not in VALID_TASK_PRIORITY:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, f"Priorité invalide : {data['priority']}")
+    # P23 : reminder_at changé → reset reminder_sent (le nouveau rappel doit pouvoir partir).
+    if "reminder_at" in data and data["reminder_at"] != t.reminder_at:
+        data["reminder_sent"] = False
+    # P23 : transition status→done → auto-set completed_at ; retour arrière (done→autre) → clear.
+    if data.get("status") == "done" and t.status != "done":
+        data["completed_at"] = datetime.utcnow()
+    elif data.get("status") and data.get("status") != "done" and t.status == "done":
+        data["completed_at"] = None
     for k, v in data.items():
         setattr(t, k, v)
     log_audit(
@@ -1106,6 +1129,32 @@ def delete_task(
     db.delete(t)
     db.commit()
     return {"deleted": tkid}
+
+
+@router.post("/tasks/process-reminders", response_model=dict)
+def process_task_reminders(
+    tid: str,
+    db: Session = Depends(get_db),
+    _t: models.Tenant = Depends(get_tenant),
+    membership=Depends(require_permission("workspace.manage")),
+):
+    """P23 : déclenche manuellement le scheduler de rappels de tâches (admin Owner/Admin). Utile pour
+    tests + reprise après downtime. Tourne normalement en background (start_scheduler → process_due_task_reminders
+    toutes les SEQUENCE_SCHEDULER_INTERVAL_SECONDS). Retourne {sent, skipped_no_assignee, processed}."""
+    from ..services.task_reminders import process_due_task_reminders
+
+    result = process_due_task_reminders(db)
+    log_audit(
+        db,
+        tenant_id=tid,
+        actor_user_id=membership.user_id,
+        actor_name=membership.name,
+        action="task.reminders_trigger",
+        target_type="task",
+        detail=result,
+    )
+    db.commit()
+    return result
 
 
 # ─── Notes ───────────────────────────────────────────────────────────────────

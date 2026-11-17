@@ -1,0 +1,275 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>RevPulse Tasks</title>
+<style>
+  :root{--bg:#0a0e1a;--panel:#131826;--panel2:#1a2030;--border:#232a3d;--text:#e5e7eb;--muted:#8b95a8;
+        --accent:#635bff;--accent2:#0a66c2;--ok:#10b981;--warn:#f59e0b;--err:#ef4444;--grad:linear-gradient(135deg,#635bff,#0a66c2)}
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:var(--bg);color:var(--text);min-height:100vh}
+  a{color:var(--accent);text-decoration:none}
+  button{font-family:inherit}
+  .topbar{display:flex;align-items:center;gap:16px;padding:14px 24px;background:var(--panel);border-bottom:1px solid var(--border);position:sticky;top:0;z-index:10}
+  .topbar h1{font-size:18px;font-weight:700;background:var(--grad);-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent}
+  .topbar .sub{color:var(--muted);font-size:13px}
+  .topbar .spacer{flex:1}
+  .topbar a{font-size:13px;padding:6px 12px;border:1px solid var(--border);border-radius:8px}
+  .topbar a:hover{background:var(--panel2)}
+  .wrap{max-width:1100px;margin:0 auto;padding:24px}
+  .login{max-width:380px;margin:80px auto;background:var(--panel);border:1px solid var(--border);border-radius:14px;padding:24px}
+  .login h2{margin-bottom:12px;font-size:16px}
+  .login p{color:var(--muted);font-size:13px;margin-bottom:14px}
+  .login button{width:100%;padding:10px;margin-top:8px;background:var(--grad);color:#fff;border:none;border-radius:8px;font-weight:600;cursor:pointer;font-size:14px}
+  .head{display:flex;align-items:center;gap:12px;margin-bottom:16px;flex-wrap:wrap}
+  .head h2{font-size:20px;flex:1}
+  .btn{padding:8px 14px;background:var(--grad);color:#fff;border:none;border-radius:8px;font-weight:600;cursor:pointer;font-size:13px}
+  .btn.sec{background:var(--panel2);border:1px solid var(--border);color:var(--text)}
+  .btn.sm{padding:5px 10px;font-size:12px}
+  .btn.danger{background:rgba(239,68,68,.15);color:var(--err);border:1px solid rgba(239,68,68,.3)}
+  .card{background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:18px;margin-bottom:16px}
+  .card h3{font-size:14px;margin-bottom:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px}
+  .toolbar{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:12px}
+  .toolbar select,.toolbar input[type=date]{padding:6px 8px;border:1px solid var(--border);border-radius:6px;background:var(--panel2);color:var(--text);font-size:13px}
+  .toolbar label{font-size:12px;color:var(--muted);display:flex;align-items:center;gap:4px;cursor:pointer}
+  .create-form{display:grid;grid-template-columns:2fr 1fr 1fr 1fr 1fr 1fr auto;gap:8px;align-items:end}
+  @media(max-width:900px){.create-form{grid-template-columns:1fr 1fr}}
+  .create-form label{font-size:11px;color:var(--muted);display:block;margin-bottom:3px}
+  .create-form input,.create-form select{width:100%;padding:6px;border:1px solid var(--border);border-radius:6px;background:var(--panel2);color:var(--text);font-size:13px;font-family:inherit}
+  table{width:100%;border-collapse:collapse;font-size:13px}
+  th,td{text-align:left;padding:9px 8px;border-bottom:1px solid var(--border);vertical-align:middle}
+  th{color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.5px}
+  td.title{font-weight:600}
+  .badge{display:inline-block;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600}
+  .badge.todo{background:#94a3b822;color:#94a3b8}
+  .badge.in_progress{background:#0a66c222;color:#0a66c2}
+  .badge.done{background:#10b98122;color:#10b981}
+  .badge.low{background:#64748b22;color:#64748b}
+  .badge.medium{background:#f59e0b22;color:#f59e0b}
+  .badge.high{background:#ef444422;color:#ef4444}
+  .badge.reminder{background:#635bff22;color:#635bff}
+  .overdue{color:var(--err);font-weight:600}
+  .due-soon{color:var(--warn)}
+  .row-actions{display:flex;gap:4px}
+  .empty{color:var(--muted);text-align:center;padding:24px;font-size:13px}
+  .info{font-size:12px;color:var(--muted);line-height:1.6;margin-bottom:14px}
+  .info code{background:var(--panel2);padding:1px 5px;border-radius:4px;color:var(--accent);font-size:11px}
+  .stat{font-size:12px;color:var(--muted);margin-bottom:8px}
+  .stat b{color:var(--text)}
+</style>
+</head>
+<body>
+<div class="topbar">
+  <h1>RevPulse Tasks</h1>
+  <span class="sub" id="tenant-name"></span>
+  <div class="spacer"></div>
+  <a href="index.html">← Dashboard</a>
+  <a href="crm.html">CRM</a>
+  <a href="tags.html">Tags</a>
+</div>
+
+<div class="wrap" id="content" style="display:none">
+  <div class="info">
+    <b>Tasks & reminders (P23)</b> — tâches commerciales (call/demo/relance) liées à un contact et/ou une opportunité.
+    <code>reminder_at</code> déclenche une notification in-app (feed) vers l'assignee quand l'échéance arrive (scheduler).
+    <code>completed_at</code> auto-set quand status→done. Filtres : <code>overdue</code> (due_date &lt; today, non done), <code>due_today</code>.
+  </div>
+
+  <div class="card">
+    <h3>Créer une tâche</h3>
+    <div class="create-form">
+      <div><label>Titre</label><input type="text" id="new-title" placeholder="ex. Call découverte"></div>
+      <div><label>Échéance</label><input type="date" id="new-due"></div>
+      <div><label>Priorité</label><select id="new-priority"><option value="low">Low</option><option value="medium" selected>Medium</option><option value="high">High</option></select></div>
+      <div><label>Contact</label><select id="new-contact"><option value="">—</option></select></div>
+      <div><label>Assignee</label><select id="new-assignee"><option value="">—</option></select></div>
+      <div><label>Rappel (option)</label><input type="datetime-local" id="new-reminder"></div>
+      <button class="btn" onclick="createTask()">+ Créer</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <h3>Filtres</h3>
+    <div class="toolbar">
+      <select id="f-status" onchange="loadTasks()">
+        <option value="">Tous statuts</option>
+        <option value="todo">À faire</option>
+        <option value="in_progress">En cours</option>
+        <option value="done">Terminé</option>
+      </select>
+      <select id="f-priority" onchange="loadTasks()">
+        <option value="">Toutes priorités</option>
+        <option value="low">Low</option>
+        <option value="medium">Medium</option>
+        <option value="high">High</option>
+      </select>
+      <label><input type="checkbox" id="f-overdue" onchange="loadTasks()"> Overdue</label>
+      <label><input type="checkbox" id="f-today" onchange="loadTasks()"> Due today</label>
+      <button class="btn sec sm" onclick="resetFilters()">Reset</button>
+    </div>
+    <div class="stat" id="stats"></div>
+    <table>
+      <thead><tr><th>Titre</th><th>Contact</th><th>Échéance</th><th>Statut</th><th>Priorité</th><th>Rappel</th><th>Assignee</th><th></th></tr></thead>
+      <tbody id="tasks-rows"></tbody>
+    </table>
+    <div id="tasks-empty" class="empty" style="display:none">Aucune tâche. Crée la première ci-dessus.</div>
+  </div>
+</div>
+
+<div class="login" id="login" style="display:none">
+  <h2>Accès Tasks</h2>
+  <p>Connecte-toi au dashboard RevPulse, ou utilise le compte démo (Owner).</p>
+  <button onclick="demoLogin()">Connexion démo</button>
+</div>
+
+<script>
+const API = (location.protocol === 'https:' ? 'https://' : 'http://') + location.host + '/api';
+let TOK = localStorage.getItem('revpulse_jwt');
+let TID = null;
+try { const s = JSON.parse(localStorage.getItem('revpulse_session') || '{}'); TID = s.activeTenantId; } catch(e){}
+let CONTACTS = [], MEMBERS = [];
+
+function esc(s){ return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])) }
+function fmtDate(iso){ if(!iso) return '—'; try { const d = new Date(iso); return d.toLocaleDateString('fr-FR'); } catch(e){ return iso } }
+function fmtDateTime(iso){ if(!iso) return ''; try { return new Date(iso).toLocaleString('fr-FR', {day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}); } catch(e){ return iso } }
+function todayStr(){ return new Date().toISOString().slice(0,10) }
+function STATUS_LABEL(s){ return {todo:'À faire',in_progress:'En cours',done:'Terminé'}[s]||s }
+
+async function api(method, path, body){
+  const opts = {method, headers: {'Authorization': 'Bearer ' + TOK, 'Content-Type': 'application/json'}};
+  if(body) opts.body = JSON.stringify(body);
+  try { const r = await fetch(API + path, opts); let d; try { d = await r.json() } catch(e){ d = null } return {status: r.status, data: d}; }
+  catch(e){ return {status: 0, data: null}; }
+}
+
+async function demoLogin(){
+  const r = await fetch(API + '/auth/demo', {method:'POST'});
+  if(!r.ok){ alert('Login démo échoué'); return; }
+  const d = await r.json();
+  TOK = d.token; localStorage.setItem('revpulse_jwt', TOK);
+  const ts = await fetch(API + '/tenants', {headers:{'Authorization':'Bearer '+TOK}});
+  const tenants = await ts.json();
+  TID = tenants[0]?.id;
+  if(TID){ localStorage.setItem('revpulse_session', JSON.stringify({activeTenantId: TID})); init(); }
+}
+
+async function loadDropdowns(){
+  // Contacts (pour le dropdown contact)
+  const rc = await api('GET', '/tenants/' + TID + '/crm/contacts?limit=200');
+  if(rc.status === 200) CONTACTS = rc.data || [];
+  // Members (pour le dropdown assignee — user_id exposé via MemberOut P23)
+  const rm = await api('GET', '/tenants/' + TID + '/members?limit=100');
+  if(rm.status === 200) MEMBERS = (rm.data || []).filter(m => m.user_id && m.status === 'active');
+  const csel = document.getElementById('new-contact');
+  csel.innerHTML = '<option value="">—</option>' + CONTACTS.map(c => `<option value="${esc(c.id)}">${esc(c.first_name)} ${esc(c.last_name)} (${esc(c.email)})</option>`).join('');
+  const asel = document.getElementById('new-assignee');
+  asel.innerHTML = '<option value="">—</option>' + MEMBERS.map(m => `<option value="${esc(m.user_id)}">${esc(m.name)} (${esc(m.role)})</option>`).join('');
+}
+
+function init(){
+  if(!TOK || !TID){ document.getElementById('login').style.display='block'; return; }
+  document.getElementById('login').style.display='none';
+  document.getElementById('content').style.display='block';
+  document.getElementById('tenant-name').textContent = 'Tenant: ' + TID;
+  loadDropdowns();
+  loadTasks();
+}
+
+async function loadTasks(){
+  const status = document.getElementById('f-status').value;
+  const priority = document.getElementById('f-priority').value;
+  const overdue = document.getElementById('f-overdue').checked;
+  const today = document.getElementById('f-today').checked;
+  let q = '/tenants/' + TID + '/crm/tasks?limit=200';
+  if(status) q += '&status=' + status;
+  if(priority) q += '&priority=' + priority;
+  if(overdue) q += '&overdue=true';
+  if(today) q += '&due_today=true';
+  const {status: s, data} = await api('GET', q);
+  const rows = document.getElementById('tasks-rows');
+  const empty = document.getElementById('tasks-empty');
+  if(s !== 200 || !Array.isArray(data)){
+    rows.innerHTML = ''; empty.style.display = 'block'; empty.textContent = 'Erreur chargement ('+s+')'; return;
+  }
+  const tStr = todayStr();
+  const stats = {total: data.length, overdue: 0, today: 0, done: 0};
+  data.forEach(t => {
+    if(t.status === 'done') stats.done++;
+    else if(t.due_date && t.due_date < tStr) stats.overdue++;
+    else if(t.due_date === tStr) stats.today++;
+  });
+  document.getElementById('stats').innerHTML = `<b>${stats.total}</b> tâche(s) — <span class="overdue">${stats.overdue} overdue</span> · <span class="due-soon">${stats.today} today</span> · ${stats.done} done`;
+  if(data.length === 0){ rows.innerHTML = ''; empty.style.display = 'block'; empty.textContent = 'Aucune tâche pour ces filtres.'; return; }
+  empty.style.display = 'none';
+  rows.innerHTML = data.map(t => {
+    const contact = CONTACTS.find(c => c.id === t.contact_id);
+    const contactLabel = contact ? `${esc(contact.first_name)} ${esc(contact.last_name)}` : '—';
+    const assignee = MEMBERS.find(m => m.user_id === t.assignee_id);
+    const assigneeLabel = assignee ? esc(assignee.name) : (t.assignee_id ? '—' : '—');
+    const dueClass = t.status !== 'done' && t.due_date ? (t.due_date < tStr ? 'overdue' : (t.due_date === tStr ? 'due-soon' : '')) : '';
+    const reminderBadge = t.reminder_at ? (t.reminder_sent ? '<span class="badge reminder" title="Rappel envoyé">✓ rappel</span>' : '<span class="badge reminder" title="Rappel programmé">⏰ ' + esc(fmtDateTime(t.reminder_at)) + '</span>') : '';
+    const completedAt = t.status === 'done' && t.completed_at ? `<div style="font-size:11px;color:var(--muted)">✓ ${esc(fmtDate(t.completed_at))}</div>` : '';
+    return `<tr>
+      <td class="title">${esc(t.title)}${completedAt}</td>
+      <td>${contactLabel}</td>
+      <td class="${dueClass}">${esc(fmtDate(t.due_date))}</td>
+      <td><span class="badge ${esc(t.status)}">${STATUS_LABEL(t.status)}</span></td>
+      <td><span class="badge ${esc(t.priority)}">${esc(t.priority)}</span></td>
+      <td>${reminderBadge}</td>
+      <td style="color:var(--muted)">${assigneeLabel}</td>
+      <td><div class="row-actions">
+        <button class="btn sm sec" onclick="cycleStatus('${esc(t.id)}','${esc(t.status)}')" title="Status suivant">↻</button>
+        <button class="btn sm danger" onclick="deleteTask('${esc(t.id)}','${esc(t.title)}')">🗑</button>
+      </div></td>
+    </tr>`;
+  }).join('');
+}
+
+function resetFilters(){
+  document.getElementById('f-status').value = '';
+  document.getElementById('f-priority').value = '';
+  document.getElementById('f-overdue').checked = false;
+  document.getElementById('f-today').checked = false;
+  loadTasks();
+}
+
+async function cycleStatus(id, current){
+  // todo → in_progress → done → todo
+  const next = {todo: 'in_progress', in_progress: 'done', done: 'todo'}[current] || 'todo';
+  const {status: s, data} = await api('PATCH', '/tenants/' + TID + '/crm/tasks/' + id, {status: next});
+  if(s !== 200){ alert('Erreur: ' + (data?.detail || s)); return; }
+  loadTasks();
+}
+
+async function createTask(){
+  const title = document.getElementById('new-title').value.trim();
+  if(!title){ alert('Titre requis'); return; }
+  const body = {
+    title,
+    due_date: document.getElementById('new-due').value || null,
+    priority: document.getElementById('new-priority').value,
+    contact_id: document.getElementById('new-contact').value || null,
+    assignee_id: document.getElementById('new-assignee').value || null,
+  };
+  const reminder = document.getElementById('new-reminder').value;
+  if(reminder) body.reminder_at = new Date(reminder).toISOString();
+  const {status: s, data} = await api('POST', '/tenants/' + TID + '/crm/tasks', body);
+  if(s !== 201){ alert('Erreur: ' + (data?.detail || s)); return; }
+  document.getElementById('new-title').value = '';
+  document.getElementById('new-due').value = '';
+  document.getElementById('new-reminder').value = '';
+  loadTasks();
+}
+
+async function deleteTask(id, title){
+  if(!confirm('Supprimer la tâche « ' + title + ' » ?')) return;
+  const {status: s} = await api('DELETE', '/tenants/' + TID + '/crm/tasks/' + id);
+  if(s !== 200){ alert('Erreur suppression ('+s+')'); return; }
+  loadTasks();
+}
+
+init();
+</script>
+</body>
+</html>
