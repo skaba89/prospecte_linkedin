@@ -34,6 +34,7 @@ from .routers import (
     linkedin,
     members,
     notifications,
+    prospecting,
     sequences,
     tags,
     tenants,
@@ -123,6 +124,7 @@ for r in (
     agents.router,                  # P25 : 10 agents IA + Copilot (agents run + history + copilot chat)
     audit.router,
     crm.router,
+    prospecting.router,            # P27 : Prospection avancée (multicanal + A/B testing + intent signals + enrichment)
     notifications.router,
     sequences.router,
     analytics.router,

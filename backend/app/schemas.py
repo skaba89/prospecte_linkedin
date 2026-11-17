@@ -700,12 +700,16 @@ class SequenceStepCreate(BaseModel):
 
 
 class SequenceStepOut(BaseModel):
-    """Step d'une séquence sérialisé (P15)."""
+    """Step d'une séquence sérialisé (P15, étendu P27 multicanal). channel = email|linkedin|call|sms|
+    manual. template_id nullable (steps non-email). channel_config = config spécifique au canal."""
 
     id: str
     step_order: int
-    template_id: str
+    template_id: str | None = None  # P27 : nullable pour steps non-email
     delay_days: int
+    channel: str = "email"  # P27 : canal (default email — backward compat P15)
+    channel_config: dict | None = None  # P27 : config spécifique au canal
+    model_config = ConfigDict(from_attributes=True)
 
 
 class SequenceCreate(BaseModel):
@@ -1227,3 +1231,109 @@ class ContentStats(BaseModel):
     total_scheduled: int
     total_templates: int
     total_engagement: int
+
+
+# ─── P27 — Prospection avancée (multicanal + A/B testing + intent) ───────────
+
+
+class MultichannelStepRequest(BaseModel):
+    """Création d'un step multicanal (P27). channel = email|linkedin|call|sms|manual. template_id =
+    template e-mail (requis si email, NULL sinon). channel_config = config spécifique au canal
+    (linkedin_action, call_script, manual_task, sms_text)."""
+    step_order: int = Field(..., ge=1)
+    channel: str = Field(..., max_length=20)
+    template_id: str | None = None
+    delay_days: int = Field(default=0, ge=0)
+    channel_config: dict | None = None
+
+
+class SequenceStepVariantRequest(BaseModel):
+    """Création d'une variante A/B (P27). variant = 'A' | 'B'. subject_override + body_override =
+    contenu alternatif (si NULL → utilise le template_id du step)."""
+    variant: str = Field(..., max_length=5)  # A | B
+    label: str | None = None
+    subject_override: str | None = None
+    body_override: str | None = None
+
+
+class SequenceStepVariantOut(BaseModel):
+    """Variante A/B (P27). sent_count = dénominateur pour les taux (open_rate = open_count/sent_count)."""
+    id: str
+    step_id: str
+    variant: str
+    label: str | None = None
+    subject_override: str | None = None
+    body_override: str | None = None
+    sent_count: int
+    open_count: int
+    click_count: int
+    reply_count: int
+    created_at: datetime
+    model_config = ConfigDict(from_attributes=True)
+
+
+class VariantMetricsRequest(BaseModel):
+    """Enregistrement d'une métrique sur une variante (P27 A/B testing). event = sent|open|click|reply.
+    count = incrément (default 1)."""
+    event: str = Field(..., max_length=10)  # sent|open|click|reply
+    count: int = Field(default=1, ge=1)
+
+
+class ABTestResult(BaseModel):
+    """Résultat A/B d'une variante (P27). taux = pourcentage (open_rate = open_count/sent_count*100)."""
+    variant_id: str
+    variant: str
+    label: str | None = None
+    sent_count: int
+    open_count: int
+    click_count: int
+    reply_count: int
+    open_rate: float
+    click_rate: float
+    reply_rate: float
+
+
+class IntentSignalRequest(BaseModel):
+    """Ajout d'un signal d'intention (P27). signal_type = job_change|funding|hire_spike|news|engagement|
+    website_visit. score 1-100 (clamp). source = manual|webhook|enrichment."""
+    signal_type: str = Field(..., max_length=30)
+    description: str | None = None
+    score: int = Field(default=10, ge=1, le=100)
+    source: str = Field(default="manual", max_length=20)
+
+
+class IntentSignalOut(BaseModel):
+    """Signal d'intention (P27). detected_at = quand le signal a été détecté (fenêtre 90j pour
+    intent_score). created_by = acteur (NULL si source=webhook)."""
+    id: str
+    contact_id: str
+    signal_type: str
+    description: str | None = None
+    score: int
+    source: str
+    detected_at: datetime
+    created_by: str | None = None
+    created_at: datetime
+    model_config = ConfigDict(from_attributes=True)
+
+
+class IntentLeader(BaseModel):
+    """Contact leaderboard par intent_score (P27). intent_score = somme des IntentSignal.score récents
+    (90j, cap 100)."""
+    id: str
+    first_name: str
+    last_name: str
+    email: str
+    company: str | None = None
+    title: str | None = None
+    intent_score: int
+    signal_count: int
+
+
+class EnrichmentResult(BaseModel):
+    """Résultat d'enrichissement (P27 v1 — SIMULÉ). simulated=True (anti-fake). data = champs
+    enrichis (title_confidence, company_employee_count, etc.). v2 branchera un vrai provider."""
+    contact_id: str
+    enriched_at: str | None = None
+    simulated: bool
+    data: dict

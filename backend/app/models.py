@@ -292,6 +292,8 @@ class Contact(Base):
     # new | qualified | contacted | nurture | won | lost
     owner_id = Column(String, ForeignKey("users.id"), nullable=True, index=True)
     source = Column(String, default="manual", nullable=False)  # manual | import | linkedin
+    intent_score = Column(Integer, default=0, nullable=False)  # P27 : somme des IntentSignal.score récents
+    enriched_at = Column(DateTime, nullable=True)  # P27 : dernier enrichissement automatique
     created_at = Column(DateTime, default=datetime.utcnow, index=True)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     __table_args__ = (UniqueConstraint("tenant_id", "email", name="uq_tenant_contact_email"),)
@@ -457,16 +459,21 @@ class EmailSequence(Base):
 
 
 class SequenceStep(Base):
-    """Étape d'une séquence (P15). order = position 1-indexed. template_id = template e-mail P13
-    (cold_outreach|follow_up|intro|re_engagement). delay_days = délai avant envoi après le step
-    précédent (0 = immédiat). CASCADE sur delete séquence."""
+    """Étape d'une séquence (P15, étendu P27 multicanal). order = position 1-indexed. template_id =
+    template e-mail P13 (cold_outreach|follow_up|intro|re_engagement) — NULL pour les steps non-email
+    (linkedin, call, sms, manual). delay_days = délai avant envoi après le step précédent (0 = immédiat).
+    P27 : channel = email|linkedin|call|sms|manual (default email — backward compat P15). channel_config
+    = JSON ({linkedin_action: connection_request|message|profile_view|like_comment, call_script: "...",
+    manual_task: "...", sms_text: "..."}). CASCADE sur delete séquence."""
 
     __tablename__ = "sequence_steps"
     id = Column(String, primary_key=True, default=lambda: _uid("stp"))
     sequence_id = Column(String, ForeignKey("email_sequences.id", ondelete="CASCADE"), nullable=False, index=True)
     step_order = Column(Integer, nullable=False)  # 1-indexed (évite le mot-clé SQL réservé `order`)
-    template_id = Column(String, nullable=False)
+    template_id = Column(String, nullable=True)  # P27 : nullable pour steps non-email (linkedin/call/sms/manual)
     delay_days = Column(Integer, default=0, nullable=False)
+    channel = Column(String, default="email", nullable=False)  # P27 : email|linkedin|call|sms|manual
+    channel_config = Column(JSONType, nullable=True)  # P27 : config spécifique au canal (linkedin_action, call_script...)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 
 
@@ -487,6 +494,50 @@ class SequenceEnrollment(Base):
     next_step_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     completed_at = Column(DateTime, nullable=True)
     error_detail = Column(Text, nullable=True)
+
+
+# ─── P27 — Prospection avancée : A/B testing + intent signals ────────────────
+
+
+class SequenceStepVariant(Base):
+    """Variante A/B d'un step de séquence (P27 A/B testing). variant = 'A' | 'B'. subject_override +
+    body_override = contenu alternatif (si NULL → utilise le template_id du step). sent_count +
+    open_count + click_count + reply_count = métriques pour calculer le taux d'ouverture/clic/réponse
+    par variante (le router /ab-results agrège ces métriques pour comparer A vs B). CASCADE sur delete
+    step."""
+
+    __tablename__ = "sequence_step_variants"
+    id = Column(String, primary_key=True, default=lambda: _uid("var"))
+    step_id = Column(String, ForeignKey("sequence_steps.id", ondelete="CASCADE"), nullable=False, index=True)
+    variant = Column(String, nullable=False)  # A | B
+    label = Column(String, nullable=True)  # nom optionnel (e.g. "Version courte", "Ton expert")
+    subject_override = Column(String, nullable=True)
+    body_override = Column(Text, nullable=True)
+    sent_count = Column(Integer, default=0, nullable=False)
+    open_count = Column(Integer, default=0, nullable=False)
+    click_count = Column(Integer, default=0, nullable=False)
+    reply_count = Column(Integer, default=0, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+
+class IntentSignal(Base):
+    """Signal d'intention d'un contact (P27 détection d'intention). signal_type = job_change|funding|
+    hire_spike|news|engagement|website_visit. description = texte libre. score = poids 1-100. source =
+    manual|webhook|enrichment. detected_at = quand le signal a été détecté. Utilisé pour calculer
+    Contact.intent_score (somme des scores — see services/prospecting.compute_intent_score). CASCADE
+    sur delete contact."""
+
+    __tablename__ = "intent_signals"
+    id = Column(String, primary_key=True, default=lambda: _uid("isig"))
+    tenant_id = Column(String, ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
+    contact_id = Column(String, ForeignKey("contacts.id", ondelete="CASCADE"), nullable=False, index=True)
+    signal_type = Column(String, nullable=False, index=True)  # job_change|funding|hire_spike|news|engagement|website_visit
+    description = Column(Text, nullable=True)
+    score = Column(Integer, default=10, nullable=False)  # 1-100
+    source = Column(String, default="manual", nullable=False)  # manual|webhook|enrichment
+    detected_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    created_by = Column(String, ForeignKey("users.id"), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 
 
 # ---- Webhooks outbound (P18) ----
