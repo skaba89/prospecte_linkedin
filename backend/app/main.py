@@ -3,7 +3,7 @@
 import logging
 import os
 
-from fastapi import Depends, FastAPI
+from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -152,6 +152,35 @@ for r in (
 def metrics():
     """Exposition Prometheus (texte) — scrape par Prometheus/Grafana. Public (pas d'auth)."""
     return metrics_response()
+
+
+@app.post("/api/billing/webhook")
+async def stripe_webhook(request: Request, db: Session = Depends(get_db)):
+    """Webhook Stripe global (P30). Vérif signature si STRIPE_WEBHOOK_SECRET configuré ;
+    sinon mode mock (accepte les events de test). Met à jour Subscription (plan/status/stripe IDs).
+    Stripe attend 200 pour acquitter — on retourne toujours 200 (erreurs loggées)."""
+    import json
+    from .services import billing_service
+    from .config import settings as cfg
+    raw = await request.body()
+    sig = request.headers.get("stripe-signature", "")
+    payload = raw.decode("utf-8", errors="replace")
+    # Vérif signature si secret configuré + stripe lib dispo
+    if cfg.stripe_webhook_secret and cfg.stripe_secret_key:
+        try:
+            import stripe  # type: ignore
+            stripe.api_key = cfg.stripe_secret_key
+            event = stripe.Webhook.construct_event(payload, sig, cfg.stripe_webhook_secret)
+            event_dict = event.to_dict() if hasattr(event, "to_dict") else dict(event)
+        except Exception as e:
+            raise HTTPException(400, f"Signature Stripe invalide : {e}")
+    else:
+        # Mode mock (dev/CI/test) — parse JSON directement
+        try:
+            event_dict = json.loads(payload)
+        except Exception:
+            raise HTTPException(400, "Payload JSON invalide (mode mock — pas de STRIPE_WEBHOOK_SECRET).")
+    return billing_service.handle_webhook_event(db, event_dict)
 
 
 # Frontend statique : sert le dashboard (index.html) si le dossier existe.

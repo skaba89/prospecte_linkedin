@@ -74,6 +74,13 @@ class Settings(BaseSettings):
     smtp_from: str = "no-reply@revpulse.io"
     smtp_use_tls: bool = True
 
+    # Stripe — P30 Commercialisation. Si stripe_secret_key non renseigné → mode mock (checkout
+    # retourne une URL de test, webhook accepte les events sans vérif signature). Anti-fake : le
+    # retour checkout porte simulated=True quand mock. En prod : renseigner secret + webhook_secret.
+    stripe_secret_key: str = ""
+    stripe_webhook_secret: str = ""
+    stripe_currency: str = "eur"  # currency code Stripe (lowercase ISO 4217)
+
     # Logging structuré — JSON (prod) ou texte (dev/test). Niveau configurable.
     log_level: str = "INFO"
     log_format: str = "json"  # json | text
