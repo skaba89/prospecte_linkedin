@@ -769,6 +769,98 @@ s, lst = call("GET", "/api/tenants/tnt-demo/webhooks", tok)
 ck(len(lst), 0, "webhook list vide après delete")
 _hook_srv.shutdown()
 
+# ─── P20 : Webhooks inbound (réception → create/update Contact) ────────────────
+# Cleanup : supprime les inbound webhooks préexistants (run précédent) pour un état propre.
+s, _existing_ibw = call("GET", "/api/tenants/tnt-demo/inbound-webhooks", tok)
+for _iw in _existing_ibw:
+    call("DELETE", f"/api/tenants/tnt-demo/inbound-webhooks/{_iw['id']}", tok)
+
+print("=== 89. POST /inbound-webhooks (create, token auto-généré) ===")
+s, ibw = call("POST", "/api/tenants/tnt-demo/inbound-webhooks", tok,
+              {"source_name": "Website form", "active": True})
+ck(s, 201, "create inbound webhook 201")
+ck(len(ibw.get("token", "")), 32, "token 32 hex auto-généré + exposé en Out")
+ck(ibw.get("source_name"), "Website form", "source_name retourné")
+ck(ibw.get("active"), True, "active=true par défaut")
+
+print("=== 90. GET /inbound-webhooks (list, 1 item) ===")
+s, ibw_list = call("GET", "/api/tenants/tnt-demo/inbound-webhooks", tok)
+ck(s, 200, "list inbound 200")
+ck(len(ibw_list), 1, "1 inbound webhook après create")
+
+print("=== 91. POST /api/inbound/webhook/{token} (public, no auth → create contact) ===")
+_INBOUND_EMAIL = f"inbound-test-{ibw['token'][:8]}@example.com"
+s, res = call("POST", f"/api/inbound/webhook/{ibw['token']}", None,
+              {"first_name": "Inbound", "last_name": "Test", "email": _INBOUND_EMAIL, "title": "DevRel"})
+ck(s, 200, "POST public inbound 200 (no auth — token authentifie)")
+ck(res.get("action"), "created", "action=created (nouveau contact)")
+ck(res.get("matched_by"), "none", "matched_by=none (création nette)")
+_ibw_contact_id = res.get("contact_id", "")
+ck(bool(_ibw_contact_id), True, "contact_id retourné")
+
+print("=== 92. POST /api/inbound/webhook/{token} (même email → update, dedup) ===")
+s, res2 = call("POST", f"/api/inbound/webhook/{ibw['token']}", None,
+               {"email": _INBOUND_EMAIL, "title": "CTO", "phone": "+33 6 12 34"})
+ck(s, 200, "POST public inbound 200 (update)")
+ck(res2.get("action"), "updated", "action=updated (dedup email)")
+ck(res2.get("contact_id"), _ibw_contact_id, "même contact_id (dedup)")
+ck(res2.get("matched_by"), "email", "matched_by=email")
+
+print("=== 93. GET /crm/contacts (vérifie le contact créé, source=inbound) ===")
+s, contacts = call("GET", "/api/tenants/tnt-demo/crm/contacts", tok)
+ck(s, 200, "list contacts 200")
+_ibw_ct = next((c for c in contacts if c.get("id") == _ibw_contact_id), None)
+ck(_ibw_ct is not None, True, "contact inbound présent dans la liste")
+ck(_ibw_ct.get("source") if _ibw_ct else None, "inbound", "contact source=inbound")
+ck(_ibw_ct.get("title") if _ibw_ct else None, "CTO", "title=CTO (mis à jour par le 2e POST)")
+ck(_ibw_ct.get("first_name") if _ibw_ct else None, "Inbound", "first_name préservé (update non-vides uniquement)")
+
+print("=== 94. POST /api/inbound/webhook/{token} (payload vide → 422) ===")
+s, _ = call("POST", f"/api/inbound/webhook/{ibw['token']}", None, {"unknown_field": "x"})
+ck(s, 422, "payload vide (aucun champ mappable) → 422")
+
+print("=== 95. POST /api/inbound/webhook/unknowntoken (→ 404) ===")
+s, _ = call("POST", "/api/inbound/webhook/unknowntoken123", None, {"email": "x@y.com"})
+ck(s, 404, "token inconnu → 404")
+
+print("=== 96. PATCH /inbound-webhooks/{id} (active=false) → POST → 410 Gone ===")
+s, _ = call("PATCH", f"/api/tenants/tnt-demo/inbound-webhooks/{ibw['id']}", tok, {"active": False})
+ck(s, 200, "patch inbound active=false 200")
+s, _ = call("POST", f"/api/inbound/webhook/{ibw['token']}", None, {"email": "suspended@test.com"})
+ck(s, 410, "inbound webhook suspendu → 410 Gone")
+
+print("=== 97. DELETE /inbound-webhooks/{id} → POST → 404 (token invalide) ===")
+# Réactive d'abord (pour pouvoir delete — optionnel, mais teste aussi la réactivation)
+s, _ = call("PATCH", f"/api/tenants/tnt-demo/inbound-webhooks/{ibw['id']}", tok, {"active": True})
+ck(s, 200, "patch inbound active=true (réactivation)")
+s, _ = call("DELETE", f"/api/tenants/tnt-demo/inbound-webhooks/{ibw['id']}", tok)
+ck(s, 200, "delete inbound 200")
+s, ibw_list2 = call("GET", "/api/tenants/tnt-demo/inbound-webhooks", tok)
+ck(len(ibw_list2), 0, "inbound list vide après delete")
+s, _ = call("POST", f"/api/inbound/webhook/{ibw['token']}", None, {"email": "deleted@test.com"})
+ck(s, 404, "token supprimé → 404")
+
+print("=== 98. POST /inbound-webhooks RBAC (non-member → 403) ===")
+s, _ = call("POST", "/api/tenants/tnt-demo/inbound-webhooks", ptok,
+            {"source_name": "Should fail"})
+ck(s, 403, "non-member → 403 sur create inbound webhook")
+
+print("=== 99. POST /inbound-webhooks (field_map custom + anti-injection) ===")
+s, ibw2 = call("POST", "/api/tenants/tnt-demo/inbound-webhooks", tok,
+               {"source_name": "Zapier", "field_map": {"prénom": "first_name", "courriel": "email"}})
+ck(s, 201, "create inbound avec field_map custom 201")
+# POST avec payload utilisant les clés custom
+s, res3 = call("POST", f"/api/inbound/webhook/{ibw2['token']}", None,
+               {"prénom": "Zap", "courriel": "zapier-test@example.com"})
+ck(s, 200, "POST avec field_map custom 200")
+ck(res3.get("action"), "created", "contact créé via field_map custom")
+# Anti-injection : field_map ciblant un champ non-writable → 422
+s, _ = call("POST", "/api/tenants/tnt-demo/inbound-webhooks", tok,
+            {"source_name": "Evil", "field_map": {"x": "tenant_id"}})
+ck(s, 422, "field_map ciblant tenant_id → 422 (anti-injection)")
+# Cleanup
+call("DELETE", f"/api/tenants/tnt-demo/inbound-webhooks/{ibw2['id']}", tok)
+
 print()
 print(f"RESULT: {passed} passed, {failed} failed")
 sys.exit(0 if failed == 0 else 1)
