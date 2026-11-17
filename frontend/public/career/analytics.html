@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RevPulse Career — Analytics</title>
+<link rel="stylesheet" href="assets/career.css">
+<style>
+  .rp-bar-row { margin-bottom: 10px; }
+  .rp-bar-label { font-size: .82rem; margin-bottom: 3px; display: flex; justify-content: space-between; }
+  .rp-bar-track { background: var(--rp-surface-2); border-radius: 5px; height: 22px; overflow: hidden; }
+  .rp-bar-fill { height: 100%; border-radius: 5px; display: flex; align-items: center; padding-left: 8px; color: #fff; font-size: .78rem; font-weight: 600; }
+  .rp-bar-fill.primary { background: var(--rp-primary); }
+  .rp-bar-fill.success { background: var(--rp-success); }
+  .rp-bar-fill.warning { background: var(--rp-warning); }
+  .rp-bar-fill.danger { background: var(--rp-danger); }
+  .rp-bar-fill.info { background: var(--rp-info); }
+</style>
+</head>
+<body>
+<div class="rp-layout">
+  <aside class="rp-sidebar" data-rp-sidebar></aside>
+  <div class="rp-backdrop"></div>
+  <div class="rp-main">
+    <header class="rp-topbar">
+      <button class="rp-menu-btn" data-rp-menu>☰</button>
+      <span class="rp-topbar-title" data-rp-topbar-title>Analytics</span>
+      <button class="rp-btn rp-btn-ghost rp-btn-sm" data-rp-logout>Déconnexion</button>
+    </header>
+    <main class="rp-content" id="rp-content">
+      <div class="rp-loading">Chargement des analytics…</div>
+    </main>
+  </div>
+</div>
+<script src="assets/career.js"></script>
+<script>
+(async function () {
+  "use strict";
+  if (!RP.requireAuth()) return;
+  RP.bootstrap("analytics", "Analytics");
+  var c = document.getElementById("rp-content");
+  var ov, pl, pbp, pbc, st;
+  try { ov = await RP.api("/api/career/analytics/overview"); } catch (e) { return fail(e); }
+  try { pl = await RP.api("/api/career/analytics/pipeline"); } catch (e) { pl = {}; }
+  try { pbp = await RP.api("/api/career/analytics/performance-by-platform"); } catch (e) { pbp = []; }
+  try { pbc = await RP.api("/api/career/analytics/performance-by-cv"); } catch (e) { pbc = []; }
+  try { st = await RP.api("/api/career/analytics/salary-trends?months=6"); } catch (e) { st = []; }
+
+  var maxApps = Math.max(1, ...Object.values(pl || {}));
+  function bar(label, val, max, cls) {
+    var pct = Math.round(val / max * 100);
+    return '<div class="rp-bar-row"><div class="rp-bar-label"><span>' + RP.esc(label) + '</span><strong>' + val + '</strong></div>' +
+      '<div class="rp-bar-track"><div class="rp-bar-fill ' + cls + '" style="width:' + pct + '%">' + (val > 0 ? val : '') + '</div></div></div>';
+  }
+
+  c.innerHTML =
+    '<h1>Analytics Career</h1>' +
+    '<p class="rp-muted">Indicateurs de votre recherche d\'emploi. Statistiques factuelles agrégées — <strong>anti-invention</strong> : aucune interprétation ni prédiction.</p>' +
+
+    '<div class="rp-grid rp-grid-4">' +
+    tile("Offres détectées", ov.offers_detected, "Pool global actif") +
+    tile("Offres compatibles", ov.offers_compatible, "Score ≥ seuil alerte") +
+    tile("Candidatures", ov.applications_total, "Total envoyées") +
+    tile("Score match moyen", ov.avg_match_score + "/100", "Compatibilité moyenne") +
+    '</div>' +
+    '<div class="rp-grid rp-grid-4">' +
+    tile("Taux de réponse", ov.response_rate + "%", "Réponses / non retirées") +
+    tile("Taux d\'entretien", ov.interview_rate + "%", "Entretiens+offres / total") +
+    tile("Propositions", ov.offers_received, "Offres reçues") +
+    tile("Refus", ov.rejections, "Candidatures refusées") +
+    '</div>' +
+    '<div class="rp-grid rp-grid-4">' +
+    tile("Sessions entretien", ov.interview_sessions, ov.interview_sessions_completed + " terminées") +
+    tile("Score entretien moyen", ov.avg_interview_score + "/100", "P41 coach IA") +
+    tile("CV enregistrés", ov.cvs_count, "Versions disponibles") +
+    tile("Offres/compat ratio", ov.offers_detected ? Math.round(ov.offers_compatible / ov.offers_detected * 100) + "%" : "—", "Compat / détectées") +
+    '</div>' +
+
+    '<div class="rp-card"><div class="rp-card-header"><h3 class="rp-card-title">Pipeline candidatures</h3></div>' +
+    bar("Soumises", pl.submitted || 0, maxApps, "info") +
+    bar("Entretiens", pl.interview || 0, maxApps, "warning") +
+    bar("Offres", pl.offer || 0, maxApps, "success") +
+    bar("Refus", pl.rejected || 0, maxApps, "danger") +
+    bar("Retirées", pl.withdrawn || 0, maxApps, "primary") +
+    "</div>" +
+
+    '<div class="rp-card"><div class="rp-card-header"><h3 class="rp-card-title">Performance par plateforme</h3></div>' +
+    (pbp.length ? tablePbp(pbp) : '<div class="rp-empty"><div class="rp-empty-title">Aucune candidature</div><p>Candidaturez via la recherche pour alimenter ces stats.</p></div>') +
+    "</div>" +
+
+    '<div class="rp-card"><div class="rp-card-header"><h3 class="rp-card-title">Performance par version de CV</h3></div>' +
+    (pbc.length ? tablePbc(pbc) : '<div class="rp-empty"><div class="rp-empty-title">Aucune donnée</div></div>') +
+    "</div>" +
+
+    '<div class="rp-card"><div class="rp-card-header"><h3 class="rp-card-title">Évolution des salaires (6 derniers mois)</h3></div>' +
+    (st.length ? tableSt(st) : '<div class="rp-empty"><div class="rp-empty-title">Pas de salaire sur les offres candidatées</div><p>Les offres avec salaire renseigné alimenteront cette évolution.</p></div>') +
+    '<p class="rp-small rp-muted" style="margin-top:8px;margin-bottom:0">' + RP.esc(ov.note || "") + "</p></div>";
+
+  function tile(label, val, hint) {
+    return '<div class="rp-stat"><div class="rp-stat-label">' + RP.esc(label) + '</div><div class="rp-stat-value">' + RP.esc(val) + '</div><div class="rp-stat-hint">' + RP.esc(hint || "") + '</div></div>';
+  }
+  function tablePbp(pbp) {
+    var html = '<div class="rp-table-wrap"><table class="rp-table"><thead><tr><th>Plateforme</th><th>Candidatures</th><th>Entretiens</th><th>Offres</th><th>Refus</th><th>Taux réponse</th></tr></thead><tbody>';
+    pbp.forEach(function (p) {
+      html += "<tr><td><strong>" + RP.esc(p.platform) + "</strong></td><td>" + p.total + "</td><td>" + p.interview + "</td><td>" + p.offer + "</td><td>" + p.rejected + "</td><td>" + p.response_rate + "%</td></tr>";
+    });
+    return html + "</tbody></table></div>";
+  }
+  function tablePbc(pbc) {
+    var html = '<div class="rp-table-wrap"><table class="rp-table"><thead><tr><th>CV</th><th>Candidatures</th><th>Entretiens</th><th>Offres</th><th>Refus</th></tr></thead><tbody>';
+    pbc.forEach(function (p) {
+      html += "<tr><td><strong>" + RP.esc(p.label || p.cv_id) + "</strong></td><td>" + p.total + "</td><td>" + p.interview + "</td><td>" + p.offer + "</td><td>" + p.rejected + "</td></tr>";
+    });
+    return html + "</tbody></table></div>";
+  }
+  function tableSt(st) {
+    var html = '<div class="rp-table-wrap"><table class="rp-table"><thead><tr><th>Mois</th><th>Candidatures</th><th>Salaire min moyen</th><th>Salaire max moyen</th></tr></thead><tbody>';
+    st.forEach(function (m) {
+      html += "<tr><td><strong>" + RP.esc(m.month) + "</strong></td><td>" + m.applications + "</td><td>" + (m.avg_salary_min ? RP.euros(m.avg_salary_min) : "—") + "</td><td>" + (m.avg_salary_max ? RP.euros(m.avg_salary_max) : "—") + "</td></tr>";
+    });
+    return html + "</tbody></table></div>";
+  }
+  function fail(e) { c.innerHTML = '<div class="rp-card"><p>Erreur : ' + RP.esc(e.message) + '</p><a class="rp-btn rp-btn-secondary" href="dashboard.html">Retour</a></div>'; }
+})().catch(function (e) { document.getElementById("rp-content").innerHTML = '<div class="rp-card"><p>Erreur : ' + RP.esc(e.message) + '</p><a class="rp-btn rp-btn-secondary" href="dashboard.html">Retour</a></div>'; });
+</script>
+</body>
+</html>

@@ -114,6 +114,8 @@ jobs:
         run: python tests/test_p40_notifications.py
       - name: P41 Career coach IA entretiens (questions par métier + analyze_answer anti-invention + formations)
         run: python tests/test_p41_coach.py
+      - name: P43 Career analytics (KPIs agrégés anti-invention + performance plateforme/CV + salary trends)
+        run: python tests/test_p43_analytics.py
 
   test-api:
     name: API tests (sqlite, sans docker)
