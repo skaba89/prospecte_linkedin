@@ -22,6 +22,7 @@ Compat SQLite : create_table standards. create_all reste la source de vérité p
 in-memory ; cette migration sert le déploiement PostgreSQL.
 """
 import sqlalchemy as sa
+from sqlalchemy.dialects.postgresql import JSONB
 
 from alembic import op
 
@@ -64,7 +65,7 @@ def upgrade() -> None:
         sa.Column("name", sa.String(), nullable=False),
         sa.Column("version", sa.Integer(), nullable=False),
         sa.Column("content", sa.Text(), nullable=False),
-        sa.Column("variables", sa.Text(), nullable=True),  # JSON
+        sa.Column("variables", JSONB().with_variant(sa.Text(), "sqlite"), nullable=True),  # JSONB PG / Text sqlite — aligné sur JSONType du modèle (pattern 0001/0002/0004)
         sa.Column("active", sa.Boolean(), nullable=False),
         sa.Column("notes", sa.Text(), nullable=True),
         sa.Column("created_by", sa.String(), nullable=True),
