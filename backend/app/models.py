@@ -863,6 +863,11 @@ class CareerProfile(Base):
     tjm_min = Column(Integer, nullable=True)  # TJM min (freelance, EUR/jour)
     currency = Column(String, default="EUR", nullable=False)
     languages = Column(JSONType, nullable=True)  # ["fr","en","es"]
+    # P40 — préférences notification (opt-in explicite anti-spam) :
+    alert_enabled = Column(Boolean, default=True, nullable=False)  # opt-in global (désactivé → aucune notif)
+    alert_min_score = Column(Integer, default=70, nullable=False)  # seuil P36 déclenchant new_match (0-100)
+    alert_channels = Column(JSONType, nullable=True)  # ["in_app","email"] — canaux activés
+    alert_frequency = Column(String, default="daily", nullable=False)  # daily|weekly|instant
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 
@@ -1022,3 +1027,27 @@ class JobApplication(Base):
     applied_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+
+class CareerNotification(Base):
+    """Notification Career (P40) — ISOLÉE du Business Notification (tenant_id). user_id + career_profile_id
+    FK CASCADE (isolation stricte Career/Business, P34 invariant). type : new_match (offre matchant le
+    profil, score P36 ≥ alert_min_score) | application_status (changement statut candidature
+    interview/offer/rejected) | interview_reminder (rappel entretien à venir). channel : email | in_app.
+    payload JSON : {posting_id, application_id, score, message, ...}. read_at nullable (null = non lu).
+
+    Anti-spam (P40 invariant) : alert_enabled (opt-in explicite sur CareerProfile) + dedup par
+    (user_id, type, payload.key) — une seule notif par posting/application/event. JAMAIS de notification
+    si alert_enabled=False. v2 : scheduler alertes périodiques (daily/weekly) + envoi email réel."""
+
+    __tablename__ = "career_notifications"
+    id = Column(String, primary_key=True, default=lambda: _uid("cnt"))
+    user_id = Column(String, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    career_profile_id = Column(String, ForeignKey("career_profiles.id", ondelete="CASCADE"), nullable=False)
+    type = Column(String, nullable=False, index=True)  # new_match|application_status|interview_reminder
+    channel = Column(String, nullable=False, default="in_app")  # email|in_app
+    title = Column(String, nullable=False)
+    body = Column(Text, nullable=False)
+    payload = Column(JSONType, nullable=True)  # {posting_id, application_id, score, message, interview_at}
+    read_at = Column(DateTime, nullable=True, index=True)  # null = non lu
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)

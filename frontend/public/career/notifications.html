@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RevPulse Career — Notifications</title>
+<link rel="stylesheet" href="assets/career.css">
+</head>
+<body>
+<div class="rp-layout">
+  <aside class="rp-sidebar" data-rp-sidebar></aside>
+  <div class="rp-backdrop"></div>
+  <div class="rp-main">
+    <header class="rp-topbar">
+      <button class="rp-menu-btn" data-rp-menu>☰</button>
+      <span class="rp-topbar-title" data-rp-topbar-title>Notifications</span>
+      <button class="rp-btn rp-btn-ghost rp-btn-sm" data-rp-logout>Déconnexion</button>
+    </header>
+    <main class="rp-content" id="rp-content">
+      <div class="rp-loading">Chargement…</div>
+    </main>
+  </div>
+</div>
+<script src="assets/career.js"></script>
+<script>
+(async function () {
+  "use strict";
+  if (!RP.requireAuth()) return;
+  RP.bootstrap("notifications", "Notifications");
+  var c = document.getElementById("rp-content");
+  await load();
+
+  async function load() {
+    var notifs = [], prefs = null, unread = 0;
+    try { notifs = await RP.api("/api/career/notifications?limit=100"); } catch (e) { RP.toast(e.message, "error"); }
+    try { prefs = await RP.api("/api/career/notifications/prefs"); } catch (e) {}
+    try { var u = await RP.api("/api/career/notifications/unread-count"); unread = u.unread || 0; } catch (e) {}
+
+    var p = prefs || { alert_enabled: true, alert_min_score: 70, alert_channels: ["in_app"], alert_frequency: "daily" };
+    var channels = p.alert_channels || ["in_app"];
+
+    c.innerHTML =
+      '<h1>Notifications</h1>' +
+      '<p class="rp-muted">Alertes sur nouvelles offres compatibles (score P36 ≥ seuil), réponses des recruteurs (entretien/offre/refus) et rappels. Anti-spam : opt-in explicite + dédoublonnage par offre/événement.</p>' +
+
+      '<div class="rp-card"><div class="rp-card-header"><h3 class="rp-card-title">Préférences d\'alerte</h3>' +
+      '<span class="rp-badge ' + (p.alert_enabled ? "rp-badge-success" : "rp-badge-neutral") + '">' + (p.alert_enabled ? "Activées" : "Désactivées") + "</span></div>" +
+      '<form id="rp-prefs-form">' +
+      '<div class="rp-form-row"><label style="display:flex;align-items:center;gap:8px"><input type="checkbox" name="alert_enabled" ' + (p.alert_enabled ? "checked" : "") + '> <strong>Activer les notifications</strong> (opt-in explicite — désactivé = aucune alerte future)</label></div>' +
+      '<div class="rp-grid rp-grid-2">' +
+      '<div class="rp-form-row"><label class="rp-label">Score Match minimum (0-100)</label><input class="rp-input" type="number" name="alert_min_score" value="' + p.alert_min_score + '" min="0" max="100"><div class="rp-help">Seuil P36 déclenchant l\'alerte nouvelle offre compatible.</div></div>' +
+      '<div class="rp-form-row"><label class="rp-label">Fréquence</label><select class="rp-select" name="alert_frequency">' +
+      ["daily", "weekly", "instant"].map(function (f) { return '<option value="' + f + '"' + (p.alert_frequency === f ? " selected" : "") + ">" + f + "</option>"; }).join("") + "</select></div>" +
+      "</div>" +
+      '<div class="rp-form-row"><label class="rp-label">Canaux</label><div class="rp-pill-list">' +
+      ["in_app", "email"].map(function (ch) {
+        return '<label class="rp-tag" style="cursor:pointer"><input type="checkbox" name="alert_channels" value="' + ch + '" ' + (channels.indexOf(ch) >= 0 ? "checked" : "") + "> " + (ch === "in_app" ? "Web (in-app)" : "Email") + "</label>";
+      }).join("") + '</div><div class="rp-help">Email = v2 (OAuth2 Gmail/Outlook à configurer). In-app actif.</div></div>' +
+      '<button type="submit" class="rp-btn rp-btn-primary">Enregistrer les préférences</button></form></div>' +
+
+      '<div class="rp-card"><div class="rp-card-header"><h3 class="rp-card-title">Notifications (' + notifs.length + ')</h3>' +
+      (unread > 0 ? '<button class="rp-btn rp-btn-secondary rp-btn-sm" id="rp-readall-btn">Tout marquer lu (' + unread + ")</button>" : "") + "</div>" +
+      (notifs.length ? renderList(notifs) : '<div class="rp-empty"><div class="rp-empty-icon">🔔</div><div class="rp-empty-title">Aucune notification</div><p>Lancez une recherche ou un matching pour recevoir des alertes sur les offres compatibles.</p><a class="rp-btn rp-btn-primary" href="matching.html">Lancer le matching</a></div>') +
+      "</div>";
+
+    document.getElementById("rp-prefs-form").addEventListener("submit", function (e) { e.preventDefault(); savePrefs(this); });
+    var raBtn = document.getElementById("rp-readall-btn");
+    if (raBtn) raBtn.addEventListener("click", markAllRead);
+    c.querySelectorAll("[data-read]").forEach(function (b) { b.addEventListener("click", function () { markRead(b.dataset.read); }); });
+  }
+
+  function typeBadge(type) {
+    var map = { new_match: ["Nouvelle offre", "info"], application_status: ["Candidature", "warning"], interview_reminder: ["Entretien", "success"] };
+    var m = map[type] || [type, "neutral"];
+    return '<span class="rp-badge rp-badge-' + m[1] + '">' + RP.esc(m[0]) + "</span>";
+  }
+  function renderList(notifs) {
+    var html = '<div class="rp-table-wrap"><table class="rp-table"><thead><tr><th>Type</th><th>Titre</th><th>Message</th><th>Date</th><th>Statut</th><th>Action</th></tr></thead><tbody>';
+    notifs.forEach(function (n) {
+      html += "<tr" + (n.read_at ? "" : ' style="background:var(--rp-primary-soft)"') + ">" +
+        "<td>" + typeBadge(n.type) + "</td>" +
+        "<td><strong>" + RP.esc(n.title) + "</strong></td>" +
+        '<td class="rp-small">' + RP.esc(n.body) + "</td>" +
+        '<td class="rp-small">' + RP.formatDateTime(n.created_at) + "</td>" +
+        "<td>" + (n.read_at ? '<span class="rp-badge rp-badge-neutral">Lu</span>' : '<span class="rp-badge rp-badge-primary">Non lu</span>') + "</td>" +
+        '<td>' + (n.read_at ? "" : '<button class="rp-btn rp-btn-secondary rp-btn-sm" data-read="' + n.id + '">Marquer lu</button>') + "</td></tr>";
+    });
+    html += "</tbody></table></div>";
+    return html;
+  }
+  async function savePrefs(form) {
+    var fd = new FormData(form);
+    var body = {
+      alert_enabled: !!fd.get("alert_enabled"),
+      alert_min_score: Number(fd.get("alert_min_score")),
+      alert_channels: fd.getAll("alert_channels"),
+      alert_frequency: fd.get("alert_frequency")
+    };
+    var btn = form.querySelector("button[type=submit]"); btn.disabled = true; btn.textContent = "…";
+    try { await RP.api("/api/career/notifications/prefs", { method: "PUT", body: body }); RP.toast("Préférences enregistrées.", "success"); await load(); }
+    catch (e) { RP.toast(e.message, "error"); btn.disabled = false; btn.textContent = "Enregistrer les préférences"; }
+  }
+  async function markRead(id) {
+    try { await RP.api("/api/career/notifications/" + id + "/read", { method: "POST" }); await load(); }
+    catch (e) { RP.toast(e.message, "error"); }
+  }
+  async function markAllRead() {
+    try { var r = await RP.api("/api/career/notifications/read-all", { method: "POST" }); RP.toast(r.marked_read + " notification(s) marquée(s) lue(s).", "success"); await load(); }
+    catch (e) { RP.toast(e.message, "error"); }
+  }
+})().catch(function (e) { document.getElementById("rp-content").innerHTML = '<div class="rp-card"><p>Erreur : ' + RP.esc(e.message) + '</p><a class="rp-btn rp-btn-secondary" href="dashboard.html">Retour</a></div>'; });
+</script>
+</body>
+</html>

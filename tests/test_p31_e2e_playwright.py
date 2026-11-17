@@ -215,6 +215,24 @@ def main():
         page.screenshot(path="/tmp/p31_final.png", full_page=True)
         ck(Path("/tmp/p31_final.png").exists(), "capture finale /tmp/p31_final.png")
 
+        # ── 9. P40 Notifications (page + prefs + notif générée par le parcours) ──
+        print("\n--- 9. Notifications (P40) ---")
+        page.goto(f"{URL}/career/notifications.html", wait_until="networkidle")
+        page.wait_for_selector("#rp-prefs-form", timeout=8000)
+        ck(page.locator("#rp-prefs-form").count() == 1, "notifications page : formulaire prefs rendu")
+        ck(page.locator('[name="alert_min_score"]').count() == 1, "prefs : champ alert_min_score présent")
+        ck(page.locator('[name="alert_enabled"]').count() == 1, "prefs : opt-in alert_enabled présent")
+        # Le parcours a lancé matching (→ new_match si score≥70) + changé statut candidature → interview
+        # (→ application_status). Au moins 1 notif devrait exister (application_status interview).
+        notif_rows = page.locator(".rp-table tbody tr").count()
+        ck(notif_rows >= 1, f"notifications : ≥1 notif générée par le parcours ({notif_rows} notif(s))")
+        # Unread-count API répond
+        uc = page.evaluate("""async () => {
+          const r = await fetch('/api/career/notifications/unread-count', {headers: {Authorization: 'Bearer ' + localStorage.getItem('revpulse_jwt')}});
+          return (await r.json()).unread;
+        }""")
+        ck(uc >= 1, f"API unread-count ≥ 1 ({uc})")
+
         # Capture token pour le test responsive mobile (évite re-register/re-demo)
         captured_tok = page.evaluate("localStorage.getItem('revpulse_jwt')")
 

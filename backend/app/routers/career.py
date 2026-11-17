@@ -37,6 +37,7 @@ from ..database import get_db
 from ..deps import get_current_user
 from ..services import (
     career_cv,
+    career_notifier,
     career_referential,
     cover_letter,
     cv_adapter,
@@ -103,6 +104,15 @@ def upsert_profile(
         profile.tjm_min = body.tjm_min
         profile.currency = body.currency
         profile.languages = body.languages
+        # P40 — prefs notification (optionnelles, opt-in explicite)
+        if body.alert_enabled is not None:
+            profile.alert_enabled = body.alert_enabled
+        if body.alert_min_score is not None:
+            profile.alert_min_score = body.alert_min_score
+        if body.alert_channels is not None:
+            profile.alert_channels = body.alert_channels
+        if body.alert_frequency is not None:
+            profile.alert_frequency = body.alert_frequency
         action = "career.profile.update"
     else:
         profile = models.CareerProfile(
@@ -116,6 +126,10 @@ def upsert_profile(
             tjm_min=body.tjm_min,
             currency=body.currency,
             languages=body.languages,
+            alert_enabled=body.alert_enabled if body.alert_enabled is not None else True,
+            alert_min_score=body.alert_min_score if body.alert_min_score is not None else 70,
+            alert_channels=body.alert_channels if body.alert_channels is not None else ["in_app"],
+            alert_frequency=body.alert_frequency if body.alert_frequency is not None else "daily",
         )
         db.add(profile)
         action = "career.profile.create"
@@ -454,6 +468,16 @@ def matching_search(
             eliminatory_flags=bd.eliminatory_flags,
         ))
     results.sort(key=lambda r: r.total_score, reverse=True)
+    # P40 — génère les notifications new_match pour les offres ≥ alert_min_score (opt-in + dedup anti-spam
+    # gérés par career_notifier.notify_new_match : alert_enabled False → skip, déjà notifié → skip).
+    # Une notif en échec ne doit jamais casser le matching (try/except pass).
+    scored = {r.posting.id: r.total_score for r in results}
+    for p in postings:
+        if scored.get(p.id, 0) >= (profile.alert_min_score or 0):
+            try:
+                career_notifier.notify_new_match(db, profile, cv.id, p, scored[p.id])
+            except Exception:
+                pass
     return results
 
 
@@ -661,12 +685,18 @@ def update_application(
         if body.status not in _APPLICATION_STATUSES:
             raise HTTPException(status.HTTP_400_BAD_REQUEST, f"status doit être dans {_APPLICATION_STATUSES}.")
         if body.status != app.status:
+            old_status = app.status  # P40 — capturé avant mutation pour la notif application_status
             timeline = list(app.timeline or [])  # nouvel objet — SQLAlchemy ne détecte pas les mutations in-place JSON.
             timeline.append({"step": "status_change", "status": body.status,
                              "date": datetime.utcnow().isoformat(),
                              "note": f"Statut changé : {app.status} → {body.status}."})
             app.timeline = timeline
             app.status = body.status
+            _pending_status_change = (old_status, body.status)  # notif P40 après commit
+        else:
+            _pending_status_change = None
+    else:
+        _pending_status_change = None
     if body.notes is not None:
         app.notes = body.notes
     db.commit()
@@ -676,6 +706,14 @@ def update_application(
               detail={"status": app.status})
     db.commit()
     db.refresh(app)
+    # P40 — notif application_status sur changement vers interview/offer/rejected (opt-in + dedup anti-spam
+    # gérés par career_notifier : alert_enabled False → skip, déjà notifié pour (app_id, new_status) → skip).
+    if _pending_status_change:
+        try:
+            career_notifier.notify_application_status(db, profile, app,
+                                                      _pending_status_change[0], _pending_status_change[1])
+        except Exception:
+            pass  # une notif en échec ne doit pas casser la MAJ candidature
     return app
 
 
@@ -712,3 +750,87 @@ def send_application(
     db.commit()
     db.refresh(app)
     return app
+
+
+# ─── P40 — Notifications intelligentes ────────────────────────────────────────
+@router.get("/notifications", response_model=list[schemas.CareerNotificationOut])
+def list_notifications(
+    unread_only: bool = False,
+    limit: int = 50,
+    db: Session = Depends(get_db),
+    user: models.User = Depends(get_current_user),
+):
+    """Liste les notifications Career (P40). unread_only=True → filtre non lus. Isolation user_id."""
+    return career_notifier.list_notifications(db, user.id, unread_only=unread_only, limit=limit)
+
+
+@router.get("/notifications/unread-count")
+def notifications_unread_count(
+    db: Session = Depends(get_db),
+    user: models.User = Depends(get_current_user),
+):
+    """Nombre de notifications non lues (badge dashboard). P40."""
+    return {"unread": career_notifier.unread_count(db, user.id)}
+
+
+@router.post("/notifications/{notif_id}/read", response_model=schemas.CareerNotificationOut)
+def mark_notification_read(
+    notif_id: str,
+    db: Session = Depends(get_db),
+    user: models.User = Depends(get_current_user),
+):
+    """Marque une notification comme lue (idempotent). Isolation user_id (404 si notif d'un autre user)."""
+    n = career_notifier.mark_read(db, user.id, notif_id)
+    if not n:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Notification introuvable.")
+    return n
+
+
+@router.post("/notifications/read-all")
+def mark_all_notifications_read(
+    db: Session = Depends(get_db),
+    user: models.User = Depends(get_current_user),
+):
+    """Marque toutes les notifications non lues comme lues. P40. Retourne le nombre marqué."""
+    count = career_notifier.mark_all_read(db, user.id)
+    return {"marked_read": count}
+
+
+@router.get("/notifications/prefs", response_model=schemas.NotificationPrefsOut)
+def get_notification_prefs(
+    db: Session = Depends(get_db),
+    user: models.User = Depends(get_current_user),
+):
+    """Préférences notification Career (P40). alert_enabled = opt-in explicite (anti-spam)."""
+    profile = _get_or_404_profile(db, user.id)
+    return profile
+
+
+@router.put("/notifications/prefs", response_model=schemas.NotificationPrefsOut)
+def update_notification_prefs(
+    body: schemas.NotificationPrefsUpdate,
+    db: Session = Depends(get_db),
+    user: models.User = Depends(get_current_user),
+):
+    """Met à jour les préférences notification (P40). opt-in/opt-out explicite anti-spam.
+    alert_enabled=False → aucune notification future (notify_* retourne None)."""
+    profile = _get_or_404_profile(db, user.id)
+    if body.alert_enabled is not None:
+        profile.alert_enabled = body.alert_enabled
+    if body.alert_min_score is not None:
+        profile.alert_min_score = body.alert_min_score
+    if body.alert_channels is not None:
+        # validation : canaux autorisés uniquement
+        valid = [c for c in body.alert_channels if c in ("in_app", "email")]
+        profile.alert_channels = valid or ["in_app"]
+    if body.alert_frequency is not None:
+        profile.alert_frequency = body.alert_frequency
+    db.commit()
+    db.refresh(profile)
+    log_audit(db, tenant_id="career", actor_user_id=user.id, actor_name=user.name,
+              action="career.notification_prefs.update", target_type="career_profile",
+              target_id=profile.id,
+              detail={"alert_enabled": profile.alert_enabled, "alert_min_score": profile.alert_min_score})
+    db.commit()
+    db.refresh(profile)
+    return profile
