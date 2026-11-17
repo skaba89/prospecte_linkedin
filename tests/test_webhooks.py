@@ -81,7 +81,7 @@ ck('"contact.created"' in svc and '"contact.scored"' in svc, True, "SUPPORTED_EV
 ck('"sequence.enrolled"' in svc and '"sequence.step_completed"' in svc, True, "SUPPORTED_EVENTS: sequence.enrolled + step_completed")
 ck('"email.sent"' in svc and '"opportunity.created"' in svc, True, "SUPPORTED_EVENTS: email.sent + opportunity.created")
 ck("def gen_secret()" in svc, True, "gen_secret (auto-gen key)")
-ck("_secrets.token_hex(16)" in svc, True, "gen_secret 32 hex chars (128 bits)")
+ck("crypto.new_secret()" in svc, True, "gen_secret via crypto.new_secret (P24-A, 32 hex 128 bits)")
 ck("def _sign(secret: str, body: bytes) -> str:" in svc, True, "_sign function")
 ck("hmac.new(secret.encode(), body, hashlib.sha256)" in svc, True, "_sign HMAC-SHA256")
 ck("def emit_event(db: Session, *, tenant_id: str, event: str, payload: dict) -> int:" in svc, True, "emit_event signature")
@@ -92,13 +92,13 @@ ck("best-effort" in svc.lower(), True, "emit_event best-effort (ne lève jamais)
 ck("def deliver(db: Session, delivery: models.WebhookDelivery) -> bool:" in svc, True, "deliver signature")
 ck("X-RevPulse-Signature" in svc, True, "deliver header X-RevPulse-Signature (HMAC)")
 ck("X-RevPulse-Event" in svc, True, "deliver header X-RevPulse-Event")
-ck("urllib.request.urlopen(req, timeout=DELIVERY_TIMEOUT)" in svc, True, "deliver urllib POST (stdlib, pas de dep requests)")
+ck("safe_urlopen(req, DELIVERY_TIMEOUT)" in svc, True, "deliver via safe_urlopen (P24-A SSRF-safe, redirect re-validated)")
 ck("delivery.attempts += 1" in svc, True, "deliver incrémente attempts")
 ck("delivery.attempts >= delivery.max_attempts" in svc, True, "deliver retry policy (failed si épuisé)")
 ck("def deliver_pending(db: Session, limit: int = 50) -> int:" in svc, True, "deliver_pending (retry batch)")
 
-# ─── routers/webhooks.py : 8 routes + RBAC + audit ─────────────────────────────
-print("\n=== routers/webhooks.py : 8 routes + RBAC + audit ===")
+# ─── routers/webhooks.py : 9 routes + RBAC + audit (P24-A +rotate) ────────────
+print("\n=== routers/webhooks.py : 9 routes + RBAC + audit (P24-A +rotate) ===")
 rtr = read("backend/app/routers/webhooks.py")
 ck('prefix="/api/tenants/{tid}/webhooks"' in rtr, True, "router prefix /api/tenants/{tid}/webhooks")
 ck('tags=["webhooks"]' in rtr, True, "router tag webhooks")
@@ -110,7 +110,7 @@ ck('@router.delete("/{wid}", status_code=status.HTTP_200_OK)' in rtr, True, "DEL
 ck('@router.post("/{wid}/test", response_model=schemas.WebhookTestResult)' in rtr, True, "POST /{wid}/test (ping)")
 ck('@router.get("/{wid}/deliveries", response_model=list[schemas.WebhookDeliveryOut])' in rtr, True, "GET /{wid}/deliveries")
 ck('@router.post("/{wid}/deliveries/{did}/retry", response_model=schemas.WebhookDeliveryOut)' in rtr, True, "POST /{wid}/deliveries/{did}/retry")
-ck(rtr.count('require_permission("workspace.manage")'), 8, "RBAC workspace.manage sur les 8 routes (admin-only)")
+ck(rtr.count('require_permission("workspace.manage")'), 9, "RBAC workspace.manage sur les 9 routes (admin-only, +rotate P24-A)")
 ck('action="webhook.create"' in rtr, True, "audit webhook.create")
 ck('action="webhook.update"' in rtr, True, "audit webhook.update")
 ck('action="webhook.delete"' in rtr, True, "audit webhook.delete")
@@ -178,10 +178,11 @@ else:
             ("/api/tenants/{tid}/webhooks/{wid}/test", "POST"),
             ("/api/tenants/{tid}/webhooks/{wid}/deliveries", "GET"),
             ("/api/tenants/{tid}/webhooks/{wid}/deliveries/{did}/retry", "POST"),
+            ("/api/tenants/{tid}/webhooks/{wid}/rotate", "POST"),  # P24-A rotation secret
         }
         for p, m in expected:
             ck((p, m) in paths, True, f"route {p} [{m}]")
-        ck(len(paths), 8, "exactement 8 routes webhook (pas de doublon)")
+        ck(len(paths), 9, "exactement 9 routes webhook (pas de doublon, +rotate P24-A)")
 
         # SUPPORTED_EVENTS au runtime
         from app.services import webhooks as wh_svc
