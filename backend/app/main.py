@@ -160,8 +160,9 @@ async def stripe_webhook(request: Request, db: Session = Depends(get_db)):
     sinon mode mock (accepte les events de test). Met à jour Subscription (plan/status/stripe IDs).
     Stripe attend 200 pour acquitter — on retourne toujours 200 (erreurs loggées)."""
     import json
-    from .services import billing_service
+
     from .config import settings as cfg
+    from .services import billing_service
     raw = await request.body()
     sig = request.headers.get("stripe-signature", "")
     payload = raw.decode("utf-8", errors="replace")
@@ -173,13 +174,13 @@ async def stripe_webhook(request: Request, db: Session = Depends(get_db)):
             event = stripe.Webhook.construct_event(payload, sig, cfg.stripe_webhook_secret)
             event_dict = event.to_dict() if hasattr(event, "to_dict") else dict(event)
         except Exception as e:
-            raise HTTPException(400, f"Signature Stripe invalide : {e}")
+            raise HTTPException(400, f"Signature Stripe invalide : {e}") from None
     else:
         # Mode mock (dev/CI/test) — parse JSON directement
         try:
             event_dict = json.loads(payload)
         except Exception:
-            raise HTTPException(400, "Payload JSON invalide (mode mock — pas de STRIPE_WEBHOOK_SECRET).")
+            raise HTTPException(400, "Payload JSON invalide (mode mock — pas de STRIPE_WEBHOOK_SECRET).") from None
     return billing_service.handle_webhook_event(db, event_dict)
 
 

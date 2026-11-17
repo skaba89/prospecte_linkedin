@@ -13,6 +13,7 @@ Devises : CURRENCIES = EUR|USD|GNF|XOF (symbole + code Stripe). Prix stockés en
   l'affichage (taux fixes simplifiés — v2 : taux dynamiques).
 """
 from __future__ import annotations
+
 from datetime import datetime, timedelta
 from typing import Any
 
@@ -180,7 +181,7 @@ def create_checkout_session(db: Session, tenant_id: str, target_plan: str, succe
             import stripe  # type: ignore
             stripe.api_key = settings.stripe_secret_key
             # Prix en centimes (Stripe), convertir EUR → devise Stripe
-            amount_cents = int(round(price_eur * CURRENCIES[currency]["rate_from_eur"] * 100))
+            amount_cents = round(price_eur * CURRENCIES[currency]["rate_from_eur"] * 100)
             session = stripe.checkout.Session.create(
                 mode="subscription",
                 customer_email=sub.stripe_customer_id or None,

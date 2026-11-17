@@ -37,8 +37,7 @@ from datetime import datetime
 from sqlalchemy.orm import Session
 
 from ... import models
-from .. import crypto
-from .. import billing_service
+from .. import billing_service, crypto
 from .base import GenerationRequest, ProviderError
 from .providers import PROVIDERS, SimulatedProvider, get_provider
 from .safety import detect_injection, redact_pii, render_prompt

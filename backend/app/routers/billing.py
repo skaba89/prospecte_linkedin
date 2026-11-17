@@ -93,7 +93,7 @@ def checkout(tid: str, body: schemas.CheckoutRequest, db: Session = Depends(get_
         result = billing_service.create_checkout_session(db, tid, body.target_plan, body.success_url, body.cancel_url)
         return result
     except ValueError as e:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(e))
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(e)) from None
 
 
 @router.patch("/currency", status_code=status.HTTP_200_OK)
@@ -106,4 +106,4 @@ def update_currency(tid: str, body: schemas.CurrencyUpdate, db: Session = Depend
         db.commit()
         return {"currency": tenant.currency, "symbol": billing_service.CURRENCIES[tenant.currency]["symbol"]}
     except ValueError as e:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(e))
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(e)) from None
