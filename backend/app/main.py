@@ -73,6 +73,14 @@ app.add_middleware(RequestLoggingMiddleware)
 
 @app.on_event("startup")
 def _startup():
+    # P32 : durcissement production — WEBHOOK_SSRF_ALLOW_PRIVATE=True est une exception SSRF
+    # légitime en dev/CI (test_api.py reçoit les webhooks sur localhost) mais une faille en prod
+    # (autorise les webhooks à pointer vers des services internes/metadata). Fail-fast au boot.
+    if settings.env == "production" and os.getenv("WEBHOOK_SSRF_ALLOW_PRIVATE", "").lower() in ("1", "true", "yes"):
+        raise RuntimeError(
+            "REVPULSE_ENV=production + WEBHOOK_SSRF_ALLOW_PRIVATE=True interdit en production "
+            "(contourne la protection SSRF — retire cette variable en prod)."
+        )
     init_db()
     db = SessionLocal()
     try:

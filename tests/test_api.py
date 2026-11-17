@@ -1647,6 +1647,24 @@ call("DELETE", f"/api/tenants/tnt-demo/crm/opportunities/{opp_p28['id']}", tok)
 call("DELETE", f"/api/tenants/tnt-demo/crm/contacts/{ctc_p28['id']}", tok)
 call("DELETE", f"/api/tenants/tnt-demo/sales-intel/warmup/{warmup['id']}", tok) if False else None  # warmup non deletable via API (no DELETE endpoint) — laissé en DB (data analytics)
 
+# ─── P32 : Sécurité & production ─────────────────────────────────────────────
+print("=== 196. POST /ai/providers (base_url SSRF bloquée : 169.254.169.254) → 422 ===")
+s, body = call("POST", "/api/tenants/tnt-demo/ai/providers", tok,
+               {"provider": "openai", "label": "SSRF blocked", "api_key": "sk-test",
+                "base_url": "http://169.254.169.254/latest/meta-data/"})
+ck(s, 422, f"SSRF metadata URL → 422 (got {s})")
+ck("SSRF" in str(body.get("detail", "")) or "refusée" in str(body.get("detail", "")), True,
+   f"detail contient SSRF/refusée : {body.get('detail', '')[:50]}")
+
+print("=== 197. POST /ai/providers (base_url publique https://api.openai.com) → 201 ===")
+s, cfg_p32 = call("POST", "/api/tenants/tnt-demo/ai/providers", tok,
+                  {"provider": "openai", "label": "P32 public URL", "api_key": "sk-test-p32",
+                   "base_url": "https://api.openai.com/v1"})
+ck(s, 201, f"SSRF public URL → 201 (got {s})")
+ck(cfg_p32.get("base_url"), "https://api.openai.com/v1", "base_url publique persistée")
+# Cleanup P32 : delete le provider config créé.
+call("DELETE", f"/api/tenants/tnt-demo/ai/providers/{cfg_p32['id']}", tok)
+
 print()
 print(f"RESULT: {passed} passed, {failed} failed")
 sys.exit(0 if failed == 0 else 1)

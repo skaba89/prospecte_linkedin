@@ -49,6 +49,18 @@ _BLOCKED_NETWORKS = [
 # bypass la blocklist IP (les schémas http/https + la re-validation des redirects restent actifs).
 _ALLOW_PRIVATE = os.getenv("WEBHOOK_SSRF_ALLOW_PRIVATE", "").lower() in ("1", "true", "yes")
 
+# P32 : réseaux TOUJOURS bloqués, même en dev/test (_ALLOW_PRIVATE=true). Metadata cloud (169.254/16),
+# 0.0.0.0/8 (unspecified) + CGNAT (100.64/10) + IPv6 link-local (fe80::/10) ne sont JAMAIS des URLs
+# légitimes pour un provider IA ou un webhook outbound — un provider IA ne vit pas sur le metadata
+# service. Le bypass dev ne s'applique qu'au loopback (127/8 IPv4 + ::1 IPv6 — Ollama local) + private
+# IPv4 (10/8, 172.16/12, 192.168/16 — réseau interne dev).
+_STRICT_BLOCKED_NETWORKS = [
+    ipaddress.ip_network("0.0.0.0/8"),
+    ipaddress.ip_network("100.64.0.0/10"),  # CGNAT
+    ipaddress.ip_network("169.254.0.0/16"),  # link-local + cloud metadata (169.254.169.254)
+    ipaddress.ip_network("fe80::/10"),  # link-local IPv6 (jamais un provider IA)
+]
+
 
 def _is_blocked_ip(ip_str: str) -> bool:
     """True si l'IP est dans un réseau bloqué. IP invalide → bloquée (fail-safe).
@@ -60,6 +72,23 @@ def _is_blocked_ip(ip_str: str) -> bool:
         ip = ipaddress.ip_address(ip_str)
     except ValueError:
         return True
+    return any(ip in net for net in _BLOCKED_NETWORKS)
+
+
+def _is_blocked_ip_strict(ip_str: str) -> bool:
+    """P32 : variante stricte pour les URLs de CONFIGURATION (providers IA base_url). Bloque TOUJOURS
+    les réseaux _STRICT_BLOCKED_NETWORKS (metadata cloud, 0.0.0.0, CGNAT, loopback IPv6, link-local)
+    même si WEBHOOK_SSRF_ALLOW_PRIVATE=true — ces IPs ne sont JAMAIS un provider IA légitime. Le
+    bypass dev (_ALLOW_PRIVATE) ne s'applique qu'au loopback IPv4 (127/8 — Ollama local) + private
+    IPv4 (réseau interne dev). IP invalide → bloquée (fail-safe)."""
+    try:
+        ip = ipaddress.ip_address(ip_str)
+    except ValueError:
+        return True
+    if any(ip in net for net in _STRICT_BLOCKED_NETWORKS):
+        return True
+    if _ALLOW_PRIVATE:
+        return False  # loopback IPv4 + private IPv4 autorisés en dev (Ollama, proxy interne)
     return any(ip in net for net in _BLOCKED_NETWORKS)
 
 
@@ -94,6 +123,40 @@ def validate_url(url: str) -> tuple[bool, str, list[str]]:
         ips.append(ip)
         if _is_blocked_ip(ip):
             return False, f"IP résolue bloquée (privée/loopback/metadata) : {ip} pour {parsed.hostname}", []
+    return True, "", ips
+
+
+def validate_url_strict(url: str) -> tuple[bool, str, list[str]]:
+    """P32 : variante stricte de validate_url pour les URLs de CONFIGURATION (providers IA base_url).
+    Bloque TOUJOURS les réseaux _STRICT_BLOCKED_NETWORKS (metadata cloud, 0.0.0.0, CGNAT, loopback IPv6,
+    link-local) même en dev/test (_ALLOW_PRIVATE=true). Le bypass dev ne s'applique qu'au loopback IPv4
+    (127/8 — Ollama local) + private IPv4 (proxy interne). Utilisé par routers/ai.create/update config
+    pour empêcher un admin de pointer un provider IA vers le metadata service (exfil de credentials API).
+    """
+    if not url or not isinstance(url, str) or len(url) > 2048:
+        return False, "URL vide, non-chaîne ou trop longue (>2048)", []
+    parsed = urllib.parse.urlparse(url)
+    if parsed.scheme not in ("http", "https"):
+        return False, f"Schéma non autorisé : {parsed.scheme or 'absent'} (http/https uniquement)", []
+    if not parsed.hostname:
+        return False, "Hostname manquant", []
+    try:
+        ipaddress.ip_address(parsed.hostname)
+        if _is_blocked_ip_strict(parsed.hostname):
+            return False, f"IP littérale bloquée (metadata/CGNAT/loopback — strict) : {parsed.hostname}", []
+        return True, "", [parsed.hostname]
+    except ValueError:
+        pass
+    try:
+        infos = socket.getaddrinfo(parsed.hostname, None)
+    except socket.gaierror as e:
+        return False, f"Résolution DNS échouée pour {parsed.hostname} : {e}", []
+    ips = []
+    for info in infos:
+        ip = info[4][0].split("%")[0]
+        ips.append(ip)
+        if _is_blocked_ip_strict(ip):
+            return False, f"IP résolue bloquée (metadata/CGNAT/loopback — strict) : {ip} pour {parsed.hostname}", []
     return True, "", ips
 
 

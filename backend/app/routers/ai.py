@@ -28,7 +28,7 @@ from ..audit import log_audit
 from ..database import get_db
 from ..deps import get_tenant, require_permission
 from ..pagination import Page, page_dep, set_total
-from ..services import crypto
+from ..services import crypto, url_safety
 from ..services.ai import gateway
 from ..services.ai.providers import SUPPORTED_PROVIDERS, get_provider
 
@@ -106,6 +106,14 @@ def create_provider(
                             f"Provider non supporté : {body.provider} (supportés : {SUPPORTED_PROVIDERS})")
     if not get_provider(body.provider):
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, f"Provider inconnu : {body.provider}")
+    # P32 : SSRF — valider base_url si fourni (validate_url_strict bloque metadata/CGNAT TOUJOURS,
+    # même en dev — un provider IA ne vit jamais sur le metadata service. Le bypass dev (_ALLOW_PRIVATE)
+    # ne s'applique qu'au loopback IPv4 (Ollama local) + private IPv4 (proxy interne)).
+    if body.base_url:
+        ok, err, _ = url_safety.validate_url_strict(body.base_url)
+        if not ok:
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
+                                f"base_url refusée (SSRF) : {err}")
     cfg = models.AIProviderConfig(
         tenant_id=tid,
         provider=body.provider,
@@ -150,6 +158,12 @@ def update_provider(
         cfg.api_key_enc = crypto.encrypt(body.api_key)
         detail["api_key_rotated"] = True
     if body.base_url is not None:
+        # P32 : SSRF strict — valider la nouvelle base_url si non vide (clear = "" autorisé).
+        if body.base_url:
+            ok, err, _ = url_safety.validate_url_strict(body.base_url)
+            if not ok:
+                raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
+                                    f"base_url refusée (SSRF) : {err}")
         cfg.base_url = body.base_url
         detail["base_url"] = body.base_url
     if body.enabled is not None:
