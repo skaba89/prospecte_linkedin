@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RevPulse Career — Mon profil</title>
+<link rel="stylesheet" href="assets/career.css">
+</head>
+<body>
+<div class="rp-layout">
+  <aside class="rp-sidebar" data-rp-sidebar></aside>
+  <div class="rp-backdrop"></div>
+  <div class="rp-main">
+    <header class="rp-topbar">
+      <button class="rp-menu-btn" data-rp-menu>☰</button>
+      <span class="rp-topbar-title" data-rp-topbar-title>Mon profil</span>
+      <button class="rp-btn rp-btn-ghost rp-btn-sm" data-rp-logout>Déconnexion</button>
+    </header>
+    <main class="rp-content" id="rp-content">
+      <div class="rp-loading">Chargement du profil…</div>
+    </main>
+  </div>
+</div>
+<script src="assets/career.js"></script>
+<script>
+(async function () {
+  "use strict";
+  if (!RP.requireAuth()) return;
+  RP.bootstrap("profile", "Mon profil");
+
+  var c = document.getElementById("rp-content");
+  var profile = null, jobs = [];
+  try { profile = await RP.api("/api/career/profile"); } catch (e) { /* 404 = pas encore créé */ }
+  try { jobs = await RP.api("/api/career/referential/jobs"); } catch (e) { jobs = []; }
+
+  var jobOpts = '<option value="">— Sélectionner un métier —</option>' +
+    (jobs || []).map(function (j) {
+      var lbl = j.title || j.label || j.name;
+      return '<option value="' + RP.esc(lbl) + '">' + RP.esc(lbl) + (j.category ? " · " + RP.esc(j.category) : "") + "</option>";
+    }).join("");
+
+  var p = profile || {};
+  function checked(arr, val) { return (arr || []).indexOf(val) >= 0 ? "checked" : ""; }
+
+  c.innerHTML =
+    '<h1>Mon profil candidat</h1>' +
+    '<p class="rp-muted">Ces critères alimentent le matching CV/offres et les recommandations. Vos données Career sont isolées de l\'espace Business.</p>' +
+    '<form id="rp-profile-form">' +
+    '<div class="rp-card">' +
+    '<div class="rp-card-header"><h3 class="rp-card-title">Objectif professionnel</h3></div>' +
+    '<div class="rp-form-row"><label class="rp-label">Métier visé</label>' +
+    '<select class="rp-select" name="target_job_title">' + jobOpts + "</select>" +
+    '<div class="rp-help">Choisir parmi le référentiel multimétiers (ROME/ESCO inspiré). Vous pouvez aussi saisir librement.</div></div>' +
+    '<div class="rp-form-row"><label class="rp-label">Localisation préférée</label>' +
+    '<input class="rp-input" name="preferred_location" value="' + RP.esc(p.preferred_location || "") + '" placeholder="Paris, France / remote / Afrique de l\'Ouest"></div>' +
+    '<div class="rp-form-row"><label class="rp-label">Mobilité</label>' +
+    '<label style="display:flex;align-items:center;gap:8px"><input type="checkbox" name="mobility" ' + (p.mobility ? "checked" : "") + '> J\'accepte la relocalisation</label></div>' +
+    '</div>' +
+
+    '<div class="rp-card">' +
+    '<div class="rp-card-header"><h3 class="rp-card-title">Types de contrat</h3></div>' +
+    '<div class="rp-pill-list">' +
+    ["CDI", "CDD", "Freelance", "Stage", "Alternance"].map(function (t) {
+      return '<label class="rp-tag" style="cursor:pointer"><input type="checkbox" name="contract_types" value="' + t + '" ' + checked(p.contract_types, t) + "> " + t + "</label>";
+    }).join("") + "</div></div>" +
+
+    '<div class="rp-card">' +
+    '<div class="rp-card-header"><h3 class="rp-card-title">Rémunération</h3></div>' +
+    '<div class="rp-grid rp-grid-2">' +
+    '<div class="rp-form-row"><label class="rp-label">Salaire min (annuel brut)</label><input class="rp-input" type="number" name="salary_min" value="' + (p.salary_min || "") + '" min="0"></div>' +
+    '<div class="rp-form-row"><label class="rp-label">Salaire max (annuel brut)</label><input class="rp-input" type="number" name="salary_max" value="' + (p.salary_max || "") + '" min="0"></div>' +
+    '<div class="rp-form-row"><label class="rp-label">TJM min (freelance, €/jour)</label><input class="rp-input" type="number" name="tjm_min" value="' + (p.tjm_min || "") + '" min="0"></div>' +
+    '<div class="rp-form-row"><label class="rp-label">Devise</label><select class="rp-select" name="currency">' +
+    ["EUR", "USD", "GNF", "XOF"].map(function (cur) { return '<option ' + ((p.currency || "EUR") === cur ? "selected" : "") + ">" + cur + "</option>"; }).join("") + "</select></div>" +
+    "</div></div>" +
+
+    '<div class="rp-card">' +
+    '<div class="rp-card-header"><h3 class="rp-card-title">Langues</h3></div>' +
+    '<div class="rp-pill-list">' +
+    ["fr", "en", "es", "de", "ar", "wo"].map(function (l) {
+      return '<label class="rp-tag" style="cursor:pointer"><input type="checkbox" name="languages" value="' + l + '" ' + checked(p.languages, l) + "> " + l.toUpperCase() + "</label>";
+    }).join("") + "</div></div>" +
+
+    '<div class="rp-btn-row"><button type="submit" class="rp-btn rp-btn-primary">Enregistrer mon profil</button>' +
+    '<a class="rp-btn rp-btn-secondary" href="dashboard.html">Retour</a></div>' +
+    "</form>";
+
+  // Make target_job_title an editable combobox (allow free text via data list fallback)
+  var sel = c.querySelector('[name="target_job_title"]');
+  if (p.target_job_title) {
+    // if profile target not in list, add it
+    var exists = Array.from(sel.options).some(function (o) { return o.value === p.target_job_title; });
+    if (!exists) { var o = document.createElement("option"); o.value = p.target_job_title; o.textContent = p.target_job_title + " (personnalisé)"; sel.appendChild(o); }
+    sel.value = p.target_job_title;
+  }
+
+  document.getElementById("rp-profile-form").addEventListener("submit", async function (e) {
+    e.preventDefault();
+    var fd = new FormData(this);
+    var body = {
+      target_job_title: fd.get("target_job_title") || null,
+      preferred_location: fd.get("preferred_location") || null,
+      mobility: !!fd.get("mobility"),
+      contract_types: fd.getAll("contract_types"),
+      salary_min: fd.get("salary_min") ? Number(fd.get("salary_min")) : null,
+      salary_max: fd.get("salary_max") ? Number(fd.get("salary_max")) : null,
+      tjm_min: fd.get("tjm_min") ? Number(fd.get("tjm_min")) : null,
+      currency: fd.get("currency") || "EUR",
+      languages: fd.getAll("languages")
+    };
+    var btn = this.querySelector("button[type=submit]"); btn.disabled = true; btn.textContent = "…";
+    try {
+      await RP.api("/api/career/profile", { method: "PUT", body: body });
+      RP.toast("Profil enregistré.", "success");
+    } catch (err) { RP.toast(err.message, "error"); }
+    btn.disabled = false; btn.textContent = "Enregistrer mon profil";
+  });
+})().catch(function (e) { document.getElementById("rp-content").innerHTML = '<div class="rp-card"><p>Erreur : ' + RP.esc(e.message) + '</p><a class="rp-btn rp-btn-secondary" href="dashboard.html">Retour</a></div>'; });
+</script>
+</body>
+</html>
