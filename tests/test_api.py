@@ -1771,6 +1771,19 @@ s, del_body = call("DELETE", f"/api/career/saved-searches/{saved['id']}", tok)
 ck(s, 200, "saved search delete 200")
 ck(del_body.get("deleted"), saved["id"], "delete renvoie {deleted: id}")
 
+# ─── P36 : Career — matching intelligent CV↔offre (score hybride explicable) ───
+print("=== 213. POST /api/career/matching/{cv_id}/{posting_id} → 404 (posting introuvable, v1 stubs) ===")
+# Pas de postings en DB (v1 stubs P35 → 0 postings). Endpoint valide l'isolation + 404 si posting absent.
+s, match_err = call("POST", f"/api/career/matching/{cv['id']}/posting_inexistant", tok, {})
+ck(s, 404, "matching 404 (posting introuvable — v1 stubs, 0 postings en DB)")
+ck("introuvable" in str(match_err.get("detail", "")).lower(), True, f"detail mentionne introuvable : {match_err.get('detail')}")
+
+print("=== 214. POST /api/career/matching/search → 200 (ranked, 0 postings v1 stubs) ===")
+s, ranked = call("POST", "/api/career/matching/search", tok, {"cv_id": cv["id"], "limit": 10})
+ck(s, 200, "matching search 200")
+ck(isinstance(ranked, list), True, "ranked est une liste")
+ck(len(ranked), 0, f"{len(ranked)} résultats ranked (0 — v1 stubs ne génèrent pas de postings)")
+
 print()
 print(f"RESULT: {passed} passed, {failed} failed")
 sys.exit(0 if failed == 0 else 1)

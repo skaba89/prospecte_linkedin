@@ -1588,3 +1588,47 @@ class SavedSearchOut(BaseModel):
     created_at: datetime
     updated_at: datetime
     model_config = ConfigDict(from_attributes=True)
+
+
+# ─── P36 — Career : matching intelligent CV↔offre (score hybride explicable) ──
+
+
+class MatchingCriterionOut(BaseModel):
+    """Sous-score d'un critère de matching (P36). score 0-100, weight 0-1, contribution = weight*score.
+    eliminatory=True si critère obligatoire échoué (cap le total à 60)."""
+    name: str  # skills|experience|certifications|location|salary|languages
+    weight: float
+    score: float
+    detail: str
+    eliminatory: bool
+
+
+class MatchingBreakdownOut(BaseModel):
+    """Résultat du matching CV↔offre (P36). total_score = somme pondérée (0-100, capée à 60 si
+    éliminatoire). missing_skills = compétences requises non présentes dans le CV. disclaimer :
+    score = compatibilité, NE PAS présenter comme probabilité de recrutement (anti-sur-déclaration)."""
+    cv_id: str
+    posting_id: str
+    total_score: float
+    criteria: list[MatchingCriterionOut]
+    missing_skills: list[str]
+    eliminatory_flags: list[str]
+    disclaimer: str
+
+
+class MatchingRankedItemOut(BaseModel):
+    """Item d'une recherche matching ranked (P36) — match du CV actif contre N postings."""
+    posting: JobPostingOut
+    total_score: float
+    missing_skills: list[str]
+    eliminatory_flags: list[str]
+
+
+class MatchingSearchRequest(BaseModel):
+    """Requête de matching ranked (P36). cv_id (si omis → CV actif du profil). limit = nb postings à scorer
+    (cap 50 anti-abus). filters optionnels (keywords/location/source)."""
+    cv_id: str | None = None  # None → CV is_active=True du profil
+    keywords: str | None = None
+    location: str | None = None
+    source: str | None = None
+    limit: int = Field(default=20, ge=1, le=50)
