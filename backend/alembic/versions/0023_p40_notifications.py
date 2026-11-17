@@ -51,7 +51,8 @@ def upgrade() -> None:
     op.create_index("ix_career_notifications_type", "career_notifications", ["type"])
 
     # Préférences notification sur career_profiles (opt-in explicite anti-spam)
-    op.add_column("career_profiles", sa.Column("alert_enabled", sa.Boolean(), nullable=False, server_default=sa.text("1")))
+    # server_default "true" (pas "1") : PostgreSQL rejette DEFAULT 1 sur boolean (DatatypeMismatch).
+    op.add_column("career_profiles", sa.Column("alert_enabled", sa.Boolean(), nullable=False, server_default=sa.text("true")))
     op.add_column("career_profiles", sa.Column("alert_min_score", sa.Integer(), nullable=False, server_default=sa.text("70")))
     op.add_column("career_profiles", sa.Column("alert_channels", sa.JSON(), nullable=True))
     op.add_column("career_profiles", sa.Column("alert_frequency", sa.String(), nullable=False, server_default="daily"))
