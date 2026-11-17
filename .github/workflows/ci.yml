@@ -100,6 +100,8 @@ jobs:
         run: python tests/test_p32_security.py
       - name: P34 Career référentiel métiers + CV (import text/PDF/Word + parse + transferrable + isolation)
         run: python tests/test_p34_career.py
+      - name: P35 Career recherche opportunités (connecteurs 12 providers + dedup + expired + saved searches)
+        run: python tests/test_p35_job_search.py
 
   test-api:
     name: API tests (sqlite, sans docker)

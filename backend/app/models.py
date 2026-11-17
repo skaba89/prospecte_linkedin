@@ -904,3 +904,56 @@ class JobReference(Base):
     category = Column(String, nullable=False)  # finance|product|data|cyber|rh|...
     locale = Column(String, default="fr", nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+
+# ─── P35 — Career : recherche d'opportunités (connecteurs + postings + saved searches) ──────
+
+
+class JobPosting(Base):
+    """Offre d'emploi cacheée issue d'un connecteur (P35). source_connector = linkedin_jobs|freework|
+    malt|lehibou|france_travail|apec|indeed|hays|wttj|upwork|career_sites|africa (services/job_connectors).
+    dedup_hash = sha256(title+company+location normalisé) — détecte les doublons cross-connecteurs.
+    expires_at = date d'expiration (depuis le connecteur) OU null (heuristic expired via posted_at + âge).
+    raw_data = JSON brut du connecteur (pour audit/re-parse). fetched_at = dernière fois vu actif.
+    UniqueConstraint (dedup_hash, source_connector) — une même offre peut exister chez plusieurs sources."""
+
+    __tablename__ = "job_postings"
+    __table_args__ = (UniqueConstraint("dedup_hash", "source_connector", name="uq_job_posting_dedup_source"),)
+    id = Column(String, primary_key=True, default=lambda: _uid("jbp"))
+    dedup_hash = Column(String, nullable=False, index=True)  # sha256(title+company+location)
+    source_connector = Column(String, nullable=False, index=True)  # linkedin_jobs|freework|malt|...
+    external_id = Column(String, nullable=True)  # ID chez le connecteur (pour refresh/expired)
+    title = Column(String, nullable=False)
+    company = Column(String, nullable=True)
+    location = Column(String, nullable=True)
+    url = Column(String, nullable=True)  # lien vers l'offre (tracking du connecteur si requis)
+    description = Column(Text, nullable=True)  # description courte (snippet)
+    contract_type = Column(String, nullable=True)  # CDI|CDD|freelance|stage|alternance
+    salary_min = Column(Integer, nullable=True)
+    salary_max = Column(Integer, nullable=True)
+    currency = Column(String, default="EUR", nullable=False)
+    posted_at = Column(DateTime, nullable=True)  # date de publication (chez le connecteur)
+    expires_at = Column(DateTime, nullable=True)  # date d'expiration (chez le connecteur, null si inconnu)
+    fetched_at = Column(DateTime, default=datetime.utcnow, nullable=False)  # dernière fois vu actif
+    is_expired = Column(Boolean, default=False, nullable=False, index=True)  # marqué expiré (heuristic ou refresh)
+    raw_data = Column(JSONType, nullable=True)  # JSON brut du connecteur (audit/re-parse)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+
+class SavedSearch(Base):
+    """Recherche sauvegardée d'un candidat (P35). career_profile_id FK (CASCADE). criteria = JSON
+    {keywords, location, contract_types, salary_min/max, radius_km, source_connectors}. alert_enabled +
+    alert_frequency (daily|weekly) → déclenche une recherche périodique (v2 : scheduler alertes P40).
+    last_run_at + last_run_postings_count pour suivi. Une saved search est ré-exécutable via POST /run."""
+
+    __tablename__ = "saved_searches"
+    id = Column(String, primary_key=True, default=lambda: _uid("jss"))
+    career_profile_id = Column(String, ForeignKey("career_profiles.id", ondelete="CASCADE"), nullable=False, index=True)
+    name = Column(String, nullable=False)  # libellé affiché (ex. "PO Paris CDI")
+    criteria = Column(JSONType, nullable=False)  # {keywords, location, contract_types, salary_min, ...}
+    alert_enabled = Column(Boolean, default=False, nullable=False)
+    alert_frequency = Column(String, default="daily", nullable=False)  # daily|weekly
+    last_run_at = Column(DateTime, nullable=True)
+    last_run_postings_count = Column(Integer, default=0, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
