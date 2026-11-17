@@ -36,6 +36,7 @@ from ..audit import log_audit
 from ..database import get_db
 from ..deps import get_current_user
 from ..services import (
+    career_agent,
     career_analytics,
     career_cv,
     career_notifier,
@@ -1010,3 +1011,96 @@ def analytics_salary_trends(
     Anti-invention : factuel — pas de prédiction, mois sans candidature absent (pas de 0 inventé)."""
     profile = _get_or_404_profile(db, user.id)
     return career_analytics.salary_trends(db, profile.id, months=months)
+
+
+# ─── P42 — Agent autonome Career ──────────────────────────────────────────────
+@router.get("/agent", response_model=schemas.CareerAgentOut)
+def get_agent(
+    db: Session = Depends(get_db),
+    user: models.User = Depends(get_current_user),
+):
+    """Récupère la config de l'agent Career (P42). Auto-création si inexistant (1 par profil).
+    v1 : auto_apply=False par défaut → prépare sans envoyer (consent invariant)."""
+    profile = _get_or_404_profile(db, user.id)
+    return career_agent.get_or_create_agent(db, profile)
+
+
+@router.put("/agent", response_model=schemas.CareerAgentOut)
+def update_agent_config(
+    body: schemas.CareerAgentConfigUpdate,
+    db: Session = Depends(get_db),
+    user: models.User = Depends(get_current_user),
+):
+    """Met à jour la config agent (P42). consent_given + auto_apply = consentement explicite pour envoi
+    auto. max_applications_per_day cap anti-abus (1-20)."""
+    profile = _get_or_404_profile(db, user.id)
+    agent = career_agent.get_or_create_agent(db, profile)
+    if body.enabled is not None:
+        agent.enabled = body.enabled
+    if body.auto_apply is not None:
+        agent.auto_apply = body.auto_apply
+    if body.consent_given is not None:
+        agent.consent_given = body.consent_given
+    if body.max_applications_per_day is not None:
+        agent.max_applications_per_day = body.max_applications_per_day
+    db.commit()
+    db.refresh(agent)
+    log_audit(db, tenant_id="career", actor_user_id=user.id, actor_name=user.name,
+              action="career.agent.config_update", target_type="career_agent", target_id=agent.id,
+              detail={"auto_apply": agent.auto_apply, "consent_given": agent.consent_given,
+                      "max_applications_per_day": agent.max_applications_per_day})
+    db.commit()
+    db.refresh(agent)
+    return agent
+
+
+@router.post("/agent/run", response_model=schemas.CareerAgentRunOut, status_code=status.HTTP_201_CREATED)
+def run_agent(
+    top_n: int = 5,
+    db: Session = Depends(get_db),
+    user: models.User = Depends(get_current_user),
+):
+    """Déclenche un run de l'agent (P42). Orchestre les 10 étapes (recherche → matching → adapt → lettres
+    → candidature prep → suivi → notifications → entretien → rapport). v1 : déclenchement manuel.
+    Consent invariant : consent_given=False OU auto_apply=False → préparation seulement (0 envoyée)."""
+    profile = _get_or_404_profile(db, user.id)
+    agent = career_agent.get_or_create_agent(db, profile)
+    if not agent.enabled:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Agent désactivé. Activez-le dans la config.")
+    try:
+        run = career_agent.run_once(db, profile, agent, top_n=top_n)
+    except RuntimeError as e:
+        raise HTTPException(status.HTTP_409_CONFLICT, str(e)) from e
+    log_audit(db, tenant_id="career", actor_user_id=user.id, actor_name=user.name,
+              action="career.agent.run", target_type="career_agent_run", target_id=run.id,
+              detail={"status": run.status, "prepared": run.applications_prepared, "sent": run.applications_sent})
+    db.commit()
+    db.refresh(run)
+    return run
+
+
+@router.post("/agent/stop", response_model=schemas.CareerAgentOut)
+def stop_agent(
+    db: Session = Depends(get_db),
+    user: models.User = Depends(get_current_user),
+):
+    """Bouton d'arrêt immédiat (P42). status=stopped — le run en cours s'interrompt au prochain check."""
+    profile = _get_or_404_profile(db, user.id)
+    agent = career_agent.get_or_create_agent(db, profile)
+    career_agent.stop(db, agent)
+    log_audit(db, tenant_id="career", actor_user_id=user.id, actor_name=user.name,
+              action="career.agent.stop", target_type="career_agent", target_id=agent.id, detail={})
+    db.commit()
+    db.refresh(agent)
+    return agent
+
+
+@router.get("/agent/runs", response_model=list[schemas.CareerAgentRunOut])
+def list_agent_runs(
+    limit: int = 20,
+    db: Session = Depends(get_db),
+    user: models.User = Depends(get_current_user),
+):
+    """Historique des runs de l'agent (P42). Plus récents d'abord. Isolation user_id."""
+    profile = _get_or_404_profile(db, user.id)
+    return career_agent.list_runs(db, profile.id, limit=limit)

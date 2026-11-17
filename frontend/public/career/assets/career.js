@@ -117,7 +117,8 @@
       { href: "/career/applications.html", icon: "📋", label: "Mes candidatures", key: "applications" },
       { href: "/career/notifications.html", icon: "🔔", label: "Notifications", key: "notifications" },
       { href: "/career/interviews.html", icon: "🎤", label: "Coach entretiens", key: "interviews" },
-      { href: "/career/analytics.html", icon: "📈", label: "Analytics", key: "analytics" }
+      { href: "/career/analytics.html", icon: "📈", label: "Analytics", key: "analytics" },
+      { href: "/career/agent.html", icon: "🤖", label: "Agent autonome", key: "agent" }
     ];
     var html = '<div class="rp-brand"><div class="rp-brand-logo">R</div>' +
       '<div><div class="rp-brand-name">RevPulse</div><div class="rp-brand-sub">Career</div></div></div>';
