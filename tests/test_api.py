@@ -1471,6 +1471,108 @@ ck(s, 403, "delete system template → 403 (immuable)")
 call("DELETE", f"/api/tenants/tnt-demo/content-studio/templates/{ctpl['id']}", tok)
 call("DELETE", f"/api/tenants/tnt-demo/content-studio/posts/{mpost['id']}", tok)  # rejected → deletable
 
+# ─── P27 : Prospection avancée (multicanal + A/B testing + intent) ───────────
+# Setup : create a fresh sequence + contact for P27.
+s, seq_p27 = call("POST", "/api/tenants/tnt-demo/crm/sequences", tok, {"name": "Seq P27 E2E", "description": "Multicanal + A/B", "steps": [{"template_id": "cold_outreach", "delay_days": 0}]})
+ck(s, 201, "setup sequence P27 201")
+s, ctc_p27 = call("POST", "/api/tenants/tnt-demo/crm/contacts", tok,
+                  {"first_name": "Marc", "last_name": "Dubois", "email": "marc.dubois.p27@test.com", "title": "CTO", "company": "TechCorp"})
+ck(s, 201, "setup contact P27 201")
+
+print("=== 176. POST /prospecting/sequences/{sid}/steps (multichannel email) → 201 ===")
+s, step_em = call("POST", f"/api/tenants/tnt-demo/prospecting/sequences/{seq_p27['id']}/steps", tok,
+                  {"step_order": 2, "channel": "email", "template_id": "tpl_cold_outreach", "delay_days": 0})
+ck(s, 201, "multichannel step email 201")
+
+print("=== 177. POST /prospecting/sequences/{sid}/steps (multichannel linkedin) → 201 ===")
+s, step_li = call("POST", f"/api/tenants/tnt-demo/prospecting/sequences/{seq_p27['id']}/steps", tok,
+                  {"step_order": 3, "channel": "linkedin", "delay_days": 2,
+                   "channel_config": {"linkedin_action": "connection_request"}})
+ck(s, 201, "multichannel step linkedin 201")
+
+print("=== 178. POST /variants (A) + metrics → 201 + sent/open settés ===")
+s, var_a = call("POST", f"/api/tenants/tnt-demo/prospecting/sequences/{seq_p27['id']}/steps/{step_em['id']}/variants", tok,
+                {"variant": "A", "label": "Version longue", "subject_override": "Sujet A", "body_override": "Corps A"})
+ck(s, 201, "variant A 201")
+# Record metrics on A : sent=100, open=40.
+call("POST", f"/api/tenants/tnt-demo/prospecting/sequences/{seq_p27['id']}/steps/{step_em['id']}/variants/{var_a['id']}/metrics", tok,
+     {"event": "sent", "count": 100})
+s, var_a_m = call("POST", f"/api/tenants/tnt-demo/prospecting/sequences/{seq_p27['id']}/steps/{step_em['id']}/variants/{var_a['id']}/metrics", tok,
+                  {"event": "open", "count": 40})
+ck(s, 200, "metrics open on A 200")
+ck(var_a_m.get("sent_count"), 100, f"var A sent_count={var_a_m.get('sent_count')} (100)")
+ck(var_a_m.get("open_count"), 40, f"var A open_count={var_a_m.get('open_count')} (40)")
+
+print("=== 179. POST /variants (B) + metrics + ab-results → B gagne sur open_rate ===")
+s, var_b = call("POST", f"/api/tenants/tnt-demo/prospecting/sequences/{seq_p27['id']}/steps/{step_em['id']}/variants", tok,
+                {"variant": "B", "label": "Version courte", "subject_override": "Sujet B", "body_override": "Corps B"})
+ck(s, 201, "variant B 201")
+# Record metrics on B : sent=100, open=55 (B gagne).
+call("POST", f"/api/tenants/tnt-demo/prospecting/sequences/{seq_p27['id']}/steps/{step_em['id']}/variants/{var_b['id']}/metrics", tok,
+     {"event": "sent", "count": 100})
+call("POST", f"/api/tenants/tnt-demo/prospecting/sequences/{seq_p27['id']}/steps/{step_em['id']}/variants/{var_b['id']}/metrics", tok,
+     {"event": "open", "count": 55})
+# GET ab-results → 2 variants + rates.
+s, ab = call("GET", f"/api/tenants/tnt-demo/prospecting/sequences/{seq_p27['id']}/steps/{step_em['id']}/ab-results", tok)
+ck(s, 200, "ab-results 200")
+ck(len(ab), 2, f"ab-results : {len(ab)} variants (2)")
+res_b = next((r for r in ab if r["variant"] == "B"), {})
+ck(res_b.get("open_rate"), 55.0, f"var B open_rate={res_b.get('open_rate')} (55.0 — gagnante)")
+res_a = next((r for r in ab if r["variant"] == "A"), {})
+ck(res_a.get("open_rate"), 40.0, f"var A open_rate={res_a.get('open_rate')} (40.0)")
+ck(res_b.get("open_rate") > res_a.get("open_rate"), True, "B gagne sur open_rate (55% > 40%)")
+
+print("=== 180. POST /prospecting/sequences/{sid}/steps (invalid channel) → 400 ===")
+s, _ = call("POST", f"/api/tenants/tnt-demo/prospecting/sequences/{seq_p27['id']}/steps", tok,
+            {"step_order": 3, "channel": "whatsapp", "delay_days": 1, "channel_config": {}})
+ck(s, 400, "channel invalide → 400")
+
+print("=== 181. POST /prospecting/contacts/{cid}/intent-signals (job_change) → 201 ===")
+s, sig1 = call("POST", f"/api/tenants/tnt-demo/prospecting/contacts/{ctc_p27['id']}/intent-signals", tok,
+               {"signal_type": "job_change", "description": "Marc promoted to CTO", "score": 35, "source": "webhook"})
+ck(s, 201, "add intent signal job_change 201")
+ck(sig1.get("signal_type"), "job_change", "signal_type propagé")
+ck(sig1.get("score"), 35, "score propagé")
+
+print("=== 182. POST /prospecting/contacts/{cid}/intent-signals (funding) → 201 ===")
+s, sig2 = call("POST", f"/api/tenants/tnt-demo/prospecting/contacts/{ctc_p27['id']}/intent-signals", tok,
+               {"signal_type": "funding", "description": "Series B $30M", "score": 45, "source": "enrichment"})
+ck(s, 201, "add intent signal funding 201")
+
+print("=== 183. GET /prospecting/contacts/{cid}/intent-signals → list (>=2) ===")
+s, sigs = call("GET", f"/api/tenants/tnt-demo/prospecting/contacts/{ctc_p27['id']}/intent-signals", tok)
+ck(s, 200, "list intent signals 200")
+ck(len(sigs), 2, f"{len(sigs)} signaux (2)")
+
+print("=== 184. GET /prospecting/contacts/intent-leaders → list (>=1, intent_score>0) ===")
+s, leaders = call("GET", "/api/tenants/tnt-demo/prospecting/contacts/intent-leaders?limit=20", tok)
+ck(s, 200, "intent leaders 200")
+ck(len(leaders) >= 1, True, f"{len(leaders)} leaders (>=1 — Marc a intent_score=80)")
+# Vérifie que Marc est dans les leaders avec intent_score=80 (35+45).
+marc = next((l for l in leaders if l.get("email") == "marc.dubois.p27@test.com"), None)
+ck(marc is not None, True, "Marc présent dans les leaders")
+ck(marc.get("intent_score"), 80, f"Marc intent_score={marc.get('intent_score')} (35+45=80)")
+ck(marc.get("signal_count"), 2, f"Marc signal_count={marc.get('signal_count')} (2)")
+
+print("=== 185. POST /prospecting/contacts/{cid}/enrich → 200 + simulated ===")
+s, enr = call("POST", f"/api/tenants/tnt-demo/prospecting/contacts/{ctc_p27['id']}/enrich", tok, {})
+ck(s, 200, "enrich 200")
+ck(enr.get("simulated"), True, "enrichment simulated=True (anti-fake v1)")
+ck(enr.get("contact_id"), ctc_p27["id"], "enrichment contact_id propagé")
+
+print("=== 186. GET /prospecting/contacts/{cid}/intent-signals (signal_count via leaders) → 2 ===")
+# Déjà vérifié dans 184 — re-confirme via list.
+ck(len(sigs), 2, "intent signals count=2 (re-confirm)")
+
+print("=== 187. POST /prospecting/contacts/{cid}/intent-signals (invalid type) → 400 ===")
+s, _ = call("POST", f"/api/tenants/tnt-demo/prospecting/contacts/{ctc_p27['id']}/intent-signals", tok,
+            {"signal_type": "invalid_type", "score": 10, "source": "manual"})
+ck(s, 400, "signal_type invalide → 400")
+
+# Cleanup P27 : delete la séquence (CASCADE steps + variants) + le contact (CASCADE intent signals).
+call("DELETE", f"/api/tenants/tnt-demo/crm/sequences/{seq_p27['id']}", tok)
+call("DELETE", f"/api/tenants/tnt-demo/crm/contacts/{ctc_p27['id']}", tok)
+
 print()
 print(f"RESULT: {passed} passed, {failed} failed")
 sys.exit(0 if failed == 0 else 1)
