@@ -96,6 +96,8 @@ jobs:
         run: python tests/test_p27_prospecting.py
       - name: P28 Warmup inbox + Sales Intelligence (warmup ramp + funnel + cohorts + forecast + migration)
         run: python tests/test_p28_sales_intel.py
+      - name: P32 Sécurité & production (PyJWT migration + SSRF AI base_url + prod hardening)
+        run: python tests/test_p32_security.py
 
   test-api:
     name: API tests (sqlite, sans docker)

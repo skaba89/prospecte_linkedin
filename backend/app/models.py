@@ -145,8 +145,12 @@ class DashboardModule(Base):
 class LinkedInConnection(Base):
     """Connexion LinkedIn OAuth d'un tenant (1 par tenant).
 
-    ⚠️ access_token stocké en clair pour la démo — à chiffrer (Fernet) en production
-    et ne JAMAIS exposer dans une réponse API (status renvoie seulement member_name/id).
+    P10.2 + P32 : access_token stocké CHIFFRÉ (Fernet, rotation via
+    REVPULSE_TOKEN_ENCRYPTION_KEY_PREVIOUS) — voir services/security.encrypt_token/decrypt_token +
+    routers/linkedin._store_token/_load_token. Le nom de colonne access_token est historique (P10.2
+    chiffrait en place faute de colonne _enc dédiée) ; la valeur stockée est le ciphertext Fernet
+    (préfixe gAAAA...) quand une clé est configurée, sinon plaintext legacy dev/test. Ne JAMAIS
+    exposer dans une réponse API (status renvoie seulement member_name/id).
     """
 
     __tablename__ = "linkedin_connections"

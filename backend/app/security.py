@@ -1,13 +1,16 @@
 """Sécurité : hachage bcrypt, JWT (HS256 + jti pour révocation), chiffrement Fernet des
 tokens OAuth (rotation de clé via REVPULSE_TOKEN_ENCRYPTION_KEY_PREVIOUS), content_hash
-(dédup des publications). Utilise bcrypt directement (pas passlib, incompatible bcrypt 4.x)."""
+(dédup des publications). Utilise bcrypt directement (pas passlib, incompatible bcrypt 4.x).
+
+P32 : migration python-jose → PyJWT (PyJWT 2.12.1 — maintenance active, jose non maintenu).
+PyJWT expose jwt.PyJWTError (base des erreurs encode/decode) + jwt.encode/decode (même API que jose)."""
 import hashlib
 import secrets
 from datetime import UTC, datetime, timedelta
 
 import bcrypt
+import jwt
 from cryptography.fernet import Fernet, InvalidToken
-from jose import JWTError, jwt
 
 from .config import settings
 
@@ -36,7 +39,7 @@ def create_access_token(subject: str) -> str:
 def decode_token(token: str) -> dict | None:
     try:
         return jwt.decode(token, settings.jwt_secret, algorithms=[settings.jwt_algo])
-    except JWTError:
+    except jwt.PyJWTError:
         return None
 
 
