@@ -911,3 +911,132 @@ class InboundResult(BaseModel):
     action: str  # created | updated | duplicate (P24-A)
     contact_id: str | None = None  # None si duplicate (P24-A)
     matched_by: str  # email | linkedin_url | none | event_id (P24-A)
+
+
+# ─── P24-B — AI Gateway multi-provider ────────────────────────────────────────
+
+
+class AIProviderConfigCreate(BaseModel):
+    """Création d'une config provider IA (P24-B). provider dans SUPPORTED_PROVIDERS. api_key
+    plaintext fourni par l'admin → chiffré Fernet à la persistence (jamais stocké en clair)."""
+    provider: str = Field(..., description="openai|anthropic|gemini|deepseek|glm|openrouter|ollama")
+    label: str = Field(..., min_length=1, max_length=80)
+    api_key: str | None = None  # plaintext → chiffré à la persistence
+    base_url: str | None = None
+    enabled: bool = True
+    priority: int = 0
+    quota_tokens_month: int | None = None
+    cost_usd_month: float | None = None
+
+
+class AIProviderConfigUpdate(BaseModel):
+    """Update partielle d'une config provider IA (P24-B). api_key si fourni = rotation de clé."""
+    label: str | None = None
+    api_key: str | None = None  # si fourni → re-chiffré (rotation)
+    base_url: str | None = None
+    enabled: bool | None = None
+    priority: int | None = None
+    quota_tokens_month: int | None = None
+    cost_usd_month: float | None = None
+
+
+class AIProviderConfigOut(BaseModel):
+    """Config provider sérialisée (P24-B). api_key JAMAIS exposé (chiffré au repos, decrypt seulement
+    au moment de l'appel). tokens_used_month/cost_incurred_month = usage courant (reset mensuel)."""
+    id: str
+    provider: str
+    label: str
+    base_url: str | None = None
+    enabled: bool
+    priority: int
+    quota_tokens_month: int | None = None
+    cost_usd_month: float | None = None
+    tokens_used_month: int
+    cost_incurred_month: float
+    last_used_at: datetime | None = None
+    has_api_key: bool  # True si api_key_enc set (sans exposer la clé)
+    created_at: datetime
+    model_config = ConfigDict(from_attributes=True)
+
+
+class PromptVersionCreate(BaseModel):
+    """Création d'une version de prompt (P24-B). name + content obligatoires. version auto-incrémenté
+    par (tenant, name). active=True → désactive les versions précédentes du même name."""
+    name: str = Field(..., min_length=1, max_length=80)
+    content: str = Field(..., min_length=1)
+    variables: list[str] | None = None
+    active: bool = True
+    notes: str | None = None
+
+
+class PromptVersionOut(BaseModel):
+    """Version de prompt sérialisée (P24-B)."""
+    id: str
+    name: str
+    version: int
+    content: str
+    variables: list[str] | None = None
+    active: bool
+    notes: str | None = None
+    created_at: datetime
+    model_config = ConfigDict(from_attributes=True)
+
+
+class AIGenerateRequest(BaseModel):
+    """Requête de génération IA (P24-B). prompt_name = PromptVersion actif à rendre avec variables.
+    model = id API optionnel (sinon default du provider). dry_run=True → SimulatedProvider."""
+    prompt_name: str = Field(..., min_length=1, max_length=80)
+    variables: dict = Field(default_factory=dict)
+    model: str | None = None
+    max_tokens: int = Field(default=1000, ge=1, le=8000)
+    temperature: float = Field(default=0.7, ge=0.0, le=2.0)
+    system: str | None = None
+    dry_run: bool = False
+
+
+class AIGenerateResponse(BaseModel):
+    """Réponse de génération IA (P24-B). simulated=True → provider simulé (jamais présenté comme réel).
+    require_human_validation=True → injection détectée, l'action externe est bloquée jusqu'à validation."""
+    generation_id: str | None = None
+    text: str
+    provider: str
+    model: str
+    tokens_in: int
+    tokens_out: int
+    cost_usd: float
+    simulated: bool
+    require_human_validation: bool
+    injection_reasons: list[str] = []
+    pii_redacted_count: int = 0
+    latency_ms: int
+    error: str | None = None
+    status: str
+
+
+class AIGenerationOut(BaseModel):
+    """Historique de génération (P24-B). input_text = prompt rendu APRÈS PII redact."""
+    id: str
+    provider: str
+    model: str
+    prompt_name: str | None = None
+    output_text: str | None = None
+    tokens_in: int | None = None
+    tokens_out: int | None = None
+    cost_usd: float
+    latency_ms: int | None = None
+    status: str
+    simulated: bool
+    error: str | None = None
+    created_at: datetime
+    model_config = ConfigDict(from_attributes=True)
+
+
+class AIModelInfo(BaseModel):
+    """Métadonnées d'un modèle IA (P24-B). configured=True si le tenant a une config provider active."""
+    provider: str
+    model: str
+    label: str
+    context_window: int
+    cost_in_per_1k: float
+    cost_out_per_1k: float
+    configured: bool

@@ -8,7 +8,7 @@ par `tenant_id` → isolation par espace de travail. Les membres portent aussi u
 import uuid
 from datetime import datetime
 
-from sqlalchemy import Boolean, Column, Date, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy import Boolean, Column, Date, DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.types import TypeDecorator
 
@@ -569,3 +569,87 @@ class InboundEvent(Base):
     event_id = Column(String, nullable=False)  # idempotence — vient du header/payload source
     payload_hash = Column(String, nullable=True)  # sha256 du payload (audit)
     processed_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+
+# ─── P24-B — AI Gateway multi-provider ───────────────────────────────────────
+
+
+class AIProviderConfig(Base):
+    """Config provider IA par organisation (P24-B). provider = openai|anthropic|gemini|deepseek|glm|
+    openrouter|ollama. api_key_enc = clé chiffrée Fernet (services/crypto, jamais en clair). enabled
+    + priority (ordre de fallback — 0 = primaire). quota_tokens_month + cost_usd_month (reset mensuel
+    via tokens_used_month/cost_incurred_month). base_url override (Ollama http://localhost:11434 ou
+    proxy d'entreprise). UniqueConstraint (tenant, provider, label) — un tenant peut avoir plusieurs
+    configs du même provider (ex. OpenAI prod + OpenAI sandbox)."""
+
+    __tablename__ = "ai_provider_configs"
+    __table_args__ = (UniqueConstraint("tenant_id", "provider", "label", name="uq_ai_provider_config"),)
+    id = Column(String, primary_key=True, default=lambda: _uid("aip"))
+    tenant_id = Column(String, ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
+    provider = Column(String, nullable=False)  # openai|anthropic|gemini|deepseek|glm|openrouter|ollama
+    label = Column(String, nullable=False)  # "OpenAI prod", "Ollama local" — affiché + dédup
+    api_key_enc = Column(Text, nullable=True)  # chiffré Fernet (null pour Ollama sans auth)
+    base_url = Column(String, nullable=True)  # override (Ollama, proxy entreprise)
+    enabled = Column(Boolean, default=True, nullable=False)
+    priority = Column(Integer, default=0, nullable=False)  # ordre fallback (0 = primaire)
+    quota_tokens_month = Column(Integer, nullable=True)  # null = illimité
+    cost_usd_month = Column(Float, nullable=True)  # null = illimité
+    tokens_used_month = Column(Integer, default=0, nullable=False)  # reset mensuel
+    cost_incurred_month = Column(Float, default=0.0, nullable=False)
+    last_used_at = Column(DateTime, nullable=True)
+    created_by = Column(String, ForeignKey("users.id"), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    @property
+    def has_api_key(self) -> bool:
+        """True si une clé API chiffrée est stockée (P24-B). Exposé via AIProviderConfigOut.has_api_key
+        (la clé elle-même n'est JAMAIS exposée — seulement ce booléen)."""
+        return bool(self.api_key_enc)
+
+
+class PromptVersion(Base):
+    """Prompts versionnés (P24-B). tenant + name + version (unique, incrémental). content = template
+    avec {{variables}} (rendu par str.format_map). variables = liste JSON des noms attendus. active =
+    un seul actif par (tenant, name) — le gateway utilise la version active. notes = changelog.
+    Réutilisé par les agents P25 (qualification, scoring, personnalisation, rédaction LinkedIn…)."""
+
+    __tablename__ = "prompt_versions"
+    __table_args__ = (UniqueConstraint("tenant_id", "name", "version", name="uq_prompt_version"),)
+    id = Column(String, primary_key=True, default=lambda: _uid("pmv"))
+    tenant_id = Column(String, ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
+    name = Column(String, nullable=False)  # "linkedin_post", "email_personalization", "lead_qualification"
+    version = Column(Integer, nullable=False)  # incrémental par (tenant, name)
+    content = Column(Text, nullable=False)  # template {{variables}}
+    variables = Column(JSONType, nullable=True)  # ["first_name", "company", ...]
+    active = Column(Boolean, default=True, nullable=False)  # un seul actif par name
+    notes = Column(Text, nullable=True)  # changelog de version
+    created_by = Column(String, ForeignKey("users.id"), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+
+class AIGeneration(Base):
+    """Historisation des générations IA (P24-B). tenant + provider_config + model + prompt_version +
+    input (prompt rendu APRÈS PII redact) + output + tokens_in/out + cost_usd + latency_ms + status.
+    simulated=True → provider simulé (jamais présenté comme réel — anti-fake). error = message si
+    failed. Audit trail complet pour la conformité + l'analyse de coûts."""
+
+    __tablename__ = "ai_generations"
+    id = Column(String, primary_key=True, default=lambda: _uid("aig"))
+    tenant_id = Column(String, ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
+    provider_config_id = Column(String, ForeignKey("ai_provider_configs.id", ondelete="CASCADE"), nullable=False, index=True)
+    provider = Column(String, nullable=False)
+    model = Column(String, nullable=False)
+    prompt_version_id = Column(String, ForeignKey("prompt_versions.id"), nullable=True)
+    prompt_name = Column(String, nullable=True)
+    input_text = Column(Text, nullable=False)  # prompt rendu (après PII redact)
+    output_text = Column(Text, nullable=True)
+    tokens_in = Column(Integer, nullable=True)
+    tokens_out = Column(Integer, nullable=True)
+    cost_usd = Column(Float, default=0.0, nullable=False)
+    latency_ms = Column(Integer, nullable=True)
+    status = Column(String, default="pending", nullable=False)  # pending|success|failed|simulated
+    simulated = Column(Boolean, default=False, nullable=False)  # True si provider simulé
+    error = Column(Text, nullable=True)
+    created_by = Column(String, ForeignKey("users.id"), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
