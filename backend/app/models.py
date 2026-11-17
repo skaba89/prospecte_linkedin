@@ -679,3 +679,64 @@ class AgentRun(Base):
     error = Column(Text, nullable=True)
     created_by = Column(String, ForeignKey("users.id"), nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+
+
+# ─── P26 — LinkedIn Content Studio professionnel ─────────────────────────────
+
+
+class ContentTemplate(Base):
+    """Modèle de post LinkedIn réutilisable (P26 Content Studio). category = storytelling|insight|
+    announcement|carousel|question|behind_the_scenes. structure = template avec {{variables}} (hook,
+    corps, CTA). style = ton (expert, terrain, data-driven). is_system=True pour les modèles seedés
+    (non modifiables/supprimables par les tenants — seed_content_templates au 1er accès)."""
+
+    __tablename__ = "content_templates"
+    id = Column(String, primary_key=True, default=lambda: _uid("ctpl"))
+    tenant_id = Column(String, ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
+    name = Column(String, nullable=False)
+    category = Column(String, nullable=False, index=True)  # storytelling|insight|announcement|carousel|question|bts
+    structure = Column(Text, nullable=False)  # template with {{variables}}
+    variables = Column(JSONType, nullable=True)  # list of variable names ["topic", "style", ...]
+    style = Column(String, nullable=True)
+    is_system = Column(Boolean, default=False, nullable=False)  # system templates (seeded, immutable)
+    created_by = Column(String, ForeignKey("users.id"), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+
+
+class ContentPost(Base):
+    """Post LinkedIn Content Studio (P26). Workflow validation collaborative :
+    draft → pending_review → approved|rejected → scheduled → published.
+    content_text = texte du post (généré via LinkedInAgent P25 OU rédigé manuellement). carousel =
+    JSON (slides [{order, text, image_url}]). topic + style + hashtags = inputs de génération.
+    scheduled_at = planification. published_at + linkedin_urn = publication (via LinkedIn API P12,
+    require approvals.manage — action externe). ai_generation_id = lien vers l'AIGeneration P24-B
+    (audit trail P25→P26). validation_requested_by/at + validated_by/at + rejected_reason = workflow.
+    linkedin_account_id = compte LinkedIn publié (P12). stats = JSON (impressions, likes, comments,
+    shares — via LinkedIn API stats sync, P26 v1 : NULL jusqu'à sync réelle)."""
+
+    __tablename__ = "content_posts"
+    id = Column(String, primary_key=True, default=lambda: _uid("cpst"))
+    tenant_id = Column(String, ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
+    title = Column(String, nullable=True)  # titre interne (non publié)
+    content_text = Column(Text, nullable=False)
+    topic = Column(String, nullable=True)
+    style = Column(String, nullable=True)
+    hashtags = Column(String, nullable=True)  # comma-separated
+    carousel = Column(JSONType, nullable=True)  # [{order, text, image_url}]
+    media_urls = Column(JSONType, nullable=True)  # [url, ...]
+    template_id = Column(String, ForeignKey("content_templates.id"), nullable=True)
+    status = Column(String, default="draft", nullable=False, index=True)  # draft|pending_review|approved|rejected|scheduled|published
+    scheduled_at = Column(DateTime, nullable=True)
+    published_at = Column(DateTime, nullable=True)
+    linkedin_urn = Column(String, nullable=True)  # URN returned by LinkedIn API
+    ai_generation_id = Column(String, ForeignKey("ai_generations.id"), nullable=True)
+    validation_requested_by = Column(String, ForeignKey("users.id"), nullable=True)
+    validation_requested_at = Column(DateTime, nullable=True)
+    validated_by = Column(String, ForeignKey("users.id"), nullable=True)
+    validated_at = Column(DateTime, nullable=True)
+    rejected_reason = Column(Text, nullable=True)
+    linkedin_account_id = Column(String, nullable=True)  # FK LinkedIn account (P12+ OAuth — table à venir, FK ajouté quand LinkedInAccount model créé)
+    stats = Column(JSONType, nullable=True)  # {impressions, likes, comments, shares}
+    created_by = Column(String, ForeignKey("users.id"), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)

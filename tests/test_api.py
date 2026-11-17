@@ -1361,6 +1361,116 @@ ck("performance" in run_agents, True, "historique : performance run présent")
 # Cleanup P25 : delete le contact créé
 call("DELETE", f"/api/tenants/tnt-demo/crm/contacts/{c_p25['id']}", tok)
 
+# ─── P26 : LinkedIn Content Studio professionnel ─────────────────────────────
+print("=== 161. GET /content-studio/templates → 6 templates (auto-seed) ===")
+s, tpls = call("GET", "/api/tenants/tnt-demo/content-studio/templates", tok)
+ck(s, 200, "list templates 200")
+ck(len(tpls), 6, f"{len(tpls)} templates (6 système auto-seedés)")
+sys_tpls = [t for t in tpls if t.get("is_system")]
+ck(len(sys_tpls), 6, "tous is_system=True (immuables)")
+cats = {t["category"] for t in tpls}
+ck("storytelling" in cats, True, "catégorie storytelling présente")
+
+print("=== 162. POST /content-studio/posts/generate (topic) → 201 + draft + simulated ===")
+s, gpost = call("POST", "/api/tenants/tnt-demo/content-studio/posts/generate", tok,
+                {"topic": "Les 5 erreurs sales en 2026", "style": "expert terrain", "title": "Post généré"})
+ck(s, 201, "generate post 201")
+ck(gpost.get("status"), "draft", "generate → status=draft")
+ck(len(gpost.get("content_text", "")) > 0, True, "content_text généré")
+ck(gpost.get("topic"), "Les 5 erreurs sales en 2026", "topic propagé")
+
+print("=== 163. POST /content-studio/posts (manual create) → 201 + draft ===")
+s, mpost = call("POST", "/api/tenants/tnt-demo/content-studio/posts", tok,
+                {"title": "Post manuel", "content_text": "Ceci est un post rédigé manuellement pour test.", "topic": "test"})
+ck(s, 201, "create post 201")
+ck(mpost.get("status"), "draft", "manual create → status=draft")
+
+print("=== 164. POST /content-studio/carousel/generate (5 slides) → 200 + 5 slides ===")
+s, slides = call("POST", "/api/tenants/tnt-demo/content-studio/carousel/generate", tok,
+                 {"topic": "Sales process en 5 étapes", "slides_count": 5, "style": "éducatif"})
+ck(s, 200, "generate carousel 200")
+ck(len(slides), 5, f"{len(slides)} slides générés (5)")
+ck(slides[0].get("order"), 1, "1er slide order=1")
+
+print("=== 165. GET /content-studio/posts → list (>=2) ===")
+s, posts = call("GET", "/api/tenants/tnt-demo/content-studio/posts", tok)
+ck(s, 200, "list posts 200")
+ck(len(posts) >= 2, True, f"{len(posts)} posts (>=2 : generated + manual)")
+
+print("=== 166. PATCH /content-studio/posts/{pid} (edit content) → 200 ===")
+s, upd = call("PATCH", f"/api/tenants/tnt-demo/content-studio/posts/{gpost['id']}", tok,
+              {"content_text": "Post édité après génération — version 2.", "hashtags": "#sales #test"})
+ck(s, 200, "update post 200")
+ck("édité" in upd.get("content_text", ""), True, "content_text mis à jour")
+ck(upd.get("hashtags"), "#sales #test", "hashtags mis à jour")
+
+print("=== 167. POST /content-studio/posts/{pid}/request-validation → pending_review ===")
+s, rv = call("POST", f"/api/tenants/tnt-demo/content-studio/posts/{gpost['id']}/request-validation", tok, {})
+ck(s, 200, "request-validation 200")
+ck(rv.get("status"), "pending_review", "→ status=pending_review")
+ck(rv.get("validation_requested_by") is not None, True, "validation_requested_by setté")
+
+print("=== 168. POST /content-studio/posts/{pid}/approve (owner tok) → approved ===")
+s, ap = call("POST", f"/api/tenants/tnt-demo/content-studio/posts/{gpost['id']}/approve", tok, {})
+ck(s, 200, "approve 200")
+ck(ap.get("status"), "approved", "→ status=approved")
+ck(ap.get("validated_by") is not None, True, "validated_by setté")
+
+print("=== 169. POST /content-studio/posts/{pid}/schedule (future) → scheduled ===")
+future_dt = (_dt.utcnow() + _td(days=7)).isoformat()
+s, sc = call("POST", f"/api/tenants/tnt-demo/content-studio/posts/{gpost['id']}/schedule", tok,
+             {"scheduled_at": future_dt})
+ck(s, 200, "schedule 200")
+ck(sc.get("status"), "scheduled", "→ status=scheduled")
+ck(sc.get("scheduled_at") is not None, True, "scheduled_at setté")
+
+print("=== 170. POST /content-studio/posts/{pid}/publish (owner tok) → published + linkedin_urn ===")
+s, pb = call("POST", f"/api/tenants/tnt-demo/content-studio/posts/{gpost['id']}/publish", tok, {})
+ck(s, 200, "publish 200")
+ck(pb.get("status"), "published", "→ status=published")
+ck(pb.get("published_at") is not None, True, "published_at setté")
+ck(pb.get("linkedin_urn", "").startswith("urn:li:share:simulated"), True, f"linkedin_urn simulé ({pb.get('linkedin_urn', '')[:35]}...)")
+
+print("=== 171. POST reject workflow (mpost : request-validation → reject) → rejected + reason ===")
+s, _ = call("POST", f"/api/tenants/tnt-demo/content-studio/posts/{mpost['id']}/request-validation", tok, {})
+ck(s, 200, "mpost request-validation 200")
+s, rj = call("POST", f"/api/tenants/tnt-demo/content-studio/posts/{mpost['id']}/reject", tok,
+             {"reason": "Contenu trop générique — ajouter data."})
+ck(s, 200, "reject 200")
+ck(rj.get("status"), "rejected", "→ status=rejected")
+ck("générique" in rj.get("rejected_reason", ""), True, "rejected_reason setté")
+
+print("=== 172. GET /content-studio/calendar → calendrier éditorial ===")
+s, cal = call("GET", "/api/tenants/tnt-demo/content-studio/calendar?days=30", tok)
+ck(s, 200, "calendar 200")
+ck(len(cal) >= 30, True, f"{len(cal)} jours dans le calendrier (>=30)")
+# Au moins 1 jour avec un post (le published/scheduled post)
+days_with_posts = [d for d in cal if len(d.get("posts", [])) > 0]
+ck(len(days_with_posts) >= 1, True, f"{len(days_with_posts)} jours avec posts (>=1 : published/scheduled)")
+
+print("=== 173. GET /content-studio/stats → total_posts + posts_by_status ===")
+s, stats = call("GET", "/api/tenants/tnt-demo/content-studio/stats", tok)
+ck(s, 200, "stats 200")
+ck(stats.get("total_posts", 0) >= 2, True, f"total_posts={stats.get('total_posts')} (>=2)")
+ck("published" in stats.get("posts_by_status", {}), True, "posts_by_status contient 'published'")
+ck(stats.get("total_templates", 0) >= 6, True, f"total_templates={stats.get('total_templates')} (>=6 système)")
+
+print("=== 174. POST /content-studio/templates (create custom) → 201 + is_system=False ===")
+s, ctpl = call("POST", "/api/tenants/tnt-demo/content-studio/templates", tok,
+               {"name": "Mon template storytelling", "category": "storytelling",
+                "structure": "Hook : {{client_name}}\nCorps : ...", "variables": ["client_name"], "style": "perso"})
+ck(s, 201, "create template 201")
+ck(ctpl.get("is_system"), False, "custom template is_system=False")
+ck(ctpl.get("name"), "Mon template storytelling", "name propagé")
+
+print("=== 175. DELETE /content-studio/templates/{system_tpl} → 403 (immutable) ===")
+sys_tpl_id = tpls[0]["id"]  # 1er template système
+s, _ = call("DELETE", f"/api/tenants/tnt-demo/content-studio/templates/{sys_tpl_id}", tok, {})
+ck(s, 403, "delete system template → 403 (immuable)")
+# Cleanup P26 : delete le custom template + les posts créés (published non supprimable)
+call("DELETE", f"/api/tenants/tnt-demo/content-studio/templates/{ctpl['id']}", tok)
+call("DELETE", f"/api/tenants/tnt-demo/content-studio/posts/{mpost['id']}", tok)  # rejected → deletable
+
 print()
 print(f"RESULT: {passed} passed, {failed} failed")
 sys.exit(0 if failed == 0 else 1)
