@@ -42,7 +42,7 @@ ck("JWTError" not in sec_src.replace("PyJWTError", ""), True, "plus de JWTError 
 req = (ROOT / "backend" / "requirements.txt").read_text(encoding="utf-8")
 print("\n=== requirements.txt : PyJWT + cryptography ===")
 ck("PyJWT==2.15.1" in req, True, "PyJWT 2.15.1 (latest — CVE fixes)")
-ck("cryptography==44.0.3" in req, True, "cryptography 44.0.3 (Fernet)")
+ck("cryptography==50.0.2" in req, True, "cryptography 50.0.2 (latest — fixe 10 CVEs 44.0.3)")
 ck("python-jose" not in req, True, "python-jose retiré")
 
 # ─── Source : ai router (SSRF validation base_url) ───────────────────────────
