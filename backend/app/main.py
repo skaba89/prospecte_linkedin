@@ -27,6 +27,7 @@ from .routers import (
     content,
     crm,
     dashboard,
+    inbound_webhooks,
     linkedin,
     members,
     notifications,
@@ -119,6 +120,8 @@ for r in (
     sequences.router,
     analytics.router,
     webhooks.router,
+    inbound_webhooks.router,        # P20 : endpoint public POST /api/inbound/webhook/{token}
+    inbound_webhooks.router_admin,  # P20 : CRUD admin /api/tenants/{tid}/inbound-webhooks
 ):
     app.include_router(r)
 

@@ -1,0 +1,253 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>RevPulse Webhooks Inbound</title>
+<style>
+  :root{--bg:#0a0e1a;--panel:#131826;--panel2:#1a2030;--border:#232a3d;--text:#e5e7eb;--muted:#8b95a8;
+        --accent:#635bff;--accent2:#0a66c2;--ok:#10b981;--warn:#f59e0b;--err:#ef4444;--grad:linear-gradient(135deg,#635bff,#0a66c2)}
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:var(--bg);color:var(--text);min-height:100vh}
+  a{color:var(--accent);text-decoration:none}
+  .topbar{display:flex;align-items:center;gap:16px;padding:14px 24px;background:var(--panel);border-bottom:1px solid var(--border);position:sticky;top:0;z-index:10}
+  .topbar h1{font-size:18px;font-weight:700;background:var(--grad);-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent}
+  .topbar .sub{color:var(--muted);font-size:13px}
+  .topbar .spacer{flex:1}
+  .topbar a{font-size:13px;padding:6px 12px;border:1px solid var(--border);border-radius:8px}
+  .topbar a:hover{background:var(--panel2)}
+  .wrap{max-width:1100px;margin:0 auto;padding:24px}
+  .login{max-width:380px;margin:80px auto;background:var(--panel);border:1px solid var(--border);border-radius:14px;padding:24px}
+  .login h2{margin-bottom:12px;font-size:16px}
+  .login p{color:var(--muted);font-size:13px;margin-bottom:14px}
+  .login button{width:100%;padding:10px;margin-top:8px;background:var(--grad);color:#fff;border:none;border-radius:8px;font-weight:600;cursor:pointer;font-size:14px}
+  .head{display:flex;align-items:center;gap:12px;margin-bottom:20px}
+  .head h2{font-size:20px;flex:1}
+  .btn{padding:8px 14px;background:var(--grad);color:#fff;border:none;border-radius:8px;font-weight:600;cursor:pointer;font-size:13px}
+  .btn.sec{background:var(--panel2);border:1px solid var(--border)}
+  .btn.sm{padding:5px 10px;font-size:12px}
+  .btn.danger{background:rgba(239,68,68,.15);color:var(--err);border:1px solid rgba(239,68,68,.3)}
+  .card{background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:18px;margin-bottom:16px}
+  .card h3{font-size:14px;margin-bottom:12px;display:flex;align-items:center;gap:8px}
+  .wh-url{font-family:monospace;font-size:12px;color:var(--accent);word-break:break-all;background:var(--panel2);padding:6px 8px;border-radius:6px;border:1px solid var(--border);display:block;margin:6px 0}
+  .wh-meta{font-size:12px;color:var(--muted);margin:6px 0}
+  .wh-meta b{color:var(--text)}
+  .badge{display:inline-block;padding:2px 8px;border-radius:8px;font-size:11px;font-weight:600;margin:2px}
+  .badge.active{background:rgba(16,185,129,.15);color:var(--ok)}
+  .badge.inactive{background:rgba(139,149,168,.15);color:var(--muted)}
+  .badge.created{background:rgba(16,185,129,.15);color:var(--ok)}
+  .badge.updated{background:rgba(99,91,255,.15);color:var(--accent)}
+  .empty{color:var(--muted);text-align:center;padding:18px;font-size:13px}
+  input,select,textarea{width:100%;padding:8px;border:1px solid var(--border);border-radius:8px;background:var(--panel2);color:var(--text);font-size:14px;font-family:inherit}
+  textarea{font-family:monospace;font-size:12px;min-height:90px;resize:vertical}
+  label{font-size:12px;color:var(--muted);display:block;margin:8px 0 4px}
+  .row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+  .result-box{font-family:monospace;font-size:12px;background:var(--panel2);border:1px solid var(--border);border-radius:6px;padding:10px;margin-top:8px;white-space:pre-wrap;word-break:break-all}
+  .result-box.ok{border-color:rgba(16,185,129,.3);background:rgba(16,185,129,.08)}
+  .result-box.err{border-color:rgba(239,68,68,.3);background:rgba(239,68,68,.08);color:var(--err)}
+  .back-link{font-size:12px;color:var(--muted);cursor:pointer;margin-bottom:12px;display:inline-block}
+  .back-link:hover{color:var(--text)}
+  .info{font-size:12px;color:var(--muted);line-height:1.6;margin-bottom:14px}
+  .info code{background:var(--panel2);padding:1px 5px;border-radius:4px;color:var(--accent);font-size:11px}
+</style>
+</head>
+<body>
+<div class="topbar">
+  <h1>RevPulse Webhooks Inbound</h1>
+  <span class="sub" id="tenant-name"></span>
+  <div class="spacer"></div>
+  <a href="index.html">← Dashboard</a>
+  <a href="crm.html">CRM</a>
+  <a href="webhooks.html">Webhooks sortants</a>
+</div>
+
+<div class="wrap" id="content" style="display:none">
+  <div class="info">
+    <b>Webhooks inbound (P20)</b> — un système externe (formulaire site, Zapier, CRM) POST un payload JSON sur
+    l'URL publique ci-dessous → RevPulse crée ou met à jour un <b>Contact</b> (dédup par email puis linkedin_url).
+    Pour les nouveaux contacts, l'événement <code>contact.created</code> est émis → déclenche les webhooks
+    <b>sortants</b> (P18) : la chaîne in→out est complète. Champs mappables par défaut :
+    <code>first_name</code>, <code>last_name</code>, <code>email</code>, <code>phone</code>, <code>title</code>, <code>linkedin_url</code>.
+  </div>
+
+  <div id="list-view">
+    <div class="head">
+      <h2>Endpoints inbound</h2>
+      <button class="btn" onclick="showCreate()">+ Nouvel endpoint</button>
+    </div>
+    <div id="ibw-list"></div>
+  </div>
+
+  <div id="create-form" class="card" style="display:none">
+    <h3>Créer un endpoint inbound</h3>
+    <p class="wh-meta">Le token (32 hex) est auto-généré + retourné une fois — copie-le dans la config du système source. Un endpoint inactif retourne <b>410 Gone</b>.</p>
+    <label>Nom de la source (label)</label>
+    <input id="ibw-source" placeholder="Website form, Zapier, CRM sync…">
+    <label>Field map custom (optionnel — JSON {payload_key: contact_field})</label>
+    <textarea id="ibw-fieldmap" placeholder='{"prénom": "first_name", "courriel": "email"}'></textarea>
+    <label><input type="checkbox" id="ibw-active" checked style="width:auto;margin-right:6px"> Actif immédiatement</label>
+    <div style="margin-top:14px"><button class="btn" onclick="createIBW()">Créer l'endpoint</button> <button class="btn sec" onclick="document.getElementById('create-form').style.display='none'">Annuler</button></div>
+  </div>
+
+  <div id="test-view" style="display:none">
+    <span class="back-link" onclick="showList()">← Retour aux endpoints</span>
+    <div class="card">
+      <h3 id="test-title">Tester l'endpoint</h3>
+      <p class="wh-meta">POST un payload JSON de test sur l'URL publique (sans auth — le token authentifie). Le contact créé/mis à jour apparaîtra dans le <a href="crm.html">CRM</a>.</p>
+      <div class="wh-url" id="test-url"></div>
+      <label>Payload JSON</label>
+      <textarea id="test-payload">{
+  "first_name": "Marie",
+  "last_name": "Curie",
+  "email": "marie.curie@example.com",
+  "title": "Physicienne",
+  "phone": "+33 1 42 00 00 00"
+}</textarea>
+      <div style="margin-top:10px"><button class="btn" onclick="sendTest()">Envoyer le payload</button></div>
+      <div id="test-result"></div>
+    </div>
+  </div>
+</div>
+
+<div class="login" id="login" style="display:none">
+  <h2>Accès Webhooks Inbound</h2>
+  <p>Connecte-toi au dashboard RevPulse pour gérer les endpoints inbound, ou utilise le compte démo.</p>
+  <button onclick="demoLogin()">Connexion démo</button>
+</div>
+
+<script>
+const API = (location.protocol === 'https:' ? 'https://' : 'http://') + location.host + '/api';
+const PUBLIC_URL = (location.protocol === 'https:' ? 'https://' : 'http://') + location.host + '/api/inbound/webhook/';
+let TOK = localStorage.getItem('revpulse_jwt');
+let TID = null;
+try { const s = JSON.parse(localStorage.getItem('revpulse_session') || '{}'); TID = s.activeTenantId; } catch(e){}
+
+function esc(s){ return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])) }
+function fmtDate(iso){ if(!iso) return '—'; try { return new Date(iso).toLocaleString('fr-FR', {dateStyle:'short', timeStyle:'short'}); } catch(e){ return iso } }
+
+async function api(method, path, body, withAuth=true){
+  const opts = {method, headers: {'Content-Type': 'application/json'}};
+  if(withAuth && TOK) opts.headers['Authorization'] = 'Bearer ' + TOK;
+  if(body) opts.body = JSON.stringify(body);
+  try { const r = await fetch(API + path, opts); let d; try { d = await r.json() } catch(e){ d = null } return {status: r.status, data: d}; }
+  catch(e){ return {status: 0, data: null}; }
+}
+
+async function demoLogin(){
+  const r = await fetch(API + '/auth/demo', {method:'POST'});
+  if(!r.ok){ alert('Login démo échoué'); return; }
+  const d = await r.json();
+  TOK = d.token; localStorage.setItem('revpulse_jwt', TOK);
+  const ts = await fetch(API + '/tenants', {headers:{'Authorization':'Bearer '+TOK}});
+  const tenants = await ts.json();
+  TID = tenants[0]?.id;
+  if(TID){ localStorage.setItem('revpulse_session', JSON.stringify({activeTenantId: TID})); init(); }
+}
+
+function init(){
+  if(!TOK || !TID){ document.getElementById('login').style.display='block'; return; }
+  document.getElementById('login').style.display='none';
+  document.getElementById('content').style.display='block';
+  document.getElementById('tenant-name').textContent = 'Tenant: ' + TID;
+  loadList();
+}
+
+async function loadList(){
+  const {status, data} = await api('GET', '/tenants/' + TID + '/inbound-webhooks');
+  const el = document.getElementById('ibw-list');
+  if(status !== 200 || !Array.isArray(data)){ el.innerHTML = '<div class="empty">Erreur de chargement (' + status + ')</div>'; return; }
+  if(data.length === 0){ el.innerHTML = '<div class="empty">Aucun endpoint inbound. Crée le premier avec « + Nouvel endpoint ».</div>'; return; }
+  el.innerHTML = data.map(w => `
+    <div class="card">
+      <div class="row">
+        <h3 style="flex:1">${esc(w.source_name)}</h3>
+        <span class="badge ${w.active ? 'active' : 'inactive'}">${w.active ? 'actif' : 'suspendu'}</span>
+      </div>
+      <div class="wh-meta"><b>URL publique</b> (POST JSON, no auth) :</div>
+      <div class="wh-url">${esc(PUBLIC_URL + w.token)}</div>
+      <div class="wh-meta"><b>Token</b>: <code>${esc(w.token)}</code> &nbsp; <b>ID</b>: ${esc(w.id)} &nbsp; <b>Créé</b>: ${fmtDate(w.created_at)}</div>
+      ${w.field_map ? `<div class="wh-meta"><b>Field map custom</b>: <code>${esc(JSON.stringify(w.field_map))}</code></div>` : '<div class="wh-meta"><b>Field map</b>: default (identity 6 champs)</div>'}
+      <div class="row" style="margin-top:10px">
+        <button class="btn sm" onclick="showTest('${esc(w.id)}','${esc(w.token)}','${esc(w.source_name)}')">Tester</button>
+        <button class="btn sm sec" onclick="toggleIBW('${esc(w.id)}', ${!w.active})">${w.active ? 'Suspendre' : 'Réactiver'}</button>
+        <button class="btn sm danger" onclick="deleteIBW('${esc(w.id)}','${esc(w.source_name)}')">Supprimer</button>
+      </div>
+    </div>`).join('');
+}
+
+function showCreate(){
+  document.getElementById('create-form').style.display = 'block';
+  document.getElementById('ibw-source').value = '';
+  document.getElementById('ibw-fieldmap').value = '';
+  document.getElementById('ibw-active').checked = true;
+}
+
+async function createIBW(){
+  const source = document.getElementById('ibw-source').value.trim();
+  if(!source){ alert('Nom de la source requis'); return; }
+  let fmap = null;
+  const fmRaw = document.getElementById('ibw-fieldmap').value.trim();
+  if(fmRaw){
+    try { fmap = JSON.parse(fmRaw); }
+    catch(e){ alert('Field map JSON invalide: ' + e.message); return; }
+  }
+  const body = {source_name: source, field_map: fmap, active: document.getElementById('ibw-active').checked};
+  const {status, data} = await api('POST', '/tenants/' + TID + '/inbound-webhooks', body);
+  if(status === 201){
+    document.getElementById('create-form').style.display = 'none';
+    loadList();
+  } else {
+    alert('Erreur création (' + status + '): ' + (data && data.detail ? JSON.stringify(data.detail) : 'échec'));
+  }
+}
+
+async function toggleIBW(id, active){
+  const {status} = await api('PATCH', '/tenants/' + TID + '/inbound-webhooks/' + id, {active});
+  if(status === 200) loadList();
+  else alert('Erreur toggle (' + status + ')');
+}
+
+async function deleteIBW(id, name){
+  if(!confirm('Supprimer l\'endpoint inbound "' + name + '" ?\nLes POST suivants sur son URL retourneront 404.')) return;
+  const {status} = await api('DELETE', '/tenants/' + TID + '/inbound-webhooks/' + id);
+  if(status === 200) loadList();
+  else alert('Erreur suppression (' + status + ')');
+}
+
+function showList(){
+  document.getElementById('test-view').style.display = 'none';
+  document.getElementById('list-view').style.display = 'block';
+}
+
+let currentToken = null;
+function showTest(id, token, name){
+  document.getElementById('list-view').style.display = 'none';
+  document.getElementById('test-view').style.display = 'block';
+  currentToken = token;
+  document.getElementById('test-title').textContent = 'Tester : ' + name;
+  document.getElementById('test-url').textContent = PUBLIC_URL + token;
+  document.getElementById('test-result').innerHTML = '';
+}
+
+async function sendTest(){
+  if(!currentToken){ alert('Aucun endpoint sélectionné'); return; }
+  const raw = document.getElementById('test-payload').value.trim();
+  let payload;
+  try { payload = JSON.parse(raw); }
+  catch(e){ document.getElementById('test-result').innerHTML = '<div class="result-box err">JSON invalide: ' + esc(e.message) + '</div>'; return; }
+  // POST public : pas d'auth (le token dans l'URL authentifie)
+  const {status, data} = await api('POST', '/inbound/webhook/' + currentToken, payload, false);
+  const box = document.getElementById('test-result');
+  if(status === 200 && data){
+    box.innerHTML = `<div class="result-box ok">HTTP ${status} — <span class="badge ${data.action}">${esc(data.action)}</span>
+      <br>Contact ID: <code>${esc(data.contact_id)}</code> &nbsp; Matched by: <b>${esc(data.matched_by)}</b>
+      <br><br>Payload reçu:<br>${esc(JSON.stringify(data, null, 2))}</div>`;
+  } else {
+    box.innerHTML = `<div class="result-box err">HTTP ${status} — ${esc(JSON.stringify(data))}</div>`;
+  }
+}
+
+init();
+</script>
+</body>
+</html>

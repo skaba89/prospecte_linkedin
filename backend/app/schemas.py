@@ -724,3 +724,50 @@ class WebhookTestResult(BaseModel):
     status: str
     response_code: int | None = None
     error: str | None = None
+
+
+# ─── P20 : Webhooks inbound ─────────────────────────────────────────────────────
+
+
+class InboundWebhookCreate(BaseModel):
+    """Création d'un webhook inbound (P20). source_name = label du système source (ex. "Website
+    form"). field_map = dict optionnel {payload_key: contact_field} pour mapper un payload
+    non-standard ; None = default map (identity sur first_name/last_name/email/phone/title/
+    linkedin_url). token auto-généré (32 hex) — retourné une fois en Out."""
+
+    source_name: str = Field(..., min_length=1, max_length=100)
+    field_map: dict[str, str] | None = None
+    active: bool = True
+
+
+class InboundWebhookUpdate(BaseModel):
+    """Mise à jour partielle d'un webhook inbound (P20). token non modifiable (identifiant de
+    route — rotation = delete + recreate). Tous champs optionnels."""
+
+    source_name: str | None = Field(None, min_length=1, max_length=100)
+    field_map: dict[str, str] | None = None
+    active: bool | None = None
+
+
+class InboundWebhookOut(BaseModel):
+    """Webhook inbound sérialisé (P20). token EXPOSÉ (contrairement au secret HMAC outbound) —
+    c'est l'identifiant public dans l'URL /api/inbound/webhook/{token}, l'admin le copie dans la
+    config du système source."""
+
+    id: str
+    tenant_id: str
+    token: str
+    source_name: str
+    field_map: dict[str, str] | None = None
+    active: bool
+    created_by: str | None = None
+    created_at: datetime
+
+
+class InboundResult(BaseModel):
+    """Résultat d'une réception inbound (P20) : action created/updated, contact_id créé ou mis à
+    jour, matched_by = clé de dédup (email/linkedin_url/none pour création nette)."""
+
+    action: str  # created | updated
+    contact_id: str
+    matched_by: str  # email | linkedin_url | none

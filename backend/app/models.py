@@ -483,3 +483,25 @@ class WebhookDelivery(Base):
     last_error = Column(Text, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
     delivered_at = Column(DateTime, nullable=True)
+
+
+class InboundWebhook(Base):
+    """Webhook inbound (P20) : endpoint public POST /api/inbound/webhook/{token} où un système
+    externe (formulaire site, Zapier, CRM externe) pousse des données prospect → RevPulse crée
+    ou met à jour un Contact. Scopé par tenant. token = identifiant public dans l'URL (32 hex,
+    gen_token) — contrairement au secret HMAC outbound (jamais exposé), le token inbound EST
+    l'identifiant de route (l'admin le copie dans la config du système source). field_map = dict
+    optionnel mappant les clés du payload source → champs Contact (default: identity map sur
+    first_name/last_name/email/phone/title/linkedin_url). active=false → 410 Gone (suspendu).
+    created_by = admin créateur (FK users, nullable). Symétrique du Webhook outbound (P18)."""
+
+    __tablename__ = "inbound_webhooks"
+    id = Column(String, primary_key=True, default=lambda: _uid("ibw"))
+    tenant_id = Column(String, ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
+    token = Column(String, nullable=False, unique=True, index=True)  # 32 hex — public, dans l'URL
+    source_name = Column(String, nullable=False)  # ex. "Website form", "Zapier", "CRM sync"
+    field_map = Column(JSONType, nullable=True)  # dict {payload_key: contact_field} — None = default map
+    active = Column(Boolean, default=True, nullable=False)
+    created_by = Column(String, ForeignKey("users.id"), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)

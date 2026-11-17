@@ -74,6 +74,8 @@ jobs:
         run: python tests/test_webhooks.py
       - name: P19 Webhook retry cron static checks (start_scheduler threading daemon/env gate/deliver_pending)
         run: python tests/test_webhook_retry_cron.py
+      - name: P20 Webhooks inbound static checks (InboundWebhook model/service/router public POST/CRUD/dedup/migration)
+        run: python tests/test_inbound_webhooks.py
 
   test-api:
     name: API tests (sqlite, sans docker)
