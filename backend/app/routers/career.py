@@ -31,7 +31,8 @@ from .. import models, schemas
 from ..audit import log_audit
 from ..database import get_db
 from ..deps import get_current_user
-from ..services import career_cv, career_referential
+from ..services import career_cv, career_referential, job_search
+from ..services.job_connectors import SearchCriteria, list_connectors
 
 router = APIRouter(prefix="/api/career", tags=["career"])
 
@@ -252,3 +253,131 @@ def search_jobs(
 ):
     """Recherche dans le référentiel métiers (ROME/ESCO/O*NET). Filtre optionnel par query, source, category."""
     return career_referential.search_jobs(db, query=q, source=source, category=category, limit=limit)
+
+
+# ─── P35 : recherche d'opportunités (connecteurs + postings + saved searches) ─
+
+
+@router.get("/jobs/connectors", response_model=list[schemas.ConnectorInfoOut])
+def list_job_connectors(
+    user: models.User = Depends(get_current_user),
+):
+    """Liste les 12 connecteurs job boards avec leur statut de configuration (transparence : un connecteur
+    non configuré est visible — JAMAIS masqué). Pour UI + documentation."""
+    return list_connectors()
+
+
+@router.post("/jobs/search", response_model=schemas.SearchResponse)
+def search_job_postings(
+    body: schemas.SearchCriteriaRequest,
+    db: Session = Depends(get_db),
+    user: models.User = Depends(get_current_user),
+):
+    """Recherche multicritère across les connecteurs configurés. Persiste les postings (dedup hash).
+    Un connecteur non configuré → status "not_configured" (visible, 0 postings — JAMAIS de faux succès)."""
+    criteria = SearchCriteria(
+        keywords=body.keywords, location=body.location, contract_types=body.contract_types,
+        salary_min=body.salary_min, salary_max=body.salary_max, radius_km=body.radius_km,
+        source_connectors=body.source_connectors,
+    )
+    return job_search.search_jobs(db, criteria)
+
+
+@router.get("/jobs/postings", response_model=list[schemas.JobPostingOut])
+def list_job_postings(
+    keywords: str | None = None,
+    location: str | None = None,
+    source: str | None = None,
+    include_expired: bool = False,
+    limit: int = 50,
+    db: Session = Depends(get_db),
+    user: models.User = Depends(get_current_user),
+):
+    """Liste les offres cacheées (postings persistés). Filtre keywords/location/source. include_expired=False
+    par défaut (offres actives seulement). Cap 50 anti-abus."""
+    q = db.query(models.JobPosting)
+    if not include_expired:
+        q = q.filter_by(is_expired=False)
+    if source:
+        q = q.filter_by(source_connector=source)
+    if keywords:
+        kw = keywords.lower()
+        q = q.filter(models.JobPosting.title.ilike(f"%{kw}%"))
+    if location:
+        loc = location.lower()
+        q = q.filter(models.JobPosting.location.ilike(f"%{loc}%"))
+    return q.order_by(models.JobPosting.fetched_at.desc()).limit(limit).all()
+
+
+# ─── Recherches sauvegardées ─────────────────────────────────────────────────
+
+
+@router.get("/saved-searches", response_model=list[schemas.SavedSearchOut])
+def list_saved_searches(
+    db: Session = Depends(get_db),
+    user: models.User = Depends(get_current_user),
+):
+    """Liste les recherches sauvegardées du candidat."""
+    profile = _get_or_404_profile(db, user.id)
+    return db.query(models.SavedSearch).filter_by(career_profile_id=profile.id).order_by(
+        models.SavedSearch.created_at.desc()).all()
+
+
+@router.post("/saved-searches", response_model=schemas.SavedSearchOut, status_code=status.HTTP_201_CREATED)
+def create_saved_search(
+    body: schemas.SavedSearchRequest,
+    db: Session = Depends(get_db),
+    user: models.User = Depends(get_current_user),
+):
+    """Crée une recherche sauvegardée (criteria + alerte optionnelle)."""
+    profile = _get_or_404_profile(db, user.id)
+    saved = models.SavedSearch(
+        career_profile_id=profile.id,
+        name=body.name,
+        criteria=body.criteria.model_dump(),
+        alert_enabled=body.alert_enabled,
+        alert_frequency=body.alert_frequency,
+    )
+    db.add(saved)
+    db.commit()
+    db.refresh(saved)
+    log_audit(db, tenant_id="career", actor_user_id=user.id, actor_name=user.name,
+              action="career.saved_search.create", target_type="saved_search", target_id=saved.id,
+              detail={"name": body.name})
+    db.commit()
+    db.refresh(saved)
+    return saved
+
+
+@router.post("/saved-searches/{search_id}/run", response_model=schemas.SearchResponse)
+def run_saved_search(
+    search_id: str,
+    db: Session = Depends(get_db),
+    user: models.User = Depends(get_current_user),
+):
+    """Exécute une recherche sauvegardée + met à jour last_run_at + count."""
+    profile = _get_or_404_profile(db, user.id)
+    saved = db.query(models.SavedSearch).filter_by(id=search_id, career_profile_id=profile.id).first()
+    if not saved:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Recherche sauvegardée introuvable.")
+    return job_search.run_saved_search(db, saved)
+
+
+@router.delete("/saved-searches/{search_id}")
+def delete_saved_search(
+    search_id: str,
+    db: Session = Depends(get_db),
+    user: models.User = Depends(get_current_user),
+):
+    """Supprime une recherche sauvegardée (isolation : profile.user_id vérifié). Retourne {"deleted": id}
+    (cohérent avec les autres DELETE RevPulse — CRM contacts/sequences/webhooks)."""
+    profile = _get_or_404_profile(db, user.id)
+    saved = db.query(models.SavedSearch).filter_by(id=search_id, career_profile_id=profile.id).first()
+    if not saved:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Recherche sauvegardée introuvable.")
+    db.delete(saved)
+    db.commit()
+    log_audit(db, tenant_id="career", actor_user_id=user.id, actor_name=user.name,
+              action="career.saved_search.delete", target_type="saved_search", target_id=search_id)
+    db.commit()
+    return {"deleted": search_id}

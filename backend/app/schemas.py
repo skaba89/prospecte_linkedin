@@ -1502,3 +1502,89 @@ class TransferrableSkillsOut(BaseModel):
     de métier (P36 matching). Détectées via detect_transferrable_skills (heuristic v1)."""
     cv_id: str
     transferrable_skills: list[str]
+
+
+# ─── P35 — Career : recherche d'opportunités (connecteurs + postings + saved searches) ──────
+
+
+class SearchCriteriaRequest(BaseModel):
+    """Critères de recherche multicritère (P35). keywords = texte libre. source_connectors = liste
+    des connecteurs à interroger (None = tous configurés)."""
+    keywords: str | None = None
+    location: str | None = None
+    contract_types: list[str] | None = None
+    salary_min: int | None = Field(default=None, ge=0)
+    salary_max: int | None = Field(default=None, ge=0)
+    radius_km: int | None = Field(default=None, ge=0, le=500)
+    source_connectors: list[str] | None = None  # None = tous
+
+
+class JobPostingOut(BaseModel):
+    """Offre d'emploi (P35). source_connector = linkedin_jobs|freework|malt|... (12 providers)."""
+    id: str
+    title: str
+    company: str | None = None
+    location: str | None = None
+    url: str | None = None
+    description: str | None = None
+    contract_type: str | None = None
+    salary_min: int | None = None
+    salary_max: int | None = None
+    currency: str
+    posted_at: datetime | None = None
+    expires_at: datetime | None = None
+    source_connector: str
+    is_expired: bool
+    fetched_at: datetime
+    model_config = ConfigDict(from_attributes=True)
+
+
+class ConnectorStatusOut(BaseModel):
+    """Statut d'un connecteur après search (P35). status = ok|not_configured|error|unauthorized."""
+    name: str
+    status: str
+    count: int
+    error: str | None = None
+    configured: bool
+
+
+class SearchResponse(BaseModel):
+    """Réponse de recherche (P35). postings = offres actives filtrées. connector_statuses = statut par
+    connecteur (transparent — un connecteur not_configured est visible, JAMAIS masqué)."""
+    postings: list[JobPostingOut]
+    connector_statuses: list[ConnectorStatusOut]
+    total: int
+    expired_marked: int
+
+
+class ConnectorInfoOut(BaseModel):
+    """Info d'un connecteur (P35) — pour la documentation/UI."""
+    name: str
+    auth_method: str
+    base_url: str
+    configured: bool
+    credential_env: str | None = None
+
+
+class SavedSearchRequest(BaseModel):
+    """Création/update d'une recherche sauvegardée (P35). criteria = critères multicritères.
+    alert_enabled + alert_frequency (daily|weekly) → v2 scheduler alertes P40."""
+    name: str = Field(..., max_length=200)
+    criteria: SearchCriteriaRequest
+    alert_enabled: bool = False
+    alert_frequency: str = Field(default="daily", pattern="^(daily|weekly)$")
+
+
+class SavedSearchOut(BaseModel):
+    """Recherche sauvegardée (P35)."""
+    id: str
+    career_profile_id: str
+    name: str
+    criteria: dict
+    alert_enabled: bool
+    alert_frequency: str
+    last_run_at: datetime | None = None
+    last_run_postings_count: int
+    created_at: datetime
+    updated_at: datetime
+    model_config = ConfigDict(from_attributes=True)

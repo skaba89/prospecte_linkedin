@@ -1720,6 +1720,57 @@ ck(s, 200, "referential jobs 200")
 ck(len(jobs) >= 3, True, f"{len(jobs)} métiers data (>=3 — Data Scientist/Engineer/Analyst)")
 ck(any("Data Scientist" in j.get("label", "") for j in jobs), True, "contient Data Scientist")
 
+# ─── P35 : Career — recherche d'opportunités (connecteurs + saved searches) ───
+print("=== 206. GET /api/career/jobs/connectors → 200 (12 providers) ===")
+s, connectors = call("GET", "/api/career/jobs/connectors", tok)
+ck(s, 200, "jobs connectors 200")
+ck(len(connectors), 12, f"{len(connectors)} connecteurs (12 — LinkedIn Jobs/Free-Work/Malt/...)")
+ck(any(c["name"] == "linkedin_jobs" for c in connectors), True, "contient linkedin_jobs")
+ck(any(c["name"] == "france_travail" for c in connectors), True, "contient france_travail (RSS public)")
+# RSS connectors configured=True (france_travail + career_sites), API connectors not_configured.
+rss = [c for c in connectors if c["configured"]]
+ck(len(rss), 2, f"{len(rss)} connecteurs RSS configurés (france_travail + career_sites)")
+
+print("=== 207. POST /api/career/jobs/search → 200 (0 postings v1 stubs — anti-faux-succès) ===")
+s, search_resp = call("POST", "/api/career/jobs/search", tok,
+                      {"keywords": "product owner", "location": "Paris", "contract_types": ["CDI"]})
+ck(s, 200, "jobs search 200")
+ck(search_resp.get("total"), 0, f"total={search_resp.get('total')} (0 — v1 stubs ne génèrent pas de postings)")
+ck(len(search_resp.get("connector_statuses", [])), 12, f"12 connecteurs interrogés (status transparent)")
+# Aucun connecteur ne prétend avoir des postings (anti-faux-succès).
+statuses = {c["name"]: c["status"] for c in search_resp.get("connector_statuses", [])}
+ck(statuses.get("linkedin_jobs"), "not_configured", f"linkedin_jobs not_configured (credential absent) : {statuses.get('linkedin_jobs')}")
+ck(statuses.get("france_travail"), "ok", f"france_travail (RSS) status=ok : {statuses.get('france_travail')}")
+
+print("=== 208. POST /api/career/saved-searches → 201 (create PO Paris CDI) ===")
+s, saved = call("POST", "/api/career/saved-searches", tok,
+                {"name": "PO Paris CDI", "alert_enabled": True, "alert_frequency": "daily",
+                 "criteria": {"keywords": "product owner", "location": "Paris", "contract_types": ["CDI"]}})
+ck(s, 201, "saved search create 201")
+ck(saved.get("name"), "PO Paris CDI", "saved.name")
+ck(saved.get("alert_enabled"), True, "saved.alert_enabled=True")
+ck(saved.get("alert_frequency"), "daily", "saved.alert_frequency=daily")
+
+print("=== 209. GET /api/career/saved-searches → 200 (>=1) ===")
+s, saved_list = call("GET", "/api/career/saved-searches", tok)
+ck(s, 200, "saved searches list 200")
+ck(len(saved_list) >= 1, True, f"{len(saved_list)} saved searches (>=1)")
+
+print("=== 210. POST /api/career/saved-searches/{id}/run → 200 ===")
+s, run_resp = call("POST", f"/api/career/saved-searches/{saved['id']}/run", tok, {})
+ck(s, 200, "saved search run 200")
+ck(run_resp.get("total"), 0, f"run total={run_resp.get('total')} (0 — v1 stubs)")
+
+print("=== 211. GET /api/career/jobs/postings → 200 (0 active v1) ===")
+s, postings = call("GET", "/api/career/jobs/postings", tok)
+ck(s, 200, "jobs postings list 200")
+ck(len(postings), 0, f"{len(postings)} postings actifs (0 — v1 stubs ne génèrent pas)")
+
+print("=== 212. DELETE /api/career/saved-searches/{id} → 200 ({deleted: id}) ===")
+s, del_body = call("DELETE", f"/api/career/saved-searches/{saved['id']}", tok)
+ck(s, 200, "saved search delete 200")
+ck(del_body.get("deleted"), saved["id"], "delete renvoie {deleted: id}")
+
 print()
 print(f"RESULT: {passed} passed, {failed} failed")
 sys.exit(0 if failed == 0 else 1)
