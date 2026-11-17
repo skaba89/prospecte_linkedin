@@ -895,6 +895,11 @@ def update_opportunity(
     data = body.model_dump(exclude_unset=True)
     if "stage" in data and data["stage"] not in VALID_OPP_STAGE:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, f"Stage invalide : {data['stage']}")
+    # P24 : transition stage→closed_won → auto-set closed_at (time-to-close) ; retour arrière → clear.
+    if data.get("stage") == "closed_won" and o.stage != "closed_won":
+        o.closed_at = datetime.utcnow()
+    elif data.get("stage") and data.get("stage") != "closed_won" and o.stage == "closed_won":
+        o.closed_at = None
     for k, v in data.items():
         setattr(o, k, v)
     o.updated_at = datetime.utcnow()
@@ -929,6 +934,11 @@ def move_opportunity(
     if not o:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Opportunité introuvable")
     old = o.stage
+    # P24 : transition stage→closed_won → auto-set closed_at (time-to-close) ; retour arrière → clear.
+    if body.stage == "closed_won" and old != "closed_won":
+        o.closed_at = datetime.utcnow()
+    elif body.stage != "closed_won" and old == "closed_won":
+        o.closed_at = None
     o.stage = body.stage
     o.updated_at = datetime.utcnow()
     log_audit(

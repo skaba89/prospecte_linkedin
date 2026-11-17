@@ -19,7 +19,7 @@ import io
 import logging
 
 from fastapi import APIRouter, Depends, Response
-from sqlalchemy import func
+from sqlalchemy import extract, func
 from sqlalchemy.orm import Session
 
 from .. import models, schemas
@@ -133,6 +133,109 @@ def sources(tid: str, db: Session = Depends(get_db), _t: models.Tenant = Depends
             source=src, count=total_src,
             conversion_pct=round(converted / total_src * 100, 1) if total_src else 0.0))
     return schemas.AnalyticsSources(by_source=stats, total=sum(s.count for s in stats))
+
+
+@router.get("/tenants/{tid}/analytics/funnel", response_model=schemas.AnalyticsFunnel)
+def funnel(tid: str, db: Session = Depends(get_db), _t: models.Tenant = Depends(get_tenant)):
+    """Funnel de conversion pipeline (P24) : chemin prospecting→qualified→proposal→negotiation→
+    closed_won. cumulative[i] = opps à ce stage + stages ultérieurs du chemin gagnant (closed_lost
+    exclu — branche de perte). conversion_from_prev_pct = cumulative[i]/cumulative[i-1].
+    drop_off = cumulative précédent - cumulative actuel. Conversion globale = won/entered."""
+    stage_counts = dict(db.query(models.Opportunity.stage, func.count(models.Opportunity.id))
+                        .filter_by(tenant_id=tid).group_by(models.Opportunity.stage).all())
+    funnel_stages = schemas._FUNNEL_STAGES
+    stages_out = []
+    cumulative_prev = None
+    for i, st in enumerate(funnel_stages):
+        # cumulative = somme des counts des stages à partir de i dans le chemin gagnant
+        cumulative = sum(stage_counts.get(s, 0) for s in funnel_stages[i:])
+        count = stage_counts.get(st, 0)
+        if i == 0:
+            conv = 100.0 if cumulative else 0.0
+            drop = 0
+        else:
+            conv = round(cumulative / cumulative_prev * 100, 1) if cumulative_prev else 0.0
+            drop = cumulative_prev - cumulative
+        stages_out.append(schemas.FunnelStage(
+            stage=st, order=i, count=count, cumulative=cumulative,
+            conversion_from_prev_pct=conv, drop_off=drop))
+        cumulative_prev = cumulative
+    total_entered = stages_out[0].cumulative if stages_out else 0
+    total_won = stages_out[-1].cumulative if stages_out else 0
+    overall = round(total_won / total_entered * 100, 1) if total_entered else 0.0
+    return schemas.AnalyticsFunnel(
+        stages=stages_out, total_entered=total_entered, total_won=total_won,
+        overall_conversion_pct=overall)
+
+
+@router.get("/tenants/{tid}/analytics/cohorts", response_model=schemas.AnalyticsCohorts)
+def cohorts(tid: str, db: Session = Depends(get_db), _t: models.Tenant = Depends(get_tenant)):
+    """Cohortes par mois d'acquisition (P24) : opportunités groupées par created_at tronqué au mois
+    (YYYY-MM). Pour chaque cohorte : by_stage (répartition actuelle), closed_won_count, win_rate,
+    revenue_won (somme values won), avg_time_to_close_days (jours moyens created_at→closed_at pour
+    les won). Ordonné par mois asc."""
+    rows = (db.query(extract("year", models.Opportunity.created_at).label("y"),
+                     extract("month", models.Opportunity.created_at).label("m"),
+                     models.Opportunity.stage, models.Opportunity.value,
+                     models.Opportunity.closed_at, models.Opportunity.created_at)
+            .filter_by(tenant_id=tid).all())
+    cmap: dict[str, dict] = {}
+    for y, m, stage, value, closed_at, created_at in rows:
+        month = f"{int(y):04d}-{int(m):02d}"
+        c = cmap.setdefault(month, {"total": 0, "by_stage": {}, "won": 0, "won_value": 0, "deltas": []})
+        c["total"] += 1
+        c["by_stage"][stage] = c["by_stage"].get(stage, 0) + 1
+        if stage == "closed_won":
+            c["won"] += 1
+            c["won_value"] += value or 0
+            if closed_at and created_at:
+                delta = (closed_at - created_at).days
+                if delta >= 0:
+                    c["deltas"].append(delta)
+    cohorts = []
+    for month in sorted(cmap.keys()):
+        c = cmap[month]
+        win_rate = round(c["won"] / c["total"] * 100, 1) if c["total"] else 0.0
+        avg_ttc = round(sum(c["deltas"]) / len(c["deltas"]), 1) if c["deltas"] else None
+        cohorts.append(schemas.CohortRow(
+            month=month, total_opps=c["total"], by_stage=c["by_stage"],
+            closed_won_count=c["won"], win_rate_pct=win_rate,
+            revenue_won=c["won_value"], avg_time_to_close_days=avg_ttc))
+    total_opps = sum(c.total_opps for c in cohorts)
+    total_won = sum(c.closed_won_count for c in cohorts)
+    avg_win = round(total_won / total_opps * 100, 1) if total_opps else 0.0
+    return schemas.AnalyticsCohorts(
+        cohorts=cohorts, total_opps=total_opps, total_won=total_won, avg_win_rate_pct=avg_win)
+
+
+@router.get("/tenants/{tid}/analytics/attribution", response_model=schemas.AnalyticsAttribution)
+def attribution(tid: str, db: Session = Depends(get_db), _t: models.Tenant = Depends(get_tenant)):
+    """Attribution revenue par source d'acquisition (P24) : jointure Opportunity→Contact.source.
+    Pour chaque source : opps_count, closed_won_count, revenue_won (somme values won), win_rate,
+    avg_deal_size (revenue_won/won). Tri par revenue_won desc. best_source = top revenue."""
+    rows = (db.query(models.Contact.source, models.Opportunity.stage, models.Opportunity.value)
+            .join(models.Opportunity, models.Opportunity.contact_id == models.Contact.id)
+            .filter(models.Opportunity.tenant_id == tid).all())
+    smap: dict[str, dict] = {}
+    for src, stage, value in rows:
+        s = smap.setdefault(src, {"opps": 0, "won": 0, "won_value": 0})
+        s["opps"] += 1
+        if stage == "closed_won":
+            s["won"] += 1
+            s["won_value"] += value or 0
+    by_source = []
+    for src, d in smap.items():
+        win_rate = round(d["won"] / d["opps"] * 100, 1) if d["opps"] else 0.0
+        avg_deal = round(d["won_value"] / d["won"], 1) if d["won"] else 0.0
+        by_source.append(schemas.AttributionSource(
+            source=src, opps_count=d["opps"], closed_won_count=d["won"],
+            revenue_won=d["won_value"], win_rate_pct=win_rate, avg_deal_size=avg_deal))
+    by_source.sort(key=lambda x: x.revenue_won, reverse=True)
+    total_rev = sum(s.revenue_won for s in by_source)
+    total_won = sum(s.closed_won_count for s in by_source)
+    best = by_source[0].source if by_source else None
+    return schemas.AnalyticsAttribution(
+        by_source=by_source, total_revenue_won=total_rev, total_won=total_won, best_source=best)
 
 
 @router.get("/tenants/{tid}/analytics/export")

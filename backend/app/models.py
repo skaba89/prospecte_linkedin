@@ -316,6 +316,7 @@ class Opportunity(Base):
     owner_id = Column(String, ForeignKey("users.id"), nullable=True, index=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    closed_at = Column(DateTime, nullable=True)  # P24 : auto-set quand stage→closed_won (time-to-close)
 
 
 class Task(Base):
