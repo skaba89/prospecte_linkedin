@@ -985,3 +985,40 @@ class AdaptedCV(Base):
     adapted_data = Column(JSONType, nullable=False)  # structure adaptée (anti-invention)
     match_score = Column(Float, nullable=True)  # score P36 matching (référence)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+
+# ─── P38 — Career : Candidatures + Gmail/Outlook (pipeline de candidatures) ────
+
+
+class JobApplication(Base):
+    """Candidature à une offre (P38). Pipeline de suivi : submitted → interview → offer/rejected/withdrawn.
+    career_profile_id FK CASCADE (isolation candidat), posting_id FK SET NULL (nullable — peut candidater
+    hors offre connue), adapted_cv_id FK SET NULL (nullable — CV adapté utilisé si spécifié).
+
+    cover_letter : lettre de motivation générée via cover_letter.generate_cover_letter (anti-invention
+    P37 invariant — n'ajoute QUE ce qui est dans le CV source). timeline : JSON [{step, status, date, note}]
+    (historique des étapes + dates).
+
+    Anti-spam (P38 invariant) : envoi email via email_sender (OAuth2 Gmail/Outlook officiel — v1 stub
+    not_configured comme P35 connectors). JAMAIS de mass-email/spam — une candidature à la fois avec
+    consentement explicite du candidat (POST /applications/{id}/send). Pas d'automatisation de relance
+    non consentie (v2 : scheduler relances opt-in)."""
+
+    __tablename__ = "job_applications"
+    id = Column(String, primary_key=True, default=lambda: _uid("app"))
+    career_profile_id = Column(String, ForeignKey("career_profiles.id", ondelete="CASCADE"), nullable=False, index=True)
+    posting_id = Column(String, ForeignKey("job_postings.id", ondelete="SET NULL"), nullable=True, index=True)
+    adapted_cv_id = Column(String, ForeignKey("adapted_cvs.id", ondelete="SET NULL"), nullable=True)
+    company = Column(String, nullable=False)  # entreprise cible (posting.company OU saisie libre)
+    job_title = Column(String, nullable=False)  # poste visé (posting.title OU saisie libre)
+    status = Column(String, default="submitted", nullable=False, index=True)
+    # submitted|interview|offer|rejected|withdrawn
+    cover_letter = Column(Text, nullable=True)  # lettre générée (anti-invention P37 invariant)
+    application_method = Column(String, default="manual", nullable=False)  # manual|email|external
+    recipient_email = Column(String, nullable=True)  # email destinataire si envoi via email_sender
+    sent_at = Column(DateTime, nullable=True)  # date d'envoi effectif (si email_sender)
+    timeline = Column(JSONType, nullable=True)  # [{step, status, date, note}]
+    notes = Column(Text, nullable=True)  # notes libres du candidat
+    applied_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)

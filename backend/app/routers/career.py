@@ -25,6 +25,7 @@ Sécurité (P34) :
   - n'invente JAMAIS de compétence (P37 invariant) — parse_cv n'ajoute que ce qui est dans le texte.
 """
 import io
+from datetime import datetime
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 from fastapi.responses import StreamingResponse
@@ -34,7 +35,16 @@ from .. import models, schemas
 from ..audit import log_audit
 from ..database import get_db
 from ..deps import get_current_user
-from ..services import career_cv, career_referential, cv_adapter, cv_generator, job_search, matching
+from ..services import (
+    career_cv,
+    career_referential,
+    cover_letter,
+    cv_adapter,
+    cv_generator,
+    email_sender,
+    job_search,
+    matching,
+)
 from ..services.job_connectors import SearchCriteria, list_connectors
 
 router = APIRouter(prefix="/api/career", tags=["career"])
@@ -545,3 +555,160 @@ def download_adapted_cv(
     filename = f"cv_adapte_{acv.id}.{ext}"
     return StreamingResponse(io.BytesIO(content), media_type=media,
                              headers={"Content-Disposition": f'attachment; filename="{filename}"'})
+
+
+# ─── P38 : Candidatures + Gmail/Outlook (pipeline de candidatures) ────────────
+
+
+_APPLICATION_STATUSES = ["submitted", "interview", "offer", "rejected", "withdrawn"]
+
+
+@router.post("/applications", response_model=schemas.JobApplicationOut, status_code=status.HTTP_201_CREATED)
+def create_application(
+    body: schemas.ApplicationCreateRequest,
+    db: Session = Depends(get_db),
+    user: models.User = Depends(get_current_user),
+):
+    """Crée une candidature (P38). company + job_title requis. posting_id/adapted_cv_id optionnels.
+    generate_cover_letter=True → génère la lettre depuis le CV source (anti-invention P37/P38 invariant).
+    Anti-spam : envoi email séparé (POST /applications/{id}/send) — consentement explicite."""
+    profile = _get_or_404_profile(db, user.id)
+    # Validate posting_id si fourni.
+    posting = None
+    if body.posting_id:
+        posting = db.query(models.JobPosting).filter_by(id=body.posting_id).first()
+        if not posting:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "Offre cible introuvable.")
+    # Validate adapted_cv_id si fourni (isolation profil).
+    adapted_cv = None
+    if body.adapted_cv_id:
+        adapted_cv = db.query(models.AdaptedCV).filter_by(id=body.adapted_cv_id, career_profile_id=profile.id).first()
+        if not adapted_cv:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "CV adapté introuvable (isolation profil).")
+    # Cover letter auto-générée (anti-invention) si demandé.
+    cover = None
+    if body.generate_cover_letter:
+        if not body.cv_source_id:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "cv_source_id requis pour generate_cover_letter.")
+        cv_src = db.query(models.CV).filter_by(id=body.cv_source_id, career_profile_id=profile.id).first()
+        if not cv_src:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "CV source introuvable (isolation profil).")
+        cover = cover_letter.generate_cover_letter(cv_src, posting, profile, candidate_name=user.name)
+    company = body.company or (posting.company if posting else None)
+    job_title = body.job_title or (posting.title if posting else None)
+    app = models.JobApplication(
+        career_profile_id=profile.id, posting_id=body.posting_id, adapted_cv_id=body.adapted_cv_id,
+        company=company, job_title=job_title, status="submitted", cover_letter=cover,
+        application_method=body.application_method, recipient_email=body.recipient_email,
+        notes=body.notes, timeline=[{"step": "created", "status": "submitted",
+                                     "date": datetime.utcnow().isoformat(), "note": "Candidature créée."}],
+    )
+    db.add(app)
+    db.commit()
+    db.refresh(app)
+    log_audit(db, tenant_id="career", actor_user_id=user.id, actor_name=user.name,
+              action="career.application.create", target_type="job_application", target_id=app.id,
+              detail={"company": company, "job_title": job_title, "method": body.application_method})
+    db.commit()
+    db.refresh(app)
+    return app
+
+
+@router.get("/applications", response_model=list[schemas.JobApplicationOut])
+def list_applications(
+    status_filter: str | None = None,
+    db: Session = Depends(get_db),
+    user: models.User = Depends(get_current_user),
+):
+    """Liste les candidatures du candidat (P38). Filtre optionnel par status (pipeline)."""
+    profile = _get_or_404_profile(db, user.id)
+    q = db.query(models.JobApplication).filter_by(career_profile_id=profile.id)
+    if status_filter:
+        if status_filter not in _APPLICATION_STATUSES:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, f"status doit être dans {_APPLICATION_STATUSES}.")
+        q = q.filter_by(status=status_filter)
+    return q.order_by(models.JobApplication.applied_at.desc()).all()
+
+
+@router.get("/applications/{application_id}", response_model=schemas.JobApplicationOut)
+def get_application(
+    application_id: str,
+    db: Session = Depends(get_db),
+    user: models.User = Depends(get_current_user),
+):
+    """Récupère une candidature par id (isolation : career_profile_id vérifié)."""
+    profile = _get_or_404_profile(db, user.id)
+    app = db.query(models.JobApplication).filter_by(id=application_id, career_profile_id=profile.id).first()
+    if not app:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Candidature introuvable.")
+    return app
+
+
+@router.patch("/applications/{application_id}", response_model=schemas.JobApplicationOut)
+def update_application(
+    application_id: str,
+    body: schemas.ApplicationUpdateRequest,
+    db: Session = Depends(get_db),
+    user: models.User = Depends(get_current_user),
+):
+    """Met à jour une candidature (P38) — tracking pipeline. status (submitted/interview/offer/rejected/
+    withdrawn). Chaque changement de status ajoute une entrée au timeline (historique audit trail)."""
+    profile = _get_or_404_profile(db, user.id)
+    app = db.query(models.JobApplication).filter_by(id=application_id, career_profile_id=profile.id).first()
+    if not app:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Candidature introuvable.")
+    if body.status:
+        if body.status not in _APPLICATION_STATUSES:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, f"status doit être dans {_APPLICATION_STATUSES}.")
+        if body.status != app.status:
+            timeline = list(app.timeline or [])  # nouvel objet — SQLAlchemy ne détecte pas les mutations in-place JSON.
+            timeline.append({"step": "status_change", "status": body.status,
+                             "date": datetime.utcnow().isoformat(),
+                             "note": f"Statut changé : {app.status} → {body.status}."})
+            app.timeline = timeline
+            app.status = body.status
+    if body.notes is not None:
+        app.notes = body.notes
+    db.commit()
+    db.refresh(app)
+    log_audit(db, tenant_id="career", actor_user_id=user.id, actor_name=user.name,
+              action="career.application.update", target_type="job_application", target_id=app.id,
+              detail={"status": app.status})
+    db.commit()
+    db.refresh(app)
+    return app
+
+
+@router.post("/applications/{application_id}/send", response_model=schemas.JobApplicationOut)
+def send_application(
+    application_id: str,
+    db: Session = Depends(get_db),
+    user: models.User = Depends(get_current_user),
+):
+    """Envoie une candidature via email (P38) — CONSENTEMENT EXPLICITE (POST explicite, pas d'auto).
+    Anti-spam : une candidature à la fois, rate-limit 50/jour. v1 : stub not_configured (OAuth2 Gmail/Outlook
+    non configuré — comme P35 connectors). v2 : OAuth2 concret."""
+    profile = _get_or_404_profile(db, user.id)
+    app = db.query(models.JobApplication).filter_by(id=application_id, career_profile_id=profile.id).first()
+    if not app:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Candidature introuvable.")
+    if app.application_method != "email":
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "application_method doit être 'email' pour envoi.")
+    result = email_sender.send_application_email(app, profile, db)
+    if result.status == "error":
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, result.error or "Erreur envoi email.")
+    # not_configured → on enregistre la tentative mais sent_at reste None (v1 stub).
+    if result.status == "sent":
+        app.sent_at = result.sent_at or datetime.utcnow()
+        timeline = list(app.timeline or [])  # nouvel objet — SQLAlchemy ne détecte pas les mutations in-place JSON.
+        timeline.append({"step": "sent", "status": app.status,
+                         "date": app.sent_at.isoformat(), "note": f"Envoyé via {result.provider}."})
+        app.timeline = timeline
+    db.commit()
+    db.refresh(app)
+    log_audit(db, tenant_id="career", actor_user_id=user.id, actor_name=user.name,
+              action="career.application.send", target_type="job_application", target_id=app.id,
+              detail={"send_status": result.status, "provider": result.provider})
+    db.commit()
+    db.refresh(app)
+    return app

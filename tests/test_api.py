@@ -1829,6 +1829,41 @@ s, docx_bytes, _ = call_download(f"/api/career/cv-adapted/{adapted_cv['id']}/dow
 ck(s, 200, "download DOCX 200")
 ck(docx_bytes[:2], b"PK", f"DOCX magic bytes (ZIP) : {docx_bytes[:2]}")
 
+# ─── P38 : Career — Candidatures + Gmail/Outlook (pipeline de candidatures) ───
+print("=== 219. POST /api/career/applications → 201 (create + cover letter anti-invention) ===")
+s, app_created = call("POST", "/api/career/applications", tok,
+                      {"company": "TechCorp", "job_title": "Senior Product Owner",
+                       "cv_source_id": cv["id"], "generate_cover_letter": True,
+                       "application_method": "email", "recipient_email": "recrut@techcorp.com"})
+ck(s, 201, "application create 201")
+ck(app_created.get("company"), "TechCorp", "app.company")
+ck(app_created.get("status"), "submitted", f"app.status=submitted : {app_created.get('status')}")
+ck(bool(app_created.get("cover_letter")), True, "cover_letter générée (anti-invention)")
+ck("python" in (app_created.get("cover_letter") or "").lower(), True, "cover_letter mentionne python (skill CV)")
+ck(app_created.get("application_method"), "email", "app.application_method=email")
+ck(len(app_created.get("timeline", [])) >= 1, True, f"timeline >= 1 (created entry) : {len(app_created.get('timeline', []))}")
+
+print("=== 220. GET /api/career/applications → 200 (>=1) ===")
+s, apps_list = call("GET", "/api/career/applications", tok)
+ck(s, 200, "applications list 200")
+ck(len(apps_list) >= 1, True, f"{len(apps_list)} candidatures (>=1)")
+
+print("=== 221. GET /api/career/applications/{id} → 200 (isolation) ===")
+s, app_detail = call("GET", f"/api/career/applications/{app_created['id']}", tok)
+ck(s, 200, "application detail 200")
+ck(app_detail.get("id"), app_created["id"], "detail id cohérent")
+
+print("=== 222. PATCH /api/career/applications/{id} (status=interview) → 200 (timeline append) ===")
+s, app_updated = call("PATCH", f"/api/career/applications/{app_created['id']}", tok, {"status": "interview"})
+ck(s, 200, "application patch 200")
+ck(app_updated.get("status"), "interview", f"status=interview : {app_updated.get('status')}")
+ck(len(app_updated.get("timeline", [])), 2, f"timeline a 2 entrées (created + status_change) : {len(app_updated.get('timeline', []))}")
+
+print("=== 223. POST /api/career/applications/{id}/send → 200 (v1 stub not_configured, sent_at None) ===")
+s, app_sent = call("POST", f"/api/career/applications/{app_created['id']}/send", tok, {})
+ck(s, 200, "application send 200 (v1 stub not_configured — pas d'erreur, enregistré)")
+ck(app_sent.get("sent_at"), None, f"sent_at=None (v1 stub, OAuth non configuré) : {app_sent.get('sent_at')}")
+
 print()
 print(f"RESULT: {passed} passed, {failed} failed")
 sys.exit(0 if failed == 0 else 1)

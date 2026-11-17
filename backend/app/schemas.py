@@ -1660,3 +1660,51 @@ class AdaptedCVOut(BaseModel):
     match_score: float | None = None
     created_at: datetime
     model_config = ConfigDict(from_attributes=True)
+
+
+# ─── P38 — Career : Candidatures + Gmail/Outlook (pipeline de candidatures) ────
+
+
+class ApplicationCreateRequest(BaseModel):
+    """Création d'une candidature (P38). posting_id (offre cible, optional), adapted_cv_id (CV adapté,
+    optional). company + job_title requis (si pas de posting_id). recipient_email + application_method=email
+    pour envoi différé via POST /applications/{id}/send. generate_cover_letter=True → génère la lettre
+    automatiquement depuis le CV source (anti-invention P37/P38 invariant)."""
+    posting_id: str | None = None
+    adapted_cv_id: str | None = None
+    cv_source_id: str | None = None  # requis si generate_cover_letter=True (CV source pour la lettre)
+    company: str = Field(..., min_length=1, max_length=200)
+    job_title: str = Field(..., min_length=1, max_length=200)
+    recipient_email: str | None = Field(default=None, max_length=254)
+    application_method: str = Field(default="manual", pattern="^(manual|email|external)$")
+    notes: str | None = Field(default=None, max_length=2000)
+    generate_cover_letter: bool = False  # True → cover_letter.generate_cover_letter(cv, posting, profile)
+
+
+class ApplicationUpdateRequest(BaseModel):
+    """Mise à jour d'une candidature (P38) — tracking pipeline. status (submitted/interview/offer/rejected/
+    withdrawn), notes optionnelles. Chaque changement de status ajoute une entrée au timeline."""
+    status: str | None = Field(default=None, pattern="^(submitted|interview|offer|rejected|withdrawn)$")
+    notes: str | None = Field(default=None, max_length=2000)
+
+
+class JobApplicationOut(BaseModel):
+    """Candidature (P38). cover_letter = lettre générée (anti-invention). timeline = historique des étapes.
+    sent_at = date d'envoi effectif (si email_sender). Anti-spam : envoi explicite via POST /send."""
+    id: str
+    career_profile_id: str
+    posting_id: str | None = None
+    adapted_cv_id: str | None = None
+    company: str
+    job_title: str
+    status: str
+    cover_letter: str | None = None
+    application_method: str
+    recipient_email: str | None = None
+    sent_at: datetime | None = None
+    timeline: list | None = None
+    notes: str | None = None
+    applied_at: datetime
+    created_at: datetime
+    updated_at: datetime
+    model_config = ConfigDict(from_attributes=True)
