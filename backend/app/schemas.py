@@ -1337,3 +1337,92 @@ class EnrichmentResult(BaseModel):
     enriched_at: str | None = None
     simulated: bool
     data: dict
+
+
+# ─── P28 — Warmup inbox + Sales Intelligence ─────────────────────────────────
+
+
+class InboxWarmupRequest(BaseModel):
+    """Création d'une config warmup inbox (P28). sender_email = adresse à warmer. target_volume =
+    volume quotidien cible (10-1000, clamp). ramp_days = durée de la rampe (7-90j, clamp)."""
+    sender_email: str = Field(..., max_length=255)
+    target_volume: int = Field(default=100, ge=10, le=1000)
+    ramp_days: int = Field(default=30, ge=7, le=90)
+
+
+class InboxWarmupOut(BaseModel):
+    """Config warmup (P28). ramp_status : pending|ramping|active|paused|completed. current_day = jour
+    actuel (0 = pas démarré). daily_volume = volume calculé (rampe linéaire)."""
+    id: str
+    sender_email: str
+    target_volume: int
+    ramp_days: int
+    current_day: int
+    daily_volume: int
+    ramp_status: str
+    started_at: datetime | None = None
+    completed_at: datetime | None = None
+    created_at: datetime
+    model_config = ConfigDict(from_attributes=True)
+
+
+class WarmupStatsOut(BaseModel):
+    """Stats warmup (P28). progress_pct = current_day/ramp_days*100. open_rate/reply_rate sur sent_count."""
+    warmup_id: str
+    sender_email: str
+    target_volume: int
+    ramp_days: int
+    current_day: int
+    daily_volume: int
+    ramp_status: str
+    progress_pct: float
+    sent_count: int
+    open_count: int
+    reply_count: int
+    open_rate: float
+    reply_rate: float
+
+
+class ContactFunnelStage(BaseModel):
+    """Stage du contacts-funnel (P28). status = new|qualified|contacted|nurture|won. Distinct du
+    FunnelStage P24 (pipeline-funnel par opportunity stage avec cumulative/drop_off)."""
+    status: str
+    count: int
+
+
+class FunnelOut(BaseModel):
+    """Contacts-funnel de conversion (P28). stages = funnel ordonné (new → won). lost = à part.
+    conversion_rate = won / total * 100. Distinct du AnalyticsFunnel P24 (pipeline opportunities)."""
+    stages: list[ContactFunnelStage]
+    lost: int
+    total: int
+    conversion_rate: float
+
+
+class CohortOut(BaseModel):
+    """Cohorte d'enrollment (P28). cohort = semaine ISO (YYYY-Www). completion_rate = completed/total*100."""
+    cohort: str
+    total: int
+    completed: int
+    active: int
+    paused: int
+    failed: int
+    completion_rate: float
+
+
+class ForecastStage(BaseModel):
+    """Stage du forecast pipeline (P28). raw_value = sum(value). weighted_value = sum(value * prob/100)."""
+    stage: str
+    count: int
+    raw_value: int
+    weighted_value: int
+
+
+class ForecastOut(BaseModel):
+    """Prévisions pipeline (P28). weighted_forecast = projection statistique (pondérée par probability).
+    raw_pipeline = somme brute des opportunities ouvertes. Pas une promesse de revenu."""
+    stages: list[ForecastStage]
+    total_opportunities: int
+    raw_pipeline: int
+    weighted_forecast: int
+    currency: str

@@ -94,6 +94,8 @@ jobs:
         run: python tests/test_p26_content.py
       - name: P27 Prospection avancée (multicanal sequences + A/B testing + intent signals + enrichment + migration)
         run: python tests/test_p27_prospecting.py
+      - name: P28 Warmup inbox + Sales Intelligence (warmup ramp + funnel + cohorts + forecast + migration)
+        run: python tests/test_p28_sales_intel.py
 
   test-api:
     name: API tests (sqlite, sans docker)

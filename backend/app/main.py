@@ -35,6 +35,7 @@ from .routers import (
     members,
     notifications,
     prospecting,
+    sales_intelligence,
     sequences,
     tags,
     tenants,
@@ -125,6 +126,7 @@ for r in (
     audit.router,
     crm.router,
     prospecting.router,            # P27 : Prospection avancée (multicanal + A/B testing + intent signals + enrichment)
+    sales_intelligence.router,     # P28 : Warmup inbox + Sales Intelligence (funnel + cohorts + forecast)
     notifications.router,
     sequences.router,
     analytics.router,
