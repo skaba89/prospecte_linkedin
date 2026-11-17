@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RevPulse Career — Tableau de bord</title>
+<link rel="stylesheet" href="assets/career.css">
+</head>
+<body>
+<div class="rp-layout">
+  <aside class="rp-sidebar" data-rp-sidebar></aside>
+  <div class="rp-backdrop"></div>
+  <div class="rp-main">
+    <header class="rp-topbar">
+      <button class="rp-menu-btn" data-rp-menu>☰</button>
+      <span class="rp-topbar-title" data-rp-topbar-title>Tableau de bord</span>
+      <button class="rp-btn rp-btn-ghost rp-btn-sm" data-rp-logout>Déconnexion</button>
+    </header>
+    <main class="rp-content" id="rp-content">
+      <div class="rp-loading">Chargement de votre espace candidat…</div>
+    </main>
+  </div>
+</div>
+<script src="assets/career.js"></script>
+<script>
+(async function () {
+  "use strict";
+  if (!RP.requireAuth()) return;
+  RP.bootstrap("dashboard", "Tableau de bord");
+
+  var c = document.getElementById("rp-content");
+  async function p1() { try { return await RP.api("/api/career/profile"); } catch (e) { return null; } }
+  async function p2() { try { return await RP.api("/api/career/cv"); } catch (e) { return []; } }
+  async function p3() { try { return await RP.api("/api/career/applications"); } catch (e) { return []; } }
+  async function p4() { try { return await RP.api("/api/career/jobs/connectors"); } catch (e) { return []; } }
+  async function p5() { try { return await RP.api("/api/career/matching/search?limit=5"); } catch (e) { return []; } }
+
+  var profile = await p1();
+  var cvs = await p2();
+  var apps = await p3();
+  var connectors = await p4();
+  var matches = await p5();
+
+  var activeCv = (cvs || []).find(function (v) { return v.is_active; }) || (cvs || [])[0] || null;
+  var appsByStatus = { submitted: 0, interview: 0, offer: 0, rejected: 0, withdrawn: 0 };
+  (apps || []).forEach(function (a) { appsByStatus[a.status] = (appsByStatus[a.status] || 0) + 1; });
+  var activeConnectors = (connectors || []).filter(function (x) { return x.status === "active" || x.status === "configured"; }).length;
+
+  var profileCard;
+  if (!profile) {
+    profileCard = '<div class="rp-card"><div class="rp-empty"><div class="rp-empty-icon">👤</div>' +
+      '<div class="rp-empty-title">Profil non configuré</div>' +
+      '<p>Renseignez votre métier cible, localisation et critères pour activer le matching.</p>' +
+      '<a class="rp-btn rp-btn-primary" href="profile.html">Configurer mon profil</a></div></div>';
+  } else {
+    profileCard = '<div class="rp-card"><div class="rp-card-header"><h3 class="rp-card-title">Mon profil</h3>' +
+      '<a class="rp-btn rp-btn-secondary rp-btn-sm" href="profile.html">Modifier</a></div>' +
+      '<div class="rp-grid rp-grid-2"><div><div class="rp-muted rp-small">Métier visé</div><div style="font-weight:600">' + RP.esc(profile.target_job_title || "—") + "</div></div>" +
+      '<div><div class="rp-muted rp-small">Localisation</div><div style="font-weight:600">' + RP.esc(profile.preferred_location || "—") + "</div></div>" +
+      '<div><div class="rp-muted rp-small">Contrats</div><div>' + tags(profile.contract_types) + "</div></div>" +
+      '<div><div class="rp-muted rp-small">Mobilité</div><div>' + (profile.mobility ? '<span class="rp-badge rp-badge-success">Oui</span>' : '<span class="rp-badge rp-badge-neutral">Non</span>') + "</div></div>" +
+      '<div><div class="rp-muted rp-small">Salaire visé</div><div style="font-weight:600">' + (profile.salary_min ? RP.euros(profile.salary_min) + " – " + RP.euros(profile.salary_max) : "—") + "</div></div>" +
+      '<div><div class="rp-muted rp-small">TJM min</div><div style="font-weight:600">' + (profile.tjm_min ? RP.euros(profile.tjm_min) + "/j" : "—") + "</div></div></div></div>";
+  }
+  function tags(arr) {
+    if (!arr || !arr.length) return '<span class="rp-muted">—</span>';
+    return '<div class="rp-pill-list">' + arr.map(function (t) { return '<span class="rp-tag">' + RP.esc(t) + "</span>"; }).join("") + "</div>";
+  }
+
+  var cvCard = '<div class="rp-card"><div class="rp-card-header"><h3 class="rp-card-title">Mes CV</h3>' +
+    '<a class="rp-btn rp-btn-secondary rp-btn-sm" href="cvs.html">Gérer</a></div>';
+  if (!cvs || !cvs.length) {
+    cvCard += '<div class="rp-empty"><div class="rp-empty-icon">📄</div><div class="rp-empty-title">Aucun CV</div>' +
+      '<p>Importez votre CV (texte, PDF ou Word) pour activer le matching et l\'adaptation.</p>' +
+      '<a class="rp-btn rp-btn-primary" href="cvs.html">Importer mon CV</a></div>';
+  } else {
+    cvCard += '<p class="rp-small rp-muted">' + cvs.length + ' CV · CV actif : <strong>' + RP.esc(activeCv ? activeCv.title : "aucun") + "</strong></p>";
+    cvCard += '<div class="rp-table-wrap"><table class="rp-table"><thead><tr><th>Titre</th><th>Compétences</th><th>Statut</th></tr></thead><tbody>';
+    cvs.slice(0, 3).forEach(function (v) {
+      var skills = (v.parsed_data && v.parsed_data.skills) ? v.parsed_data.skills.slice(0, 4).join(", ") : "—";
+      cvCard += "<tr><td>" + RP.esc(v.title) + "</td><td class='rp-small'>" + RP.esc(skills) + "</td><td>" +
+        (v.is_active ? '<span class="rp-badge rp-badge-success">Actif</span>' : '<span class="rp-badge rp-badge-neutral">Inactif</span>') + "</td></tr>";
+    });
+    cvCard += "</tbody></table></div>";
+  }
+  cvCard += "</div>";
+
+  var appsCard = '<div class="rp-card"><div class="rp-card-header"><h3 class="rp-card-title">Candidatures</h3>' +
+    '<a class="rp-btn rp-btn-secondary rp-btn-sm" href="applications.html">Voir tout</a></div>';
+  if (!apps || !apps.length) {
+    appsCard += '<div class="rp-empty"><div class="rp-empty-icon">📋</div><div class="rp-empty-title">Aucune candidature</div>' +
+      '<p>Recherchez une offre, puis créez votre première candidature.</p>' +
+      '<a class="rp-btn rp-btn-primary" href="search.html">Rechercher des offres</a></div>';
+  } else {
+    appsCard += '<div class="rp-grid rp-grid-4" style="margin-bottom:12px">' +
+      statTile("Soumises", appsByStatus.submitted, "info") + statTile("Entretiens", appsByStatus.interview, "warning") +
+      statTile("Offres", appsByStatus.offer, "success") + statTile("Refus", appsByStatus.rejected, "danger") + "</div>";
+    appsCard += '<div class="rp-table-wrap"><table class="rp-table"><thead><tr><th>Poste</th><th>Entreprise</th><th>Statut</th><th>Date</th></tr></thead><tbody>';
+    apps.slice(0, 4).forEach(function (a) {
+      appsCard += "<tr><td>" + RP.esc(a.job_title) + "</td><td>" + RP.esc(a.company) + "</td><td>" + RP.statusBadge(a.status) + "</td><td class='rp-small'>" + RP.formatDate(a.applied_at) + "</td></tr>";
+    });
+    appsCard += "</tbody></table></div>";
+  }
+  appsCard += "</div>";
+  function statTile(label, val, type) {
+    return '<div class="rp-stat"><div class="rp-stat-label">' + label + '</div><div class="rp-stat-value">' + val + "</div></div>";
+  }
+
+  var matchCard = '<div class="rp-card"><div class="rp-card-header"><h3 class="rp-card-title">Opportunités recommandées</h3>' +
+    '<a class="rp-btn rp-btn-secondary rp-btn-sm" href="matching.html">Voir tout</a></div>';
+  if (!matches || !matches.length) {
+    matchCard += '<div class="rp-empty"><div class="rp-empty-icon">🎯</div><div class="rp-empty-title">Aucune recommandation</div>' +
+      '<p>' + (!activeCv ? "Importez un CV et configurez votre profil." : "Lancez une recherche pour découvrir des offres matchées.") + "</p>" +
+      '<a class="rp-btn rp-btn-primary" href="matching.html">Lancer le matching</a></div>';
+  } else {
+    matchCard += '<div class="rp-table-wrap"><table class="rp-table"><thead><tr><th>Poste</th><th>Entreprise</th><th>Score</th></tr></thead><tbody>';
+    matches.forEach(function (m) {
+      var p = m.posting || m;
+      matchCard += "<tr><td>" + RP.esc(p.title) + "</td><td>" + RP.esc(p.company) + "</td><td>" + RP.scoreHtml(m.score) + "</td></tr>";
+    });
+    matchCard += "</tbody></table></div>";
+    matchCard += '<p class="rp-small rp-muted" style="margin-top:8px;margin-bottom:0">Le score est un indice de correspondance (compétences, expérience, critères) — <strong>ce n\'est pas une probabilité de recrutement</strong>.</p>';
+  }
+  matchCard += "</div>";
+
+  var connCard = '<div class="rp-card"><div class="rp-card-header"><h3 class="rp-card-title">Connecteurs d\'emploi</h3>' +
+    '<span class="rp-badge rp-badge-info">' + activeConnectors + " / " + (connectors.length) + " actifs</span></div>";
+  connCard += '<div class="rp-pill-list">';
+  (connectors || []).slice(0, 8).forEach(function (x) {
+    connCard += '<span class="rp-tag">' + RP.esc(x.name) + " " + RP.connectorStatusBadge(x.status) + "</span>";
+  });
+  connCard += "</div></div>";
+
+  c.innerHTML =
+    '<h1>Bonjour ' + RP.esc((RP.user() || {}).name || "Candidat") + " 👋</h1>" +
+    '<p class="rp-muted">Voici un aperçu de votre activité de recherche d\'emploi.</p>' +
+    '<div class="rp-grid rp-grid-2">' + profileCard + cvCard + "</div>" +
+    '<div class="rp-grid rp-grid-2">' + appsCard + matchCard + "</div>" +
+    connCard;
+})().catch(function (e) { document.getElementById("rp-content").innerHTML = '<div class="rp-card"><p>Erreur : ' + RP.esc(e.message) + '</p><a class="rp-btn rp-btn-secondary" href="login.html">Reconnexion</a></div>'; });
+</script>
+</body>
+</html>

@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RevPulse Career — Connexion</title>
+<link rel="stylesheet" href="assets/career.css">
+</head>
+<body>
+<div class="rp-auth-wrap">
+  <div class="rp-auth-card">
+    <div class="rp-auth-logo">R</div>
+    <div class="rp-auth-title">RevPulse Career</div>
+    <div class="rp-auth-sub">Votre espace candidat intelligent</div>
+    <div class="rp-tabs">
+      <button class="rp-tab active" data-tab="login">Connexion</button>
+      <button class="rp-tab" data-tab="register">Inscription</button>
+    </div>
+    <form id="rp-login-form" class="rp-form">
+      <div class="rp-form-row">
+        <label class="rp-label">E-mail</label>
+        <input class="rp-input" type="email" name="email" required autocomplete="email" placeholder="vous@exemple.com">
+      </div>
+      <div class="rp-form-row">
+        <label class="rp-label">Mot de passe</label>
+        <input class="rp-input" type="password" name="password" required autocomplete="current-password" placeholder="••••••••">
+      </div>
+      <button type="submit" class="rp-btn rp-btn-primary" style="width:100%">Se connecter</button>
+    </form>
+    <form id="rp-register-form" class="rp-form" style="display:none">
+      <div class="rp-form-row">
+        <label class="rp-label">Nom complet</label>
+        <input class="rp-input" type="text" name="name" required autocomplete="name" placeholder="Jean Dupont">
+      </div>
+      <div class="rp-form-row">
+        <label class="rp-label">E-mail</label>
+        <input class="rp-input" type="email" name="email" required autocomplete="email" placeholder="vous@exemple.com">
+      </div>
+      <div class="rp-form-row">
+        <label class="rp-label">Mot de passe</label>
+        <input class="rp-input" type="password" name="password" required autocomplete="new-password" minlength="8" placeholder="Min. 8 caractères">
+      </div>
+      <button type="submit" class="rp-btn rp-btn-primary" style="width:100%">Créer mon compte</button>
+    </form>
+    <hr class="rp-divider">
+    <button id="rp-demo-btn" class="rp-btn rp-btn-secondary" style="width:100%">Essai démo (1 clic)</button>
+    <p class="rp-small rp-muted" style="text-align:center;margin-top:14px;margin-bottom:0">
+      En vous connectant, vous acceptez que vos données Career restent isolées de l'espace Business.
+    </p>
+  </div>
+</div>
+<script src="assets/career.js"></script>
+<script>
+(function () {
+  "use strict";
+  if (RP.isLoggedIn()) { window.location.href = "/career/dashboard.html"; return; }
+
+  // Tab switching
+  document.querySelectorAll(".rp-tab").forEach(function (tab) {
+    tab.addEventListener("click", function () {
+      document.querySelectorAll(".rp-tab").forEach(function (t) { t.classList.remove("active"); });
+      tab.classList.add("active");
+      var which = tab.getAttribute("data-tab");
+      document.getElementById("rp-login-form").style.display = which === "login" ? "block" : "none";
+      document.getElementById("rp-register-form").style.display = which === "register" ? "block" : "none";
+    });
+  });
+
+  async function submitForm(form, endpoint) {
+    var btn = form.querySelector("button[type=submit]");
+    var orig = btn.textContent; btn.disabled = true; btn.textContent = "…";
+    var fd = new FormData(form);
+    var body = { email: fd.get("email"), password: fd.get("password") };
+    if (fd.get("name")) body.name = fd.get("name");
+    try {
+      var data = await RP.api(endpoint, { method: "POST", body: body });
+      RP.setSession(data.token, data.user);
+      RP.toast("Connexion réussie — bienvenue " + (data.user.name || "") + " !", "success");
+      setTimeout(function () { window.location.href = "/career/dashboard.html"; }, 600);
+    } catch (e) {
+      RP.toast(e.message, "error");
+      btn.disabled = false; btn.textContent = orig;
+    }
+  }
+
+  document.getElementById("rp-login-form").addEventListener("submit", function (e) {
+    e.preventDefault(); submitForm(this, "/api/auth/login");
+  });
+  document.getElementById("rp-register-form").addEventListener("submit", function (e) {
+    e.preventDefault(); submitForm(this, "/api/auth/register");
+  });
+  document.getElementById("rp-demo-btn").addEventListener("click", async function () {
+    var btn = this; btn.disabled = true; btn.textContent = "…";
+    try {
+      var data = await RP.api("/api/auth/demo", { method: "POST" });
+      RP.setSession(data.token, data.user);
+      window.location.href = "/career/dashboard.html";
+    } catch (e) {
+      RP.toast(e.message, "error"); btn.disabled = false; btn.textContent = "Essai démo (1 clic)";
+    }
+  });
+})();
+</script>
+</body>
+</html>

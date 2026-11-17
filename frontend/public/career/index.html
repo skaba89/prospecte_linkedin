@@ -1,0 +1,22 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RevPulse Career</title>
+<link rel="stylesheet" href="assets/career.css">
+</head>
+<body>
+<div class="rp-auth-wrap"><div class="rp-auth-card" style="text-align:center">
+  <div class="rp-auth-logo">R</div>
+  <div class="rp-auth-title">RevPulse Career</div>
+  <div class="rp-auth-sub">Redirection…</div>
+  <a class="rp-btn rp-btn-primary" href="dashboard.html" style="display:inline-block">Accéder à mon espace</a>
+</div></div>
+<script src="assets/career.js"></script>
+<script>
+if (RP.isLoggedIn()) { window.location.href = "dashboard.html"; }
+else { window.location.href = "login.html"; }
+</script>
+</body>
+</html>

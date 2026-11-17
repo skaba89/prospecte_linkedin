@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RevPulse Career — Opportunités recommandées</title>
+<link rel="stylesheet" href="assets/career.css">
+</head>
+<body>
+<div class="rp-layout">
+  <aside class="rp-sidebar" data-rp-sidebar></aside>
+  <div class="rp-backdrop"></div>
+  <div class="rp-main">
+    <header class="rp-topbar">
+      <button class="rp-menu-btn" data-rp-menu>☰</button>
+      <span class="rp-topbar-title" data-rp-topbar-title>Opportunités recommandées</span>
+      <button class="rp-btn rp-btn-ghost rp-btn-sm" data-rp-logout>Déconnexion</button>
+    </header>
+    <main class="rp-content" id="rp-content">
+      <div class="rp-loading">Chargement…</div>
+    </main>
+  </div>
+</div>
+<script src="assets/career.js"></script>
+<script>
+(async function () {
+  "use strict";
+  if (!RP.requireAuth()) return;
+  RP.bootstrap("matching", "Opportunités recommandées");
+  var c = document.getElementById("rp-content");
+  var cvs = [], connectors = [];
+  try { cvs = await RP.api("/api/career/cv"); } catch (e) {}
+  try { connectors = await RP.api("/api/career/jobs/connectors"); } catch (e) {}
+
+  if (!cvs.length) {
+    c.innerHTML = '<h1>Opportunités recommandées</h1><div class="rp-card"><div class="rp-empty"><div class="rp-empty-icon">📄</div><div class="rp-empty-title">Aucun CV</div><p>Importez d\'abord un CV pour activer le matching.</p><a class="rp-btn rp-btn-primary" href="cvs.html">Importer mon CV</a></div></div>';
+    return;
+  }
+  var activeCv = cvs.find(function (v) { return v.is_active; }) || cvs[0];
+  var cvOpts = cvs.map(function (v) { return '<option value="' + v.id + '"' + (v.id === activeCv.id ? " selected" : "") + ">" + RP.esc(v.title) + (v.is_active ? " (actif)" : "") + "</option>"; }).join("");
+  var connOpts = '<option value="">Tous</option>' + (connectors || []).map(function (x) { return '<option value="' + RP.esc(x.name) + '">' + RP.esc(x.name) + "</option>"; }).join("");
+
+  c.innerHTML =
+    '<h1>Opportunités recommandées</h1>' +
+    '<p class="rp-muted">Le moteur de matching hybride (compétences, expérience, certifications, localisation, salaire, langues) classe les offres par compatibilité avec votre CV.</p>' +
+    '<div class="rp-card"><div class="rp-card-header"><h3 class="rp-card-title">Paramètres de matching</h3></div>' +
+    '<div class="rp-grid rp-grid-2">' +
+    '<div class="rp-form-row"><label class="rp-label">CV à scorer</label><select class="rp-select" id="rp-mc-cv">' + cvOpts + "</select></div>" +
+    '<div class="rp-form-row"><label class="rp-label">Connecteur</label><select class="rp-select" id="rp-mc-source">' + connOpts + "</select></div>" +
+    '<div class="rp-form-row"><label class="rp-label">Mots-clés</label><input class="rp-input" id="rp-mc-kw" placeholder="Data Engineer…"></div>' +
+    '<div class="rp-form-row"><label class="rp-label">Localisation</label><input class="rp-input" id="rp-mc-loc" placeholder="Paris…"></div>' +
+    '</div><button class="rp-btn rp-btn-primary" id="rp-mc-go">Lancer le matching</button></div>' +
+    '<div id="rp-results"></div>' +
+    '<div id="rp-detail"></div>';
+
+  document.getElementById("rp-mc-go").addEventListener("click", doMatch);
+  // Auto-run if ?posting= present (from search page "Match" button) → show detail
+  var qp = new URLSearchParams(location.search);
+  if (qp.get("posting")) { doMatch(); setTimeout(function () { showDetail(activeCv.id, qp.get("posting")); }, 800); }
+  else { doMatch(); }
+
+  async function doMatch() {
+    var cvId = document.getElementById("rp-mc-cv").value;
+    var body = {
+      cv_id: cvId,
+      keywords: document.getElementById("rp-mc-kw").value || null,
+      location: document.getElementById("rp-mc-loc").value || null,
+      source: document.getElementById("rp-mc-source").value || null,
+      limit: 50
+    };
+    var r = document.getElementById("rp-results");
+    r.innerHTML = '<div class="rp-loading">Calcul des scores de compatibilité…</div>';
+    try {
+      var list = await RP.api("/api/career/matching/search", { method: "POST", body: body });
+      r.innerHTML = '<div class="rp-card"><div class="rp-card-header"><h3 class="rp-card-title">' + list.length + ' offre(s) classée(s) par compatibilité</h3></div>' +
+        (list.length ? renderRanked(list, cvId) : '<div class="rp-empty"><div class="rp-empty-icon">🎯</div><div class="rp-empty-title">Aucune offre à scorer</div><p>Importez des offres via la recherche, ou élargissez les filtres.</p><a class="rp-btn rp-btn-primary" href="search.html">Rechercher des offres</a></div>') +
+        "</div>";
+      r.querySelectorAll("[data-detail]").forEach(function (b) { b.addEventListener("click", function () { showDetail(cvId, b.dataset.detail); }); });
+      r.querySelectorAll("[data-apply]").forEach(function (b) { b.addEventListener("click", function () {
+        var p = b.dataset; window.location.href = "applications.html?posting=" + encodeURIComponent(p.apply) + "&title=" + encodeURIComponent(p.title) + "&company=" + encodeURIComponent(p.company);
+      }); });
+    } catch (e) { r.innerHTML = '<div class="rp-card"><p>Erreur : ' + RP.esc(e.message) + "</p></div>"; }
+  }
+  function renderRanked(list, cvId) {
+    var html = '<div class="rp-table-wrap"><table class="rp-table"><thead><tr><th>Poste</th><th>Entreprise</th><th>Score</th><th>Comp. manquantes</th><th>Actions</th></tr></thead><tbody>';
+    list.forEach(function (m) {
+      var p = m.posting || {};
+      var miss = (m.missing_skills || []).slice(0, 4).join(", ") || "—";
+      var flags = (m.eliminatory_flags && m.eliminatory_flags.length) ? ' <span class="rp-badge rp-badge-danger" title="' + RP.esc(m.eliminatory_flags.join(", ")) + '">éliminatoire</span>' : "";
+      html += "<tr><td><strong>" + RP.esc(p.title) + "</strong><div class='rp-small rp-muted'>" + RP.esc(p.location || "") + "</div></td>" +
+        "<td>" + RP.esc(p.company || "—") + "</td><td>" + RP.scoreHtml(m.total_score) + flags + "</td>" +
+        '<td class="rp-small">' + RP.esc(miss) + "</td>" +
+        '<td><div class="rp-btn-row"><button class="rp-btn rp-btn-secondary rp-btn-sm" data-detail="' + p.id + '">Détail</button>' +
+        '<button class="rp-btn rp-btn-primary rp-btn-sm" data-apply="' + p.id + '" data-title="' + RP.esc(p.title) + '" data-company="' + RP.esc(p.company || "") + '">Candidater</button></div></td></tr>';
+    });
+    html += "</tbody></table></div>";
+    html += '<p class="rp-small rp-muted" style="margin-top:8px">Le score est un <strong>indice de compatibilité</strong> (compétences + expérience + critères), pas une probabilité de recrutement.</p>';
+    return html;
+  }
+  async function showDetail(cvId, postingId) {
+    var d = document.getElementById("rp-detail");
+    d.innerHTML = '<div class="rp-card"><div class="rp-loading">Calcul du détail…</div></div>';
+    d.scrollIntoView({ behavior: "smooth" });
+    try {
+      var m = await RP.api("/api/career/matching/" + cvId + "/" + postingId, { method: "POST" });
+      var rows = (m.criteria || []).map(function (cr) {
+        var pct = Math.round(cr.score);
+        var cls = pct >= 70 ? "high" : (pct >= 45 ? "mid" : "");
+        var flag = cr.eliminatory ? ' <span class="rp-badge rp-badge-danger">éliminatoire</span>' : "";
+        return "<tr><td><strong>" + RP.esc(cr.name) + "</strong>" + flag + "</td><td>" + RP.scoreHtml(cr.score) + "</td><td>" + Math.round(cr.weight * 100) + "%</td><td class='rp-small'>" + RP.esc(cr.detail) + "</td></tr>";
+      }).join("");
+      d.innerHTML = '<div class="rp-card"><div class="rp-card-header"><h3 class="rp-card-title">Détail du matching</h3>' + RP.scoreHtml(m.total_score) + "</div>" +
+        '<div class="rp-table-wrap"><table class="rp-table"><thead><tr><th>Critère</th><th>Sous-score</th><th>Poids</th><th>Justification</th></tr></thead><tbody>' + rows + "</tbody></table></div>" +
+        (m.missing_skills && m.missing_skills.length ? '<div style="margin-top:12px"><strong>Compétences manquantes :</strong> <div class="rp-pill-list" style="margin-top:6px">' + m.missing_skills.map(function (s) { return '<span class="rp-tag">' + RP.esc(s) + "</span>"; }).join("") + "</div></div>" : "") +
+        '<div class="rp-badge rp-badge-warning" style="margin-top:12px;display:block;padding:10px">⚠️ ' + RP.esc(m.disclaimer || "Score = compatibilité, non une probabilité de recrutement.") + "</div>" +
+        '<div class="rp-btn-row" style="margin-top:12px"><a class="rp-btn rp-btn-primary" href="applications.html?posting=' + encodeURIComponent(postingId) + '">Candidater à cette offre</a></div></div>';
+    } catch (e) { d.innerHTML = '<div class="rp-card"><p>Erreur : ' + RP.esc(e.message) + "</p></div>"; }
+  }
+})().catch(function (e) { document.getElementById("rp-content").innerHTML = '<div class="rp-card"><p>Erreur : ' + RP.esc(e.message) + '</p><a class="rp-btn rp-btn-secondary" href="dashboard.html">Retour</a></div>'; });
+</script>
+</body>
+</html>

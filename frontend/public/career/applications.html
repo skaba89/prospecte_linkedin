@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RevPulse Career — Mes candidatures</title>
+<link rel="stylesheet" href="assets/career.css">
+</head>
+<body>
+<div class="rp-layout">
+  <aside class="rp-sidebar" data-rp-sidebar></aside>
+  <div class="rp-backdrop"></div>
+  <div class="rp-main">
+    <header class="rp-topbar">
+      <button class="rp-menu-btn" data-rp-menu>☰</button>
+      <span class="rp-topbar-title" data-rp-topbar-title>Mes candidatures</span>
+      <button class="rp-btn rp-btn-ghost rp-btn-sm" data-rp-logout>Déconnexion</button>
+    </header>
+    <main class="rp-content" id="rp-content">
+      <div class="rp-loading">Chargement…</div>
+    </main>
+  </div>
+</div>
+<script src="assets/career.js"></script>
+<script>
+(async function () {
+  "use strict";
+  if (!RP.requireAuth()) return;
+  RP.bootstrap("applications", "Mes candidatures");
+  var c = document.getElementById("rp-content");
+  var cvs = [];
+  try { cvs = await RP.api("/api/career/cv"); } catch (e) {}
+  var qp = new URLSearchParams(location.search);
+
+  await load();
+
+  async function load() {
+    var apps = [];
+    try { apps = await RP.api("/api/career/applications"); } catch (e) {}
+    var byStatus = { submitted: [], interview: [], offer: [], rejected: [], withdrawn: [] };
+    (apps || []).forEach(function (a) { (byStatus[a.status] || (byStatus[a.status] = [])).push(a); });
+
+    var cvOpts = cvs.map(function (v) { return '<option value="' + v.id + '">' + RP.esc(v.title) + (v.is_active ? " (actif)" : "") + "</option>"; }).join("");
+    var preTitle = qp.get("title") || "";
+    var preCompany = qp.get("company") || "";
+
+    c.innerHTML =
+      '<h1>Mes candidatures</h1>' +
+      '<p class="rp-muted">Suivez votre pipeline : soumise → entretien → offre / refus. Les lettres de motivation sont générées depuis votre CV (anti-invention : rien n\'est inventé).</p>' +
+      '<div class="rp-card"><div class="rp-card-header"><h3 class="rp-card-title">Nouvelle candidature</h3></div>' +
+      '<form id="rp-app-form">' +
+      '<div class="rp-grid rp-grid-2">' +
+      '<div class="rp-form-row"><label class="rp-label">Poste visé</label><input class="rp-input" name="job_title" required value="' + RP.esc(preTitle) + '" placeholder="Senior Data Engineer"></div>' +
+      '<div class="rp-form-row"><label class="rp-label">Entreprise</label><input class="rp-input" name="company" required value="' + RP.esc(preCompany) + '" placeholder="TechCorp"></div>' +
+      (qp.get("posting") ? '<input type="hidden" name="posting_id" value="' + RP.esc(qp.get("posting")) + '">' : "") +
+      '<div class="rp-form-row"><label class="rp-label">CV source (pour la lettre)</label><select class="rp-select" name="cv_source_id"><option value="">—</option>' + cvOpts + "</select></div>" +
+      '<div class="rp-form-row"><label class="rp-label">Méthode</label><select class="rp-select" name="application_method"><option value="manual">Manuelle (formulaire externe)</option><option value="email">Email (via RevPulse)</option><option value="external">Lien externe</option></select></div>' +
+      '<div class="rp-form-row" style="grid-column:1/-1"><label class="rp-label">Email du recruteur (si envoi email)</label><input class="rp-input" name="recipient_email" placeholder="recrutement@entreprise.com"></div>' +
+      "</div>" +
+      '<div class="rp-form-row"><label style="display:flex;align-items:center;gap:8px"><input type="checkbox" name="generate_cover_letter" checked> Générer la lettre de motivation depuis mon CV (anti-invention)</label></div>' +
+      '<button type="submit" class="rp-btn rp-btn-primary">Créer la candidature</button></form></div>' +
+
+      '<div class="rp-card"><div class="rp-card-header"><h3 class="rp-card-title">Pipeline (' + apps.length + ')</h3>' +
+      '<button class="rp-btn rp-btn-secondary rp-btn-sm" id="rp-list-toggle">Vue tableau</button></div>' +
+      '<div id="rp-pipeline">' + kanban(byStatus) + "</div>" +
+      '<div id="rp-tableview" style="display:none">' + tableView(apps) + "</div></div>" +
+      '<div id="rp-app-detail"></div>';
+
+    document.getElementById("rp-app-form").addEventListener("submit", function (e) { e.preventDefault(); createApp(this); });
+    document.getElementById("rp-list-toggle").addEventListener("click", function () {
+      var p = document.getElementById("rp-pipeline"), t = document.getElementById("rp-tableview");
+      if (p.style.display === "none") { p.style.display = "block"; t.style.display = "none"; this.textContent = "Vue tableau"; }
+      else { p.style.display = "none"; t.style.display = "block"; this.textContent = "Vue kanban"; }
+    });
+    c.querySelectorAll("[data-app]").forEach(function (b) { b.addEventListener("click", function () { showApp(b.dataset.app); }); });
+    c.querySelectorAll("[data-status]").forEach(function (sel) { sel.addEventListener("change", function () { updateStatus(sel.dataset.status, sel.value); }); });
+  }
+
+  function kanban(byStatus) {
+    var cols = [
+      ["submitted", "Soumises"], ["interview", "Entretiens"], ["offer", "Offres"],
+      ["rejected", "Refus"], ["withdrawn", "Retirées"]
+    ];
+    var html = '<div class="rp-kanban">';
+    cols.forEach(function (c) {
+      var items = byStatus[c[0]] || [];
+      html += '<div class="rp-kanban-col"><div class="rp-kanban-col-title">' + RP.esc(c[1]) + ' <span class="rp-badge rp-badge-neutral">' + items.length + "</span></div>";
+      items.forEach(function (a) {
+        html += '<div class="rp-kanban-card" data-app="' + a.id + '" style="cursor:pointer"><div class="rp-kanban-card-title">' + RP.esc(a.job_title) + "</div>" +
+          '<div class="rp-kanban-card-sub">' + RP.esc(a.company) + " · " + RP.formatDate(a.applied_at) + "</div>" +
+          (a.cover_letter ? '<div class="rp-badge rp-badge-info" style="margin-top:6px">Lettre générée</div>' : "") + "</div>";
+      });
+      if (!items.length) html += '<div class="rp-small rp-muted" style="text-align:center;padding:12px">—</div>';
+      html += "</div>";
+    });
+    html += "</div>";
+    return html;
+  }
+  function tableView(apps) {
+    if (!apps.length) return '<div class="rp-empty"><div class="rp-empty-icon">📋</div><div class="rp-empty-title">Aucune candidature</div><p>Créez votre première candidature ci-dessus.</p></div>';
+    var html = '<div class="rp-table-wrap"><table class="rp-table"><thead><tr><th>Poste</th><th>Entreprise</th><th>Statut</th><th>Méthode</th><th>Date</th></tr></thead><tbody>';
+    apps.forEach(function (a) {
+      html += "<tr><td><strong>" + RP.esc(a.job_title) + "</strong></td><td>" + RP.esc(a.company) + "</td><td>" + RP.statusBadge(a.status) + "</td><td>" + RP.esc(a.application_method) + "</td><td class='rp-small'>" + RP.formatDate(a.applied_at) + "</td></tr>";
+    });
+    html += "</tbody></table></div>";
+    return html;
+  }
+  async function createApp(form) {
+    var fd = new FormData(form);
+    var body = {
+      company: fd.get("company"), job_title: fd.get("job_title"),
+      application_method: fd.get("application_method"),
+      recipient_email: fd.get("recipient_email") || null,
+      generate_cover_letter: !!fd.get("generate_cover_letter")
+    };
+    if (fd.get("posting_id")) body.posting_id = fd.get("posting_id");
+    if (fd.get("cv_source_id")) body.cv_source_id = fd.get("cv_source_id");
+    var btn = form.querySelector("button[type=submit]"); btn.disabled = true; btn.textContent = "Création…";
+    try {
+      var app = await RP.api("/api/career/applications", { method: "POST", body: body });
+      RP.toast("Candidature créée" + (app.cover_letter ? " + lettre générée." : "."), "success");
+      // Clear prefilled query params
+      if (qp.get("posting")) { history.replaceState({}, "", "applications.html"); }
+      await load();
+      showApp(app.id);
+    } catch (e) { RP.toast(e.message, "error"); btn.disabled = false; btn.textContent = "Créer la candidature"; }
+  }
+  async function showApp(id) {
+    var d = document.getElementById("rp-app-detail");
+    d.innerHTML = '<div class="rp-card"><div class="rp-loading">Chargement…</div></div>';
+    d.scrollIntoView({ behavior: "smooth" });
+    try {
+      var a = await RP.api("/api/career/applications/" + id);
+      var tl = (a.timeline || []).map(function (t) { return "<li class='rp-small'><strong>" + RP.formatDateTime(t.date) + "</strong> — " + RP.esc(t.note || t.step) + "</li>"; }).join("");
+      d.innerHTML = '<div class="rp-card"><div class="rp-card-header"><h3 class="rp-card-title">' + RP.esc(a.job_title) + " · " + RP.esc(a.company) + "</h3>" + RP.statusBadge(a.status) + "</div>" +
+        '<div class="rp-grid rp-grid-2"><div><div class="rp-muted rp-small">Méthode</div><div>' + RP.esc(a.application_method) + "</div></div>" +
+        '<div><div class="rp-muted rp-small">Date</div><div>' + RP.formatDate(a.applied_at) + "</div></div>" +
+        (a.recipient_email ? '<div><div class="rp-muted rp-small">Destinataire</div><div>' + RP.esc(a.recipient_email) + "</div></div>" : "") +
+        '<div><div class="rp-muted rp-small">Envoyé le</div><div>' + (a.sent_at ? RP.formatDateTime(a.sent_at) : "—") + "</div></div></div>" +
+        '<div class="rp-form-row" style="margin-top:14px"><label class="rp-label">Changer le statut</label>' +
+        '<select class="rp-select" data-status="' + a.id + '">' +
+        ["submitted", "interview", "offer", "rejected", "withdrawn"].map(function (s) {
+          return '<option value="' + s + '"' + (a.status === s ? " selected" : "") + ">" + s + "</option>";
+        }).join("") + "</select></div>" +
+        (a.cover_letter ? '<div class="rp-form-row"><label class="rp-label">Lettre de motivation (générée anti-invention)</label><textarea class="rp-textarea" readonly style="min-height:180px">' + RP.esc(a.cover_letter) + "</textarea></div>" : "") +
+        (a.application_method === "email" ? '<button class="rp-btn rp-btn-primary" id="rp-send-btn" data-send="' + a.id + '">Envoyer par email</button>' : "") +
+        '<hr class="rp-divider"><h4>Historique (timeline)</h4><ul style="list-style:none;padding:0">' + (tl || "<li class='rp-small rp-muted'>—</li>") + "</ul></div>";
+      var sendBtn = d.querySelector("[data-send]");
+      if (sendBtn) sendBtn.addEventListener("click", function () { sendApp(a.id); });
+      d.querySelector("[data-status]").addEventListener("change", function () { updateStatus(a.id, this.value); });
+    } catch (e) { d.innerHTML = '<div class="rp-card"><p>Erreur : ' + RP.esc(e.message) + "</p></div>"; }
+  }
+  async function updateStatus(id, status) {
+    try {
+      await RP.api("/api/career/applications/" + id, { method: "PATCH", body: { status: status } });
+      RP.toast("Statut mis à jour : " + status, "success");
+      await load(); showApp(id);
+    } catch (e) { RP.toast(e.message, "error"); }
+  }
+  async function sendApp(id) {
+    if (!confirm("Confirmer l\'envoi de cette candidature par email ? (consentement explicite)")) return;
+    try {
+      var a = await RP.api("/api/career/applications/" + id + "/send", { method: "POST", body: {} });
+      if (a.sent_at) { RP.toast("Candidature envoyée.", "success"); }
+      else { RP.toast("Envoi enregistré (v1 : intégration email à configurer — OAuth2 Gmail/Outlook v2).", "warning"); }
+      await load(); showApp(id);
+    } catch (e) { RP.toast(e.message, "error"); }
+  }
+})().catch(function (e) { document.getElementById("rp-content").innerHTML = '<div class="rp-card"><p>Erreur : ' + RP.esc(e.message) + '</p><a class="rp-btn rp-btn-secondary" href="dashboard.html">Retour</a></div>'; });
+</script>
+</body>
+</html>
