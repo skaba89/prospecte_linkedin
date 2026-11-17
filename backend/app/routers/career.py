@@ -36,6 +36,7 @@ from ..audit import log_audit
 from ..database import get_db
 from ..deps import get_current_user
 from ..services import (
+    career_analytics,
     career_cv,
     career_notifier,
     career_referential,
@@ -955,3 +956,57 @@ def get_interview_session(
     if not session:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Session introuvable.")
     return session
+
+
+# ─── P43 — Career Analytics ───────────────────────────────────────────────────
+@router.get("/analytics/overview")
+def analytics_overview(
+    db: Session = Depends(get_db),
+    user: models.User = Depends(get_current_user),
+):
+    """Vue d'ensemble des KPIs Career (P43) : offres détectées/compatibles, candidatures, score moyen
+    matching, taux réponse/entretien, refus, propositions, sessions entretien. Anti-invention : factuel."""
+    profile = _get_or_404_profile(db, user.id)
+    return career_analytics.overview(db, profile.id)
+
+
+@router.get("/analytics/pipeline")
+def analytics_pipeline(
+    db: Session = Depends(get_db),
+    user: models.User = Depends(get_current_user),
+):
+    """Distribution des candidatures par statut (P43) — funnel pipeline."""
+    profile = _get_or_404_profile(db, user.id)
+    return career_analytics.pipeline(db, profile.id)
+
+
+@router.get("/analytics/performance-by-platform")
+def analytics_performance_platform(
+    db: Session = Depends(get_db),
+    user: models.User = Depends(get_current_user),
+):
+    """Performances par plateforme (P43) : applications groupées par source_connector + taux réponse."""
+    profile = _get_or_404_profile(db, user.id)
+    return career_analytics.performance_by_platform(db, profile.id)
+
+
+@router.get("/analytics/performance-by-cv")
+def analytics_performance_cv(
+    db: Session = Depends(get_db),
+    user: models.User = Depends(get_current_user),
+):
+    """Performances par version de CV (P43) : applications groupées par adapted_cv_id + statuts."""
+    profile = _get_or_404_profile(db, user.id)
+    return career_analytics.performance_by_cv(db, profile.id)
+
+
+@router.get("/analytics/salary-trends")
+def analytics_salary_trends(
+    months: int = 6,
+    db: Session = Depends(get_db),
+    user: models.User = Depends(get_current_user),
+):
+    """Évolution salaires + TJM (P43) : avg salary_min/max des postings candidatés, par mois.
+    Anti-invention : factuel — pas de prédiction, mois sans candidature absent (pas de 0 inventé)."""
+    profile = _get_or_404_profile(db, user.id)
+    return career_analytics.salary_trends(db, profile.id, months=months)

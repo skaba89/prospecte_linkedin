@@ -258,6 +258,18 @@ def main():
         ck(page.locator("text=Préparation négociation").count() >= 1, "feedback inclut préparation négociation")
         ck(page.locator("text=non vérifiable").count() >= 1 or page.locator("text=factuel").count() >= 1, "feedback mentionne anti-invariant (non vérifiable / factuel)")
 
+        # ── 11. P43 Analytics (dashboard KPIs factuels anti-invention) ──
+        print("\n--- 11. Analytics (P43) ---")
+        page.goto(f"{URL}/career/analytics.html", wait_until="networkidle")
+        page.wait_for_selector(".rp-stat", timeout=8000)
+        ck(page.locator(".rp-stat").count() >= 8, f"analytics dashboard : ≥8 stat tiles ({page.locator('.rp-stat').count()})")
+        # Le parcours a créé ≥1 candidature → "Candidatures" tile doit afficher une valeur > 0
+        body_text = page.inner_text("body")
+        ck("Candidatures" in body_text, "analytics : tile Candidatures présent")
+        ck("anti-invention" in body_text.lower(), "analytics : mention anti-invention (invariant)")
+        # Pipeline bars rendus
+        ck(page.locator(".rp-bar-fill").count() >= 3, f"analytics : ≥3 barres pipeline rendues ({page.locator('.rp-bar-fill').count()})")
+
         # Capture token pour le test responsive mobile (évite re-register/re-demo)
         captured_tok = page.evaluate("localStorage.getItem('revpulse_jwt')")
 
