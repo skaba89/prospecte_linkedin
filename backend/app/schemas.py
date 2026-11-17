@@ -1040,3 +1040,68 @@ class AIModelInfo(BaseModel):
     cost_in_per_1k: float
     cost_out_per_1k: float
     configured: bool
+
+
+# ─── P25 — Agents IA spécialisés + AI Copilot ─────────────────────────────────
+
+
+class AgentInfo(BaseModel):
+    """Métadonnées d'un agent IA (P25). name = id (qualification|scoring|research|...).
+    description = ce que l'agent fait (pour l'affichage dans le Copilot / la liste)."""
+    name: str
+    description: str
+
+
+class AgentRunRequest(BaseModel):
+    """Requête d'exécution d'un agent (P25). params = inputs spécifiques à l'agent (contact_id,
+    opportunity_id, icp_description, topic, competitor, template... selon l'agent)."""
+    params: dict = Field(default_factory=dict)
+
+
+class AgentRunResponse(BaseModel):
+    """Réponse d'un run d'agent (P25). text = sortie générée. simulated=True → provider simulé
+    (jamais présenté comme réel). require_human_validation=True → l'appelant DOIT bloquer l'action
+    externe + demander validation humaine (injection OU action externe proposée)."""
+    agent_run_id: str | None = None
+    agent: str
+    text: str
+    simulated: bool
+    require_human_validation: bool
+    status: str
+    error: str | None = None
+    generation_id: str | None = None
+
+
+class AgentRunOut(BaseModel):
+    """Historique d'un run d'agent (P25). context = inputs (JSON). result_text = sortie."""
+    id: str
+    agent: str
+    context: dict | None = None
+    result_text: str | None = None
+    status: str
+    simulated: bool
+    require_human_validation: bool
+    error: str | None = None
+    created_at: datetime
+    model_config = ConfigDict(from_attributes=True)
+
+
+class CopilotChatRequest(BaseModel):
+    """Requête de chat Copilot (P25). message = texte libre utilisateur. Le Copilot route vers le
+    bon agent (keyword matching) + optionnellement params explicites (contact_id, etc.)."""
+    message: str = Field(..., min_length=1, max_length=2000)
+    params: dict = Field(default_factory=dict)
+
+
+class CopilotChatResponse(BaseModel):
+    """Réponse du Copilot (P25). routed_agent = agent sélectionné (None si aucun match → réponse
+    générique listant les agents). result = sortie de l'agent. suggestions = prochaines actions
+    suggérées (validation, exécution, autre agent)."""
+    routed_agent: str | None = None
+    text: str
+    simulated: bool
+    require_human_validation: bool
+    agent_run_id: str | None = None
+    status: str
+    suggestions: list[str] = []
+    error: str | None = None

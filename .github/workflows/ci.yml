@@ -88,6 +88,8 @@ jobs:
         run: python tests/test_p24a_security.py
       - name: P24-B AI Gateway multi-provider (7 providers + Simulated + fallback + quota + PII + injection + prompts versionnés + migration)
         run: python tests/test_p24b_ai.py
+      - name: P25 Agents IA spécialisés + AI Copilot (10 agents CRM-connected + Copilot routing + AgentRun historisation + migration)
+        run: python tests/test_p25_agents.py
 
   test-api:
     name: API tests (sqlite, sans docker)

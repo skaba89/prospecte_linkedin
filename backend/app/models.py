@@ -653,3 +653,29 @@ class AIGeneration(Base):
     error = Column(Text, nullable=True)
     created_by = Column(String, ForeignKey("users.id"), nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+
+
+# ─── P25 — Agents IA spécialisés + AI Copilot ─────────────────────────────────
+
+
+class AgentRun(Base):
+    """Historisation des runs d'agents IA (P25). tenant + agent name (qualification|scoring|research|
+    personalization|linkedin|competitive|meeting_prep|performance|recommendation|synthesis) +
+    context (JSON : contact_id, opportunity_id, message, etc.) + result_text + status + simulated
+    (propagé depuis l'AI Gateway) + require_human_validation (si injection détectée OU action externe
+    proposée). generation_id = lien vers l'AIGeneration sous-jacente (audit trail). created_by = user
+    qui a déclenché le run (via Copilot OU endpoint direct)."""
+
+    __tablename__ = "agent_runs"
+    id = Column(String, primary_key=True, default=lambda: _uid("agr"))
+    tenant_id = Column(String, ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
+    agent = Column(String, nullable=False, index=True)  # qualification|scoring|research|...
+    context = Column(JSONType, nullable=True)  # {contact_id, opportunity_id, message, ...}
+    result_text = Column(Text, nullable=True)
+    status = Column(String, default="pending", nullable=False)  # pending|success|simulated|failed
+    simulated = Column(Boolean, default=False, nullable=False)  # propagé depuis gateway
+    require_human_validation = Column(Boolean, default=False, nullable=False)  # injection OU action externe
+    generation_id = Column(String, ForeignKey("ai_generations.id"), nullable=True)  # audit trail
+    error = Column(Text, nullable=True)
+    created_by = Column(String, ForeignKey("users.id"), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
