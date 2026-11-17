@@ -233,6 +233,31 @@ def main():
         }""")
         ck(uc >= 1, f"API unread-count ≥ 1 ({uc})")
 
+        # ── 10. P41 Coach entretiens (start session + answer + feedback anti-invention) ──
+        print("\n--- 10. Coach entretiens (P41) ---")
+        page.goto(f"{URL}/career/interviews.html", wait_until="networkidle")
+        page.wait_for_selector("#rp-start-form", timeout=8000)
+        ck(page.locator("#rp-start-form").count() == 1, "interviews page : formulaire start rendu")
+        page.fill('#rp-start-form [name="target_job_title"]', "Data Engineer")
+        page.click('#rp-start-form button[type=submit]')
+        page.wait_for_selector('[data-submit]', timeout=8000)
+        ck(page.locator('[data-submit]').count() >= 3, f"session démarrée : ≥3 questions affichées ({page.locator('[data-submit]').count()})")
+        # Saisir une réponse à la 1ère question + soumettre
+        first_q = page.locator('[data-submit]').first
+        qid = first_q.get_attribute("data-submit")
+        page.fill(f"#ans_{qid}", "Je privilégie l'ELT quand le warehouse est performant : extract puis load, transform après. ETL classique pour sources hétérogènes.")
+        first_q.click()
+        page.wait_for_timeout(2000)
+        ck(page.locator(".rp-score").count() >= 1, "réponse soumise → feedback + score affichés")
+        # Terminer la session + vérifier le feedback global (missing skills + formations + negotiation)
+        page.click("#rp-complete-btn")
+        page.wait_for_timeout(2000)
+        ck(page.locator("text=Feedback global").count() >= 1, "session terminée → feedback global rendu")
+        ck(page.locator("text=Compétences manquantes").count() >= 1, "feedback inclut compétences manquantes (cross-référence CV)")
+        ck(page.locator("text=Formations recommandées").count() >= 1, "feedback inclut formations recommandées")
+        ck(page.locator("text=Préparation négociation").count() >= 1, "feedback inclut préparation négociation")
+        ck(page.locator("text=non vérifiable").count() >= 1 or page.locator("text=factuel").count() >= 1, "feedback mentionne anti-invariant (non vérifiable / factuel)")
+
         # Capture token pour le test responsive mobile (évite re-register/re-demo)
         captured_tok = page.evaluate("localStorage.getItem('revpulse_jwt')")
 

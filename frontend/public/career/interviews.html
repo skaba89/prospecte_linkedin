@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RevPulse Career — Coach entretiens</title>
+<link rel="stylesheet" href="assets/career.css">
+</head>
+<body>
+<div class="rp-layout">
+  <aside class="rp-sidebar" data-rp-sidebar></aside>
+  <div class="rp-backdrop"></div>
+  <div class="rp-main">
+    <header class="rp-topbar">
+      <button class="rp-menu-btn" data-rp-menu>☰</button>
+      <span class="rp-topbar-title" data-rp-topbar-title>Coach entretiens</span>
+      <button class="rp-btn rp-btn-ghost rp-btn-sm" data-rp-logout>Déconnexion</button>
+    </header>
+    <main class="rp-content" id="rp-content">
+      <div class="rp-loading">Chargement…</div>
+    </main>
+  </div>
+</div>
+<script src="assets/career.js"></script>
+<script>
+(async function () {
+  "use strict";
+  if (!RP.requireAuth()) return;
+  RP.bootstrap("interviews", "Coach entretiens");
+  var c = document.getElementById("rp-content");
+  var profile = null;
+  try { profile = await RP.api("/api/career/profile"); } catch (e) {}
+  await loadSessions();
+
+  async function loadSessions() {
+    var sessions = [];
+    try { sessions = await RP.api("/api/career/interviews?limit=20"); } catch (e) {}
+    c.innerHTML =
+      '<h1>Coach entretiens IA</h1>' +
+      '<p class="rp-muted">Simulez un entretien technique + RH adapté à votre métier. L\'IA analyse vos réponses (couverture des points attendus), identifie les compétences manquantes (cross-référence CV) et prépare la négociation. <strong>Anti-invention</strong> : feedback factuel, aucune affirmation non vérifiable.</p>' +
+      '<div class="rp-card"><div class="rp-card-header"><h3 class="rp-card-title">Démarrer une simulation</h3></div>' +
+      '<form id="rp-start-form">' +
+      '<div class="rp-grid rp-grid-2">' +
+      '<div class="rp-form-row"><label class="rp-label">Métier visé</label><input class="rp-input" name="target_job_title" required value="' + RP.esc(profile ? profile.target_job_title : "") + '" placeholder="Data Engineer, Product Owner…"></div>' +
+      '<div class="rp-form-row"><label class="rp-label">Type de session</label><select class="rp-select" name="session_type"><option value="rhmixed">Tech + RH + négociation</option><option value="tech">Tech uniquement + négociation</option></select></div>' +
+      "</div>" +
+      '<button type="submit" class="rp-btn rp-btn-primary">Démarrer la simulation</button></form></div>' +
+      '<div class="rp-card"><div class="rp-card-header"><h3 class="rp-card-title">Sessions précédentes (' + sessions.length + ')</h3></div>' +
+      (sessions.length ? renderSessions(sessions) : '<div class="rp-empty"><div class="rp-empty-icon">🎤</div><div class="rp-empty-title">Aucune simulation</div><p>Démarrez votre première simulation ci-dessus.</p></div>') +
+      "</div>";
+    document.getElementById("rp-start-form").addEventListener("submit", function (e) { e.preventDefault(); startSession(this); });
+    c.querySelectorAll("[data-session]").forEach(function (b) { b.addEventListener("click", function () { openSession(b.dataset.session); }); });
+  }
+
+  function renderSessions(sessions) {
+    var html = '<div class="rp-table-wrap"><table class="rp-table"><thead><tr><th>Métier</th><th>Type</th><th>Statut</th><th>Score</th><th>Date</th><th></th></tr></thead><tbody>';
+    sessions.forEach(function (s) {
+      html += "<tr><td><strong>" + RP.esc(s.target_job_title) + "</strong></td><td>" + RP.esc(s.session_type) + "</td>" +
+        "<td>" + (s.status === "completed" ? '<span class="rp-badge rp-badge-success">Terminée</span>' : '<span class="rp-badge rp-badge-warning">En cours</span>') + "</td>" +
+        "<td>" + (s.score != null ? RP.scoreHtml(s.score) : "—") + "</td>" +
+        '<td class="rp-small">' + RP.formatDate(s.created_at) + "</td>" +
+        '<td><button class="rp-btn rp-btn-secondary rp-btn-sm" data-session="' + s.id + '">Ouvrir</button></td></tr>';
+    });
+    html += "</tbody></table></div>";
+    return html;
+  }
+
+  async function startSession(form) {
+    var fd = new FormData(form);
+    var body = { target_job_title: fd.get("target_job_title"), session_type: fd.get("session_type") };
+    var btn = form.querySelector("button[type=submit]"); btn.disabled = true; btn.textContent = "…";
+    try { var s = await RP.api("/api/career/interviews", { method: "POST", body: body }); RP.toast("Session démarrée.", "success"); openSession(s.id); }
+    catch (e) { RP.toast(e.message, "error"); btn.disabled = false; btn.textContent = "Démarrer la simulation"; }
+  }
+
+  async function openSession(id) {
+    try {
+      var s = await RP.api("/api/career/interviews/" + id);
+      var qs = s.questions || [];
+      var ans = {};
+      (s.answers || []).forEach(function (a) { ans[a.question_id] = a; });
+      var html = '<h1>Session : ' + RP.esc(s.target_job_title) + '</h1>' +
+        '<p class="rp-muted">' + RP.esc(s.session_type) + " · " + (s.status === "completed" ? "Terminée" : "En cours") + (s.score != null ? " · score " + RP.scoreHtml(s.score) : "") + "</p>" +
+        '<a class="rp-btn rp-btn-secondary rp-btn-sm" href="interviews.html" style="margin-bottom:14px">← Retour</a>';
+      qs.forEach(function (q, i) {
+        var a = ans[q.id];
+        var typeBadge = q.type === "tech" ? '<span class="rp-badge rp-badge-info">Tech</span>' : (q.type === "rh" ? '<span class="rp-badge rp-badge-warning">RH</span>' : '<span class="rp-badge rp-badge-primary">Négo</span>');
+        html += '<div class="rp-card"><div class="rp-card-header"><h3 class="rp-card-title">Q' + (i + 1) + ". " + typeBadge + " " + RP.esc(q.topic) + "</h3></div>" +
+          "<p style='font-weight:600'>" + RP.esc(q.text) + "</p>";
+        if (a && s.status !== "completed") {
+          html += '<div class="rp-form-row" style="margin-top:12px"><label class="rp-label">Votre réponse</label><textarea class="rp-textarea" id="ans_' + q.id + '" style="min-height:100px">' + RP.esc(a.answer_text || "") + "</textarea></div>" +
+            '<button class="rp-btn rp-btn-primary rp-btn-sm" data-submit="' + q.id + '">Soumettre</button>' +
+            (a.score != null ? '<div style="margin-top:10px">' + RP.scoreHtml(a.score) + '<div class="rp-small rp-muted" style="margin-top:6px">' + RP.esc(a.feedback) + "</div></div>" : "");
+        } else if (s.status === "completed" && a) {
+          html += '<div style="margin-top:10px"><div class="rp-small rp-muted">Votre réponse :</div><div class="rp-small" style="margin-bottom:8px">' + RP.esc(a.answer_text || "") + "</div>" +
+            RP.scoreHtml(a.score) + '<div class="rp-small rp-muted" style="margin-top:6px">' + RP.esc(a.feedback) + "</div></div>";
+        } else {
+          html += '<div class="rp-form-row" style="margin-top:12px"><textarea class="rp-textarea" id="ans_' + q.id + '" style="min-height:100px" placeholder="Saisissez votre réponse…"></textarea></div>' +
+            '<button class="rp-btn rp-btn-primary rp-btn-sm" data-submit="' + q.id + '">Soumettre</button>';
+        }
+        html += "</div>";
+      });
+      if (s.status !== "completed") {
+        html += '<div class="rp-card"><button class="rp-btn rp-btn-primary" id="rp-complete-btn">Terminer la session + voir le feedback</button></div>';
+      }
+      if (s.status === "completed" && s.feedback) {
+        var fb = s.feedback;
+        html += '<div class="rp-card"><div class="rp-card-header"><h3 class="rp-card-title">Feedback global</h3>' + RP.scoreHtml(fb.overall_score) + "</div>" +
+          '<p class="rp-small rp-muted">Réponses : ' + fb.answered + "/" + fb.total_questions + "</p>" +
+          '<h4>Compétences manquantes (cross-référence CV)</h4><div class="rp-pill-list">' +
+          (fb.missing_skills && fb.missing_skills.length ? fb.missing_skills.map(function (sk) { return '<span class="rp-tag">' + RP.esc(sk) + "</span>"; }).join("") : '<span class="rp-muted rp-small">Aucune</span>') + "</div>" +
+          '<h4 style="margin-top:12px">Formations recommandées</h4><ul class="rp-small">' +
+          (fb.recommended_formations && fb.recommended_formations.length ? fb.recommended_formations.map(function (f) { return "<li>" + RP.esc(f) + "</li>"; }).join("") : '<li class="rp-muted">Aucune</li>') + "</ul>" +
+          '<h4 style="margin-top:12px">Préparation négociation</h4>';
+        var n = fb.negotiation_prep || {};
+        if (n.salary_range) html += '<p class="rp-small">Fourchette salaire : ' + RP.euros(n.salary_range.min) + " – " + RP.euros(n.salary_range.max) + "</p>";
+        if (n.tjm_min) html += '<p class="rp-small">TJM min : ' + RP.euros(n.tjm_min.min) + "/j</p>";
+        if (n.talking_points) html += '<p class="rp-small" style="margin-top:6px"><strong>Points clés :</strong> <ul>' + n.talking_points.map(function (t) { return "<li>" + RP.esc(t) + "</li>"; }).join("") + "</ul></p>";
+        if (n.pitfalls) html += '<p class="rp-small"><strong>Pièges à éviter :</strong> <ul>' + n.pitfalls.map(function (t) { return "<li>" + RP.esc(t) + "</li>"; }).join("") + "</ul></p>";
+        html += '<div class="rp-badge rp-badge-warning" style="margin-top:10px;display:block;padding:10px">⚠️ ' + RP.esc(fb.note || "Feedback factuel anti-invention.") + "</div></div>";
+      }
+      c.innerHTML = html;
+      c.querySelectorAll("[data-submit]").forEach(function (b) { b.addEventListener("click", function () { submitAnswer(id, b.dataset.submit); }); });
+      var compBtn = document.getElementById("rp-complete-btn");
+      if (compBtn) compBtn.addEventListener("click", function () { completeSession(id); });
+    } catch (e) { c.innerHTML = '<div class="rp-card"><p>Erreur : ' + RP.esc(e.message) + '</p><a class="rp-btn rp-btn-secondary" href="interviews.html">Retour</a></div>'; }
+  }
+
+  async function submitAnswer(sessionId, questionId) {
+    var ta = document.getElementById("ans_" + questionId);
+    if (!ta || !ta.value.trim()) { RP.toast("Saisissez une réponse.", "error"); return; }
+    try {
+      await RP.api("/api/career/interviews/" + sessionId + "/answer", { method: "POST", body: { question_id: questionId, answer_text: ta.value } });
+      RP.toast("Réponse analysée.", "success");
+      openSession(sessionId);
+    } catch (e) { RP.toast(e.message, "error"); }
+  }
+  async function completeSession(id) {
+    try { await RP.api("/api/career/interviews/" + id + "/complete", { method: "POST", body: {} }); RP.toast("Session terminée.", "success"); openSession(id); }
+    catch (e) { RP.toast(e.message, "error"); }
+  }
+})().catch(function (e) { document.getElementById("rp-content").innerHTML = '<div class="rp-card"><p>Erreur : ' + RP.esc(e.message) + '</p><a class="rp-btn rp-btn-secondary" href="dashboard.html">Retour</a></div>'; });
+</script>
+</body>
+</html>
