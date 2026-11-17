@@ -13,10 +13,10 @@ oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/login", auto_error=Fals
 
 # Matrice de permissions par rôle (lecture seule — cohérente avec le frontend)
 ROLE_PERMISSIONS = {
-    "Owner": {"members.manage", "billing.manage", "workspace.manage", "approvals.manage", "content.publish", "crm.manage"},
-    "Admin": {"members.manage", "approvals.manage", "content.publish", "crm.manage"},
-    "Editor": {"approvals.manage", "content.publish", "crm.manage"},
-    "Contributor": {"content.publish"},
+    "Owner": {"members.manage", "billing.manage", "workspace.manage", "approvals.manage", "content.publish", "crm.manage", "ai.use"},
+    "Admin": {"members.manage", "approvals.manage", "content.publish", "crm.manage", "ai.use"},
+    "Editor": {"approvals.manage", "content.publish", "crm.manage", "ai.use"},
+    "Contributor": {"content.publish", "ai.use"},
     "Viewer": set(),
 }
 

@@ -19,6 +19,7 @@ from .extensions import limiter
 from .logging_config import RequestLoggingMiddleware, configure_logging
 from .metrics import MetricsMiddleware, metrics_response
 from .routers import (
+    ai,
     analytics,
     approvals,
     audit,
@@ -115,6 +116,7 @@ for r in (
     billing.router,
     content.router,
     linkedin.router,
+    ai.router,                      # P24-B : AI Gateway (generate + providers + prompts + history)
     audit.router,
     crm.router,
     notifications.router,
