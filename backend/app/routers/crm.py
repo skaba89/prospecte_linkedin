@@ -156,9 +156,11 @@ def _apply_contact_filters(
     has_email=None,
     no_email_days=None,
     enrolled_in_sequence=None,
+    tag_id=None,
 ):
     """Applique les filtres search/status/company/owner/score/source + critères avancés P16
-    (has_email, no_email_days, enrolled_in_sequence) à une query Contact.
+    (has_email, no_email_days, enrolled_in_sequence) + filtre par tag P22 (tag_id — EXISTS
+    association ContactTag) à une query Contact.
     has_email (bool) : True = email réel (pas placeholder @linkedin.sync) ; False = sans email réel.
     no_email_days (int) : dormants — aucun e-mail envoyé (Notification type=email) dans les N derniers jours.
     enrolled_in_sequence (str) : contacts NON activement enrollés dans cette séquence (ciblage batch enroll)."""
@@ -218,7 +220,36 @@ def _apply_contact_filters(
                 models.SequenceEnrollment.status == "active",
             )
         )
+    # P22 : tag_id — EXISTS une association ContactTag pour ce tag (contact catégorisé par ce tag).
+    if tag_id:
+        q = q.filter(
+            exists().where(
+                models.ContactTag.contact_id == models.Contact.id,
+                models.ContactTag.tag_id == tag_id,
+            )
+        )
     return q
+
+
+def _attach_tags(db: Session, contacts: list[models.Contact]) -> list[models.Contact]:
+    """P22 : batch-load les tags d'une liste de contacts (1 query IN sur ContactTag+Tag) + les
+    attache via setattr (c.tags) pour que ContactOut.from_attributes les expose. DRY — appelé par
+    list_contacts + get_contact. Pas de relationship ORM (pattern codebase : queries explicites)."""
+    if not contacts:
+        return contacts
+    cids = [c.id for c in contacts]
+    rows = (
+        db.query(models.ContactTag.contact_id, models.Tag)
+        .join(models.Tag, models.Tag.id == models.ContactTag.tag_id)
+        .filter(models.ContactTag.contact_id.in_(cids))
+        .all()
+    )
+    by_contact: dict[str, list[models.Tag]] = {}
+    for cid, tag in rows:
+        by_contact.setdefault(cid, []).append(tag)
+    for c in contacts:
+        c.tags = by_contact.get(c.id, [])
+    return contacts
 
 
 # ─── Companies ───────────────────────────────────────────────────────────────
@@ -345,6 +376,7 @@ def list_contacts(
     has_email: bool | None = Query(None),
     no_email_days: int | None = Query(None, ge=0),
     enrolled_in_sequence: str | None = Query(None),
+    tag_id: str | None = Query(None, description="P22 : filtrer les contacts ayant ce tag (EXISTS ContactTag)"),
     db: Session = Depends(get_db),
     _t: models.Tenant = Depends(get_tenant),
 ):
@@ -361,10 +393,11 @@ def list_contacts(
         has_email=has_email,
         no_email_days=no_email_days,
         enrolled_in_sequence=enrolled_in_sequence,
+        tag_id=tag_id,
     )
     q = q.order_by(models.Contact.created_at.desc())
     set_total(response, q.count())
-    return q.offset(page.skip).limit(page.limit).all()
+    return _attach_tags(db, q.offset(page.skip).limit(page.limit).all())
 
 
 @router.post("/contacts", response_model=schemas.ContactOut, status_code=status.HTTP_201_CREATED)
@@ -601,7 +634,7 @@ def get_contact(tid: str, ctid: str, db: Session = Depends(get_db), _t: models.T
     c = db.query(models.Contact).filter_by(id=ctid, tenant_id=tid).first()
     if not c:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Contact introuvable")
-    return c
+    return _attach_tags(db, [c])[0]  # P22 : attache les tags du contact pour ContactOut
 
 
 @router.patch("/contacts/{ctid}", response_model=schemas.ContactOut)

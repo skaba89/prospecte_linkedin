@@ -100,6 +100,10 @@
             <option value="lost">Perdu</option>
           </select>
           <input type="number" id="f-score" placeholder="Score min" min="0" max="100" style="width:90px" onchange="loadContacts()">
+          <select id="f-tag" onchange="loadContacts()" title="P22 : filtrer par tag">
+            <option value="">Tous tags</option>
+          </select>
+          <a href="tags.html" class="btn btn-sm" style="display:inline-block;text-decoration:none" title="Gérer les tags">🏷 Tags</a>
           <button class="btn btn-primary btn-sm" onclick="exportCsv()">Export CSV</button>
           <button class="btn btn-sm" onclick="recomputeAllScores()" title="P17 : recalcule les scores (profil + engagement emails + decay récence)">↻ Recompute scores</button>
         </div>
@@ -201,7 +205,7 @@ function init(){
   if(!TOK || !TID){ document.getElementById('login').style.display='block'; return; }
   document.getElementById('crm').style.display='block';
   document.getElementById('tenant-name').textContent = '· ' + TID;
-  loadContacts(); loadPipeline(); loadSuppression();
+  loadContacts(); loadPipeline(); loadSuppression(); loadTagsFilter();
 }
 
 async function demoLogin(){
@@ -232,14 +236,27 @@ function debouncedLoad(){ clearTimeout(debounceT); debounceT=setTimeout(loadCont
 const STATUS_COLORS = {new:'#8b95a8',qualified:'#0a66c2',contacted:'#635bff',nurture:'#f59e0b',won:'#10b981',lost:'#ef4444'};
 const STATUS_LABELS = {new:'Nouveau',qualified:'Qualifié',contacted:'Contacté',nurture:'Nurture',won:'Gagné',lost:'Perdu'};
 
+async function loadTagsFilter(){
+  // P22 : peuple le dropdown f-tag avec les tags du tenant (pour filtrer les contacts par tag)
+  const r = await api('GET', `/tenants/${TID}/tags?limit=100`);
+  if(r.status !== 200) return;
+  const sel = document.getElementById('f-tag');
+  const cur = sel.value;
+  const opts = '<option value="">Tous tags</option>' + (r.data||[]).map(t=>`<option value="${esc(t.id)}">${esc(t.name)} (${t.contact_count})</option>`).join('');
+  sel.innerHTML = opts;
+  sel.value = cur;
+}
+
 async function loadContacts(){
   const search = encodeURIComponent(document.getElementById('search').value||'');
   const status = document.getElementById('f-status').value;
   const score = document.getElementById('f-score').value;
+  const tagId = document.getElementById('f-tag').value;
   let q = `/tenants/${TID}/crm/contacts?limit=100`;
   if(search) q += `&search=${search}`;
   if(status) q += `&status=${status}`;
   if(score) q += `&score_min=${score}`;
+  if(tagId) q += `&tag_id=${tagId}`;
   const r = await api('GET', q);
   const el = document.getElementById('contacts-table');
   if(r.status!==200){ el.innerHTML = `<div class="empty err">Erreur ${r.status}</div>`; return; }
@@ -247,12 +264,13 @@ async function loadContacts(){
   const total = r.headers.get('X-Total-Count') || items.length;
   if(!items.length){ el.innerHTML = '<div class="empty">Aucun contact. Importe-en ou crée-en un.</div>'; return; }
   el.innerHTML = `<div style="margin-bottom:8px"><span class="stat"><b>${total}</b> contact(s)</span></div>
-    <table><thead><tr><th>Nom</th><th>Email</th><th>Titre</th><th>Statut</th><th>Score</th><th>Source</th><th>Actions</th></tr></thead>
+    <table><thead><tr><th>Nom</th><th>Email</th><th>Titre</th><th>Statut</th><th>Tags</th><th>Score</th><th>Source</th><th>Actions</th></tr></thead>
     <tbody>${items.map(c=>`<tr>
       <td>${esc(c.first_name)} ${esc(c.last_name)}</td>
       <td>${esc(c.email)}</td>
       <td>${esc(c.title||'—')}</td>
       <td><span class="badge" style="background:${STATUS_COLORS[c.status]||'#8b95a8'}33;color:${STATUS_COLORS[c.status]||'#8b95a8'}">${STATUS_LABELS[c.status]||c.status}</span></td>
+      <td>${(c.tags||[]).map(t=>`<span class="badge" style="background:${esc(t.color)}22;color:${esc(t.color)};border:1px solid ${esc(t.color)}44;margin-right:3px">${esc(t.name)}</span>`).join('')||'—'}</td>
       <td><span class="score" style="color:${c.score>=80?'#10b981':c.score>=40?'#f59e0b':'#ef4444'}">${c.score}</span></td>
       <td style="color:var(--muted)">${c.source}</td>
       <td><button class="btn btn-sm" onclick="emailContact('${c.id}')" title="Envoyer un e-mail de prospection">✉</button></td>

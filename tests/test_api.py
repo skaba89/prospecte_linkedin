@@ -908,6 +908,78 @@ print("=== 106. GET /audit/stats RBAC (non-member → 403) ===")
 s, _ = call("GET", "/api/tenants/tnt-demo/audit/stats", ptok)
 ck(s, 403, "non-member → 403 sur audit/stats (workspace.manage)")
 
+# ─── P22 : Tags & catégorisation de contacts ──────────────────────────────────
+# Récupère un contact du tenant demo (créé par les scénarios CRM précédents)
+s, _contacts = call("GET", "/api/tenants/tnt-demo/crm/contacts?limit=1", tok)
+ck(s, 200, "fetch contact pour tests tags")
+assert _contacts and len(_contacts) > 0, "Aucun contact pour tester les tags"
+_ctc_id = _contacts[0]["id"]
+
+print("=== 107. POST /tags (create VIP + Cold) ===")
+s, tag_vip = call("POST", "/api/tenants/tnt-demo/tags", tok, {"name": "VIP", "color": "#ff0000"})
+ck(s, 201, "create tag VIP 201")
+ck(tag_vip["name"], "VIP", "tag VIP name")
+ck(tag_vip["color"], "#ff0000", "tag VIP color")
+ck(tag_vip["contact_count"], 0, "tag VIP contact_count=0 (nouveau)")
+s, tag_cold = call("POST", "/api/tenants/tnt-demo/tags", tok, {"name": "Cold", "color": "#0ea5e9"})
+ck(s, 201, "create tag Cold 201")
+
+print("=== 108. POST /tags doublon → 409 ===")
+s, _ = call("POST", "/api/tenants/tnt-demo/tags", tok, {"name": "VIP"})
+ck(s, 409, "doublon nom VIP → 409 (UniqueConstraint)")
+
+print("=== 109. GET /tags (liste + contact_count) ===")
+s, tags_list = call("GET", "/api/tenants/tnt-demo/tags?limit=100", tok)
+ck(s, 200, "list tags 200")
+ck(len(tags_list) >= 2, True, "≥2 tags (VIP + Cold)")
+names = [t["name"] for t in tags_list]
+ck("VIP" in names, True, "tags list contient VIP")
+ck(all("contact_count" in t for t in tags_list), True, "tous les tags ont contact_count")
+
+print("=== 110. POST /tags/contacts/{cid} (assign VIP+Cold, idempotent) ===")
+s, assigned = call("POST", f"/api/tenants/tnt-demo/tags/contacts/{_ctc_id}", tok, {"tag_ids": [tag_vip["id"], tag_cold["id"]]})
+ck(s, 200, "assign 2 tags 200")
+ck(len(assigned), 2, "contact a 2 tags après assign")
+# Idempotent : re-assigner les mêmes → toujours 2 (pas de doublon)
+s, assigned2 = call("POST", f"/api/tenants/tnt-demo/tags/contacts/{_ctc_id}", tok, {"tag_ids": [tag_vip["id"]]})
+ck(s, 200, "re-assign idempotent 200")
+ck(len(assigned2), 2, "re-assign idempotent → toujours 2 (pas de doublon PK composite)")
+
+print("=== 111. GET /tags/contacts/{cid} (tags du contact) ===")
+s, ct_tags = call("GET", f"/api/tenants/tnt-demo/tags/contacts/{_ctc_id}", tok)
+ck(s, 200, "list contact tags 200")
+ck(len(ct_tags), 2, "contact a 2 tags")
+
+print("=== 112. GET /crm/contacts?tag_id=X (filtre par tag) + tags dans ContactOut ===")
+s, by_tag = call("GET", f"/api/tenants/tnt-demo/crm/contacts?tag_id={tag_vip['id']}&limit=100", tok)
+ck(s, 200, "filtre contacts par tag 200")
+ck(len(by_tag) >= 1, True, "≥1 contact a le tag VIP")
+ck(all(any(t["id"] == tag_vip["id"] for t in c.get("tags", [])) for c in by_tag), True, "tous les contacts filtrés ont le tag VIP dans leur .tags")
+# Vérifie que ContactOut expose bien le champ tags (populé par _attach_tags)
+s, one_c = call("GET", f"/api/tenants/tnt-demo/crm/contacts/{_ctc_id}", tok)
+ck(s, 200, "get contact 200")
+ck("tags" in one_c, True, "ContactOut expose le champ tags (P22)")
+ck(len(one_c.get("tags", [])), 2, "get contact → 2 tags (via _attach_tags)")
+
+print("=== 113. PATCH /tags/{id} (rename + recolor) ===")
+s, updated = call("PATCH", f"/api/tenants/tnt-demo/tags/{tag_cold['id']}", tok, {"name": "Cold-Lead", "color": "#06b6d4"})
+ck(s, 200, "patch tag 200")
+ck(updated["name"], "Cold-Lead", "tag renommé Cold-Lead")
+ck(updated["color"], "#06b6d4", "tag recoloré")
+
+print("=== 114. DELETE /tags/contacts/{cid}/{tag_id} (unassign) + DELETE /tags/{id} (delete) ===")
+s, _ = call("DELETE", f"/api/tenants/tnt-demo/tags/contacts/{_ctc_id}/{tag_vip['id']}", tok)
+ck(s in (204, 0), True, "unassign tag VIP 204 (call retourne 0 sur body vide 204)")
+s, after_unassign = call("GET", f"/api/tenants/tnt-demo/tags/contacts/{_ctc_id}", tok)
+ck(len(after_unassign), 1, "contact a 1 tag après unassign VIP")
+# Delete tag Cold-Lead → cascade-supprime l'association
+s, _ = call("DELETE", f"/api/tenants/tnt-demo/tags/{tag_cold['id']}", tok)
+ck(s in (204, 0), True, "delete tag Cold-Lead 204 (call retourne 0 sur body vide 204)")
+s, after_delete = call("GET", f"/api/tenants/tnt-demo/tags/contacts/{_ctc_id}", tok)
+ck(len(after_delete), 0, "contact a 0 tag après delete Cold-Lead (cascade)")
+# Cleanup : delete le tag VIP restant
+call("DELETE", f"/api/tenants/tnt-demo/tags/{tag_vip['id']}", tok)
+
 print()
 print(f"RESULT: {passed} passed, {failed} failed")
 sys.exit(0 if failed == 0 else 1)

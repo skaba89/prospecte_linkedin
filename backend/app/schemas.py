@@ -321,6 +321,34 @@ class ContactUpdate(BaseModel):
     source: str | None = None
 
 
+# ---- P22 : Tags & catégorisation de contacts ----
+class TagCreate(BaseModel):
+    name: str
+    color: str = "#635bff"
+
+
+class TagUpdate(BaseModel):
+    name: str | None = None
+    color: str | None = None
+
+
+class TagOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: str
+    tenant_id: str
+    name: str
+    color: str = "#635bff"
+    created_at: datetime | None = None
+    contact_count: int = 0  # P22 : peuplé dans GET /tags (count ContactTag par tag)
+
+
+class ContactTagAssign(BaseModel):
+    """Body pour POST /contacts/{cid}/tags (P22) — assigne une liste de tag_ids à un contact.
+    Idempotent : les associations déjà existantes sont skipées (PK composite contact_id+tag_id)."""
+
+    tag_ids: list[str]
+
+
 class ContactOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     id: str
@@ -338,6 +366,7 @@ class ContactOut(BaseModel):
     source: str = "manual"
     created_at: datetime | None = None
     updated_at: datetime | None = None
+    tags: list[TagOut] = []  # P22 : peuplé par _attach_tags (batch query, pas de relationship ORM)
 
 
 class OpportunityCreate(BaseModel):

@@ -32,6 +32,7 @@ from .routers import (
     members,
     notifications,
     sequences,
+    tags,
     tenants,
     webhooks,
 )
@@ -120,6 +121,7 @@ for r in (
     sequences.router,
     analytics.router,
     webhooks.router,
+    tags.router,                   # P22 : tags CRUD + assign/unassign sur contacts
     inbound_webhooks.router,        # P20 : endpoint public POST /api/inbound/webhook/{token}
     inbound_webhooks.router_admin,  # P20 : CRUD admin /api/tenants/{tid}/inbound-webhooks
 ):

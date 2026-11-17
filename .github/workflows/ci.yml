@@ -78,6 +78,8 @@ jobs:
         run: python tests/test_inbound_webhooks.py
       - name: P21 Audit & compliance UI static checks (filtres/stats/export CSV + frontend audit.html)
         run: python tests/test_audit_ui.py
+      - name: P22 Tags & catégorisation static checks (Tag/ContactTag models + router CRUD/assign + filtre crm + migration)
+        run: python tests/test_tags.py
 
   test-api:
     name: API tests (sqlite, sans docker)
