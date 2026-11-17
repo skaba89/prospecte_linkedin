@@ -27,6 +27,7 @@ from .routers import (
     auth,
     billing,
     content,
+    content_studio,
     crm,
     dashboard,
     inbound_webhooks,
@@ -116,6 +117,7 @@ for r in (
     dashboard.router,
     billing.router,
     content.router,
+    content_studio.router,          # P26 : LinkedIn Content Studio (posts + templates + carousel + calendar + stats + validation collaborative)
     linkedin.router,
     ai.router,                      # P24-B : AI Gateway (generate + providers + prompts + history)
     agents.router,                  # P25 : 10 agents IA + Copilot (agents run + history + copilot chat)

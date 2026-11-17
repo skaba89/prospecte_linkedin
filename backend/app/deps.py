@@ -12,12 +12,15 @@ from .logging_config import tenant_id_var, user_id_var
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/login", auto_error=False)
 
 # Matrice de permissions par rôle (lecture seule — cohérente avec le frontend)
+# P26 : content.read (Viewer+) — lecture Content Studio (posts, templates, calendar, stats).
+# content.publish (Contributor+) — write Content Studio (generate/create/edit/schedule/request-validation).
+# approvals.manage (Editor+) — approve/reject/publish-to-LinkedIn (validation collaborative + action externe).
 ROLE_PERMISSIONS = {
-    "Owner": {"members.manage", "billing.manage", "workspace.manage", "approvals.manage", "content.publish", "crm.manage", "ai.use"},
-    "Admin": {"members.manage", "approvals.manage", "content.publish", "crm.manage", "ai.use"},
-    "Editor": {"approvals.manage", "content.publish", "crm.manage", "ai.use"},
-    "Contributor": {"content.publish", "ai.use"},
-    "Viewer": set(),
+    "Owner": {"members.manage", "billing.manage", "workspace.manage", "approvals.manage", "content.publish", "content.read", "crm.manage", "ai.use"},
+    "Admin": {"members.manage", "approvals.manage", "content.publish", "content.read", "crm.manage", "ai.use"},
+    "Editor": {"approvals.manage", "content.publish", "content.read", "crm.manage", "ai.use"},
+    "Contributor": {"content.publish", "content.read", "ai.use"},
+    "Viewer": {"content.read"},
 }
 
 

@@ -1105,3 +1105,125 @@ class CopilotChatResponse(BaseModel):
     status: str
     suggestions: list[str] = []
     error: str | None = None
+
+
+# ─── P26 — LinkedIn Content Studio professionnel ─────────────────────────────
+
+
+class ContentTemplateRequest(BaseModel):
+    """Création d'un modèle de post (P26). category = storytelling|insight|announcement|carousel|
+    question|bts. structure = template avec {{variables}}."""
+    name: str = Field(..., min_length=1, max_length=120)
+    category: str = Field(..., max_length=40)
+    structure: str = Field(..., min_length=1)
+    variables: list[str] = Field(default_factory=list)
+    style: str | None = None
+
+
+class ContentTemplateOut(BaseModel):
+    """Modèle de post (P26). is_system=True → immuable (seedé, non modifiable/supprimable)."""
+    id: str
+    name: str
+    category: str
+    structure: str
+    variables: list[str] | None = None
+    style: str | None = None
+    is_system: bool
+    created_at: datetime
+    model_config = ConfigDict(from_attributes=True)
+
+
+class ContentGenerateRequest(BaseModel):
+    """Génération de post via LinkedInAgent P25 (P26). topic + style + title. La génération utilise
+    l'AI Gateway P24-B (fallback SimulatedProvider si no provider configured)."""
+    topic: str = Field(..., min_length=1, max_length=200)
+    style: str = Field(default="expert, terrain, data-driven", max_length=100)
+    title: str | None = None
+
+
+class ContentCarouselRequest(BaseModel):
+    """Génération d'un carrousel (P26). topic + slides_count (2-10) + style. Retourne les slides
+    (texte généré, image_url=NULL — l'utilisateur attache ses visuels via le Content Studio UI)."""
+    topic: str = Field(..., min_length=1, max_length=200)
+    slides_count: int = Field(default=5, ge=2, le=10)
+    style: str = Field(default="éducatif", max_length=100)
+
+
+class ContentPostRequest(BaseModel):
+    """Création manuelle d'un post (P26). content_text requis. status par défaut draft."""
+    title: str | None = None
+    content_text: str = Field(..., min_length=1)
+    topic: str | None = None
+    style: str | None = None
+    hashtags: str | None = None
+    template_id: str | None = None
+
+
+class ContentPostUpdate(BaseModel):
+    """Mise à jour d'un post (P26). Tous les champs optionnels (partial update)."""
+    title: str | None = None
+    content_text: str | None = None
+    topic: str | None = None
+    style: str | None = None
+    hashtags: str | None = None
+    carousel: list[dict] | None = None
+    media_urls: list[str] | None = None
+    template_id: str | None = None
+
+
+class ContentScheduleRequest(BaseModel):
+    """Planification d'un post (P26). scheduled_at (ISO datetime, futur)."""
+    scheduled_at: datetime
+
+
+class ContentRejectRequest(BaseModel):
+    """Rejet d'un post (P26). reason obligatoire (validation collaborative)."""
+    reason: str = Field(..., min_length=1, max_length=1000)
+
+
+class ContentPostOut(BaseModel):
+    """Post Content Studio (P26). status workflow : draft|pending_review|approved|rejected|scheduled|
+    published. ai_generation_id = audit trail (P24-B → P25 → P26). linkedin_urn = URN LinkedIn (simulé
+    en v1). stats = {impressions, likes, comments, shares} (NULL jusqu'à sync LinkedIn API réelle)."""
+    id: str
+    title: str | None = None
+    content_text: str
+    topic: str | None = None
+    style: str | None = None
+    hashtags: str | None = None
+    carousel: list[dict] | None = None
+    media_urls: list[str] | None = None
+    template_id: str | None = None
+    status: str
+    scheduled_at: datetime | None = None
+    published_at: datetime | None = None
+    linkedin_urn: str | None = None
+    ai_generation_id: str | None = None
+    validation_requested_by: str | None = None
+    validation_requested_at: datetime | None = None
+    validated_by: str | None = None
+    validated_at: datetime | None = None
+    rejected_reason: str | None = None
+    linkedin_account_id: str | None = None
+    stats: dict | None = None
+    created_by: str | None = None
+    created_at: datetime
+    updated_at: datetime
+    model_config = ConfigDict(from_attributes=True)
+
+
+class ContentCalendarItem(BaseModel):
+    """Item du calendrier éditorial (P26). date (YYYY-MM-DD) + posts planifiés/published ce jour."""
+    date: str
+    posts: list[ContentPostOut] = []
+
+
+class ContentStats(BaseModel):
+    """Statistiques Content Studio (P26). posts_by_status = {draft: N, pending_review: N, ...}.
+    total_published + total_scheduled + total_engagement (somme des stats published)."""
+    total_posts: int
+    posts_by_status: dict[str, int]
+    total_published: int
+    total_scheduled: int
+    total_templates: int
+    total_engagement: int
