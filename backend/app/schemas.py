@@ -78,6 +78,7 @@ class MemberOut(BaseModel):
     name: str
     role: str
     status: str
+    user_id: str | None = None  # P23 : exposé pour le dropdown assignee de Task (FK users.id)
     token: str | None = None
     invited_by: str | None = None
     added_at: datetime
@@ -424,6 +425,7 @@ class TaskCreate(BaseModel):
     status: str = "todo"  # todo | in_progress | done
     priority: str = "medium"  # low | medium | high
     assignee_id: str | None = None
+    reminder_at: datetime | None = None  # P23 : instant du rappel (scheduler → Notification)
 
 
 class TaskUpdate(BaseModel):
@@ -434,6 +436,7 @@ class TaskUpdate(BaseModel):
     status: str | None = None
     priority: str | None = None
     assignee_id: str | None = None
+    reminder_at: datetime | None = None  # P23 : update du rappel (reset reminder_sent=False si changé)
 
 
 class TaskOut(BaseModel):
@@ -447,6 +450,9 @@ class TaskOut(BaseModel):
     status: str = "todo"
     priority: str = "medium"
     assignee_id: str | None = None
+    reminder_at: datetime | None = None  # P23
+    reminder_sent: bool = False  # P23
+    completed_at: datetime | None = None  # P23
     created_at: datetime | None = None
 
 
