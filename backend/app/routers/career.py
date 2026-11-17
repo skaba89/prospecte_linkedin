@@ -31,7 +31,7 @@ from .. import models, schemas
 from ..audit import log_audit
 from ..database import get_db
 from ..deps import get_current_user
-from ..services import career_cv, career_referential, job_search
+from ..services import career_cv, career_referential, job_search, matching
 from ..services.job_connectors import SearchCriteria, list_connectors
 
 router = APIRouter(prefix="/api/career", tags=["career"])
@@ -381,3 +381,64 @@ def delete_saved_search(
               action="career.saved_search.delete", target_type="saved_search", target_id=search_id)
     db.commit()
     return {"deleted": search_id}
+
+
+# ─── P36 : matching intelligent CV↔offre (score hybride explicable 0-100) ────
+
+
+@router.post("/matching/{cv_id}/{posting_id}", response_model=schemas.MatchingBreakdownOut)
+def compute_match(
+    cv_id: str,
+    posting_id: str,
+    db: Session = Depends(get_db),
+    user: models.User = Depends(get_current_user),
+):
+    """Calcule le score de matching CV↔offre (P36). 6 critères pondérés (skills 40%, experience 20%,
+    certifications/location/salary/languages 10% chacun). Score total 0-100 (capé à 60 si éliminatoire).
+    Isolation : CV doit appartenir au profil du user + posting doit exister (non expiré privilégié).
+    Disclaimer : score = compatibilité, NE PAS présenter comme probabilité de recrutement."""
+    profile = _get_or_404_profile(db, user.id)
+    cv = db.query(models.CV).filter_by(id=cv_id, career_profile_id=profile.id).first()
+    if not cv:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "CV introuvable (isolation profil).")
+    posting = db.query(models.JobPosting).filter_by(id=posting_id).first()
+    if not posting:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Offre introuvable.")
+    return matching.compute_match(cv, posting, profile)
+
+
+@router.post("/matching/search", response_model=list[schemas.MatchingRankedItemOut])
+def matching_search(
+    body: schemas.MatchingSearchRequest,
+    db: Session = Depends(get_db),
+    user: models.User = Depends(get_current_user),
+):
+    """Match le CV (spécifié ou actif) contre N postings actifs → liste ranked par total_score décroissant.
+    Cap limit à 50 anti-abus. Disclaimer : scores = compatibilité (pas probabilité de recrutement)."""
+    profile = _get_or_404_profile(db, user.id)
+    if body.cv_id:
+        cv = db.query(models.CV).filter_by(id=body.cv_id, career_profile_id=profile.id).first()
+    else:
+        cv = db.query(models.CV).filter_by(career_profile_id=profile.id, is_active=True).first()
+    if not cv:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "CV introuvable (spécifiez cv_id ou activez un CV).")
+    q = db.query(models.JobPosting).filter_by(is_expired=False)
+    if body.source:
+        q = q.filter_by(source_connector=body.source)
+    if body.keywords:
+        kw = body.keywords.lower()
+        q = q.filter(models.JobPosting.title.ilike(f"%{kw}%"))
+    if body.location:
+        loc = body.location.lower()
+        q = q.filter(models.JobPosting.location.ilike(f"%{loc}%"))
+    postings = q.order_by(models.JobPosting.fetched_at.desc()).limit(body.limit).all()
+    results: list[schemas.MatchingRankedItemOut] = []
+    for p in postings:
+        bd = matching.compute_match(cv, p, profile)
+        results.append(schemas.MatchingRankedItemOut(
+            posting=schemas.JobPostingOut.model_validate(p),
+            total_score=bd.total_score, missing_skills=bd.missing_skills,
+            eliminatory_flags=bd.eliminatory_flags,
+        ))
+    results.sort(key=lambda r: r.total_score, reverse=True)
+    return results

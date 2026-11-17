@@ -102,6 +102,8 @@ jobs:
         run: python tests/test_p34_career.py
       - name: P35 Career recherche opportunités (connecteurs 12 providers + dedup + expired + saved searches)
         run: python tests/test_p35_job_search.py
+      - name: P36 Career matching intelligent (score hybride 6 critères + missing skills + eliminatory + disclaimer)
+        run: python tests/test_p36_matching.py
 
   test-api:
     name: API tests (sqlite, sans docker)
