@@ -1573,6 +1573,80 @@ ck(s, 400, "signal_type invalide → 400")
 call("DELETE", f"/api/tenants/tnt-demo/crm/sequences/{seq_p27['id']}", tok)
 call("DELETE", f"/api/tenants/tnt-demo/crm/contacts/{ctc_p27['id']}", tok)
 
+# ─── P28 : Warmup inbox + Sales Intelligence ─────────────────────────────────
+# Setup : create a contact (status=won) + opportunity for funnel/forecast.
+s, ctc_p28 = call("POST", "/api/tenants/tnt-demo/crm/contacts", tok,
+                  {"first_name": "Sophie", "last_name": "Martin", "email": "sophie.martin.p28@test.com",
+                   "title": "CEO", "company": "InnovCorp", "status": "won"})
+ck(s, 201, "setup contact P28 (status=won) 201")
+s, opp_p28 = call("POST", "/api/tenants/tnt-demo/crm/opportunities", tok,
+                  {"contact_id": ctc_p28["id"], "title": "Deal P28", "value": 50000, "probability": 60,
+                   "stage": "proposal", "currency": "EUR"})
+ck(s, 201, "setup opportunity P28 201")
+
+print("=== 188. POST /sales-intel/warmup (create) → 201 ===")
+s, warmup = call("POST", "/api/tenants/tnt-demo/sales-intel/warmup", tok,
+                 {"sender_email": "sender.p28@innovcorp.com", "target_volume": 100, "ramp_days": 10})
+ck(s, 201, "warmup create 201")
+ck(warmup.get("ramp_status"), "pending", "warmup status=pending")
+ck(warmup.get("current_day"), 0, "warmup current_day=0")
+ck(warmup.get("daily_volume"), 0, "warmup daily_volume=0")
+
+print("=== 189. GET /sales-intel/warmup (list) → 200 (>=1) ===")
+s, warmups = call("GET", "/api/tenants/tnt-demo/sales-intel/warmup", tok)
+ck(s, 200, "warmup list 200")
+ck(len(warmups) >= 1, True, f"{len(warmups)} warmups (>=1)")
+
+print("=== 190. POST /sales-intel/warmup/{wid}/advance → 200 (day 1, ramping) ===")
+s, warmup = call("POST", f"/api/tenants/tnt-demo/sales-intel/warmup/{warmup['id']}/advance", tok, {})
+ck(s, 200, "warmup advance 200")
+ck(warmup.get("current_day"), 1, f"advance day 1 → current_day={warmup.get('current_day')}")
+ck(warmup.get("daily_volume"), 10, f"advance day 1 → daily_volume={warmup.get('daily_volume')} (10)")
+ck(warmup.get("ramp_status"), "ramping", "advance day 1 → status=ramping")
+
+print("=== 191. POST /sales-intel/warmup/{wid}/advance x4 → day 5, daily_volume=50 ===")
+for _ in range(4):
+    s, warmup = call("POST", f"/api/tenants/tnt-demo/sales-intel/warmup/{warmup['id']}/advance", tok, {})
+ck(s, 200, "warmup advance x4 200")
+ck(warmup.get("current_day"), 5, f"advance to day 5 → current_day={warmup.get('current_day')}")
+ck(warmup.get("daily_volume"), 50, f"advance day 5 → daily_volume={warmup.get('daily_volume')} (50)")
+
+print("=== 192. GET /sales-intel/warmup/{wid}/stats → 200 (progress 50%) ===")
+s, stats = call("GET", f"/api/tenants/tnt-demo/sales-intel/warmup/{warmup['id']}/stats", tok)
+ck(s, 200, "warmup stats 200")
+ck(stats.get("current_day"), 5, f"stats current_day={stats.get('current_day')} (5)")
+ck(stats.get("progress_pct"), 50.0, f"stats progress_pct={stats.get('progress_pct')} (50.0)")
+ck(stats.get("sent_count"), 0, f"stats sent_count={stats.get('sent_count')} (0 — no messages recorded via API)")
+
+print("=== 193. GET /sales-intel/funnel → 200 (total >=1, conversion_rate > 0) ===")
+s, funnel = call("GET", "/api/tenants/tnt-demo/sales-intel/funnel", tok)
+ck(s, 200, "funnel 200")
+ck(funnel.get("total", 0) >= 1, True, f"funnel total={funnel.get('total')} (>=1)")
+ck(funnel.get("conversion_rate", 0) > 0, True, f"funnel conversion_rate={funnel.get('conversion_rate')} (>0 — Sophie won)")
+# Vérifie la structure des stages.
+ck(isinstance(funnel.get("stages"), list), True, "funnel stages = list")
+ck(len(funnel["stages"]), 5, f"funnel stages={len(funnel['stages'])} (5 : new|qualified|contacted|nurture|won)")
+
+print("=== 194. GET /sales-intel/cohorts → 200 (list) ===")
+s, cohorts = call("GET", "/api/tenants/tnt-demo/sales-intel/cohorts?weeks=8", tok)
+ck(s, 200, "cohorts 200")
+ck(isinstance(cohorts, list), True, "cohorts = list")
+
+print("=== 195. GET /sales-intel/forecast → 200 (raw_pipeline + weighted_forecast) ===")
+s, forecast = call("GET", "/api/tenants/tnt-demo/sales-intel/forecast", tok)
+ck(s, 200, "forecast 200")
+ck(forecast.get("total_opportunities", 0) >= 1, True, f"forecast total_opportunities={forecast.get('total_opportunities')} (>=1 — Deal P28)")
+ck(forecast.get("raw_pipeline", 0) >= 50000, True, f"forecast raw_pipeline={forecast.get('raw_pipeline')} (>=50000)")
+# Deal P28 : value=50000, prob=60 → weighted=30000. weighted_forecast >= 30000.
+ck(forecast.get("weighted_forecast", 0) >= 30000, True, f"forecast weighted_forecast={forecast.get('weighted_forecast')} (>=30000 — 50000*60%)")
+ck(forecast.get("currency"), "EUR", f"forecast currency={forecast.get('currency')} (EUR)")
+
+# Cleanup P28 : delete le contact (CASCADE opportunity via FK? non — opportunity a contact_id FK sans CASCADE,
+# delete le contact d'abord peut échouer si opportunity le référence. Delete opportunity d'abord).
+call("DELETE", f"/api/tenants/tnt-demo/crm/opportunities/{opp_p28['id']}", tok)
+call("DELETE", f"/api/tenants/tnt-demo/crm/contacts/{ctc_p28['id']}", tok)
+call("DELETE", f"/api/tenants/tnt-demo/sales-intel/warmup/{warmup['id']}", tok) if False else None  # warmup non deletable via API (no DELETE endpoint) — laissé en DB (data analytics)
+
 print()
 print(f"RESULT: {passed} passed, {failed} failed")
 sys.exit(0 if failed == 0 else 1)

@@ -791,3 +791,46 @@ class ContentPost(Base):
     created_by = Column(String, ForeignKey("users.id"), nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+
+# ─── P28 — Warmup inbox + Sales Intelligence ─────────────────────────────────
+
+
+class InboxWarmup(Base):
+    """Configuration de warmup inbox (P28). Gradation du volume d'envoi email pour construire la
+    réputation de l'expéditeur (sender reputation) avant d'envoyer des cold emails à volume élevé —
+    évite les bounces/spam-folder des nouveaux domaines. sender_email = adresse à warmer.
+    target_volume = volume quotidien cible (e.g. 100 emails/jour). ramp_days = durée de la rampe
+    (default 30j). current_day = jour actuel (0 = pas commencé, 1..ramp_days = en cours).
+    daily_volume = volume calculé (linéaire : day 1 → ~3, day ramp_days → target_volume). ramp_status :
+    pending (créé, non démarré) | ramping (en cours, current_day < ramp_days) | active (current_day >=
+    ramp_days, daily_volume = target_volume) | paused | completed. CASCADE sur delete tenant."""
+
+    __tablename__ = "inbox_warmups"
+    id = Column(String, primary_key=True, default=lambda: _uid("wrm"))
+    tenant_id = Column(String, ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
+    sender_email = Column(String, nullable=False)
+    target_volume = Column(Integer, default=100, nullable=False)
+    ramp_days = Column(Integer, default=30, nullable=False)
+    current_day = Column(Integer, default=0, nullable=False)
+    daily_volume = Column(Integer, default=0, nullable=False)
+    ramp_status = Column(String, default="pending", nullable=False, index=True)  # pending|ramping|active|paused|completed
+    started_at = Column(DateTime, nullable=True)
+    completed_at = Column(DateTime, nullable=True)
+    created_by = Column(String, ForeignKey("users.id"), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+
+class WarmupMessage(Base):
+    """Message de warmup (P28). Enregistré pour tracker la réputation (open/reply rate) pendant la
+    rampe — un volume d'envoi sans opens/replies signale un domaine spammy. sent_at = quand envoyé.
+    opened = si ouvert (bool, simule un open-tracking pixel). replied = si répondu (bool, simule une
+    interaction humaine). CASCADE sur delete warmup."""
+
+    __tablename__ = "warmup_messages"
+    id = Column(String, primary_key=True, default=lambda: _uid("wm"))
+    warmup_id = Column(String, ForeignKey("inbox_warmups.id", ondelete="CASCADE"), nullable=False, index=True)
+    sent_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    opened = Column(Boolean, default=False, nullable=False)
+    replied = Column(Boolean, default=False, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
