@@ -17,7 +17,7 @@ tenant, donc réservés à l'admin. Audit log sur create/update/delete. Le POST 
 (inbound.contact_created/updated, actor = "Inbound webhook: {source}").
 """
 
-from fastapi import APIRouter, Depends, HTTPException, Response, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Response, status
 from sqlalchemy.orm import Session
 
 from .. import models, schemas
@@ -49,11 +49,15 @@ def receive_inbound(
     token: str,
     payload: dict,
     db: Session = Depends(get_db),
+    x_webhook_id: str | None = Header(None, alias="X-Webhook-Id"),
+    webhook_id_hdr: str | None = Header(None, alias="Webhook-Id"),
 ):
     """Réception d'un payload inbound : crée ou met à jour un Contact dans le tenant propriétaire
     du token. No auth — le token (32 hex) dans l'URL identifie le tenant + la config. 404 si token
     inconnu, 410 si inactif (suspendu), 422 si payload vide (aucun champ mappable après field_map).
-    Retourne l'action (created/updated), le contact_id, la clé de dédup (email/linkedin_url/none)."""
+    Retourne l'action (created/updated/duplicate), le contact_id, la clé de dédup.
+    P24-A : idempotence — event_id extrait du header X-Webhook-Id/Webhook-Id ou du payload
+    event_id/messageId ; si déjà traité → retourne {action: 'duplicate'} sans retraiter."""
     wh = db.query(models.InboundWebhook).filter_by(token=token).first()
     if not wh:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Token inbound inconnu")
@@ -66,7 +70,9 @@ def receive_inbound(
             status.HTTP_422_UNPROCESSABLE_ENTITY,
             "Payload vide ou aucun champ mappable (attendu : first_name/last_name/email/phone/title/linkedin_url)",
         )
-    result = ibw_service.process_inbound(db, webhook=wh, payload=payload)
+    # P24-A : extraire event_id (header prioritaire, puis payload event_id/messageId) pour l'idempotence.
+    event_id = x_webhook_id or webhook_id_hdr or payload.get("event_id") or payload.get("messageId")
+    result = ibw_service.process_inbound(db, webhook=wh, payload=payload, event_id=event_id)
     db.commit()
     return result
 

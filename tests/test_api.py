@@ -32,11 +32,14 @@ def wait_health(timeout=30):
     return False
 
 
-def call(method, path, token=None, body=None):
+def call(method, path, token=None, body=None, headers=None):
     req = urllib.request.Request(BASE + path, data=json.dumps(body).encode() if body is not None else None, method=method)
     req.add_header("Content-Type", "application/json")
     if token:
         req.add_header("Authorization", f"Bearer {token}")
+    if headers:
+        for k, v in headers.items():
+            req.add_header(k, v)
     try:
         with urllib.request.urlopen(req, timeout=10) as r:
             return r.status, json.loads(r.read().decode())
@@ -674,12 +677,12 @@ s, em = call("POST", f"/api/tenants/tnt-demo/crm/contacts/{cid_score}/email", to
 ck(s, 200, "send email 200")
 ck(em.get("status") in ("sent", "dry_run"), True, f"email status={em.get('status')} (engagement valide)")
 
-print("=== 78. POST /crm/contacts/{cid_score}/score AGAIN (engagement +5, decay 0) ===")
+print("=== 78. POST /crm/contacts/{cid_score}/score AGAIN (dry_run exclu → engagement=0, P24-A) ===")
 s, sb2 = call("POST", f"/api/tenants/tnt-demo/crm/contacts/{cid_score}/score", tok)
 ck(s, 200, "recompute score again 200")
-ck(sb2.get("score"), 85, "score=85 (80 profil + 5 engagement, decay=0 car contact récent)")
-ck(sb2.get("breakdown", {}).get("engagement"), 5, "engagement=5 (1 email × 5)")
-ck(sb2.get("breakdown", {}).get("decay"), 0, "decay=0 (last_contact = now)")
+ck(sb2.get("score"), 80, "score=80 (dry_run exclu du scoring P24-A — smtp off en test → engagement=0)")
+ck(sb2.get("breakdown", {}).get("engagement"), 0, "engagement=0 (dry_run exclu P24-A — seul 'sent' compte)")
+ck(sb2.get("breakdown", {}).get("decay"), 0, "decay=0 (pas de last_contact_at sans sent)")
 
 print("=== 79. POST /crm/contacts/score-recompute (batch) ===")
 s, srr = call("POST", "/api/tenants/tnt-demo/crm/contacts/score-recompute", tok)
@@ -1133,6 +1136,66 @@ ck(attr2["total_won"] >= 1, True, f"attribution total_won >= 1 ({attr2['total_wo
 ck(attr2["total_revenue_won"] >= 5000, True, f"attribution total_revenue_won >= 5000 ({attr2['total_revenue_won']})")
 # Cleanup : delete l'opp P24
 call("DELETE", f"/api/tenants/tnt-demo/crm/opportunities/{opp_p24['id']}", tok)
+
+# ─── P24-A : Sécurisation résiduelle (SSRF, secret chiffré, IDOR, idempotence inbound) ─────
+print("=== 131. POST /webhooks url=file:///etc/passwd → 422 (SSRF scheme bloqué) ===")
+s, _ = call("POST", "/api/tenants/tnt-demo/webhooks", tok,
+            {"url": "file:///etc/passwd", "events": ["contact.created"]})
+ck(s, 422, "webhook file:// → 422 (SSRF scheme bloqué, même avec allow_private)")
+
+print("=== 132. POST /webhooks url=ftp://example.com → 422 (SSRF scheme bloqué) ===")
+s, _ = call("POST", "/api/tenants/tnt-demo/webhooks", tok,
+            {"url": "ftp://example.com/x", "events": ["contact.created"]})
+ck(s, 422, "webhook ftp:// → 422 (SSRF scheme bloqué)")
+
+print("=== 133. POST /webhooks url=http://127.0.0.1:9099/wh-p24a (loopback, allow_private en test) → 201 ===")
+s, wh_a = call("POST", "/api/tenants/tnt-demo/webhooks", tok,
+               {"url": "http://127.0.0.1:9099/wh-p24a", "events": ["contact.created"]})
+ck(s, 201, "webhook loopback 201 (allow_private=true en test)")
+ck("secret" not in wh_a, True, "secret non exposé en WebhookOut (chiffré au repos)")
+
+print("=== 134. POST /webhooks/{id}/rotate → 200 + nouveau secret (32 hex) ===")
+s, rot = call("POST", f"/api/tenants/tnt-demo/webhooks/{wh_a['id']}/rotate", tok)
+ck(s, 200, "rotate 200")
+ck(rot.get("webhook_id"), wh_a["id"], "rotate retourne webhook_id")
+ck(len(rot.get("secret", "")), 32, "rotate retourne nouveau secret 32 hex (visible UNE FOIS)")
+
+print("=== 135. PATCH /webhooks/{id} url=file:///etc/passwd → 422 (SSRF sur update) ===")
+s, _ = call("PATCH", f"/api/tenants/tnt-demo/webhooks/{wh_a['id']}", tok, {"url": "file:///etc/passwd"})
+ck(s, 422, "update webhook file:// → 422 (SSRF bloqué sur update)")
+
+print("=== 136. GET /webhooks/{id} → secret jamais exposé (chiffré au repos) ===")
+s, wh_get = call("GET", f"/api/tenants/tnt-demo/webhooks/{wh_a['id']}", tok)
+ck(s, 200, "get webhook 200")
+ck("secret" not in wh_get, True, "GET webhook : secret non exposé")
+ck("secret_enc" not in wh_get, True, "GET webhook : secret_enc interne non exposé")
+
+print("=== 137. IDOR guard : DELETE /tags/contacts/{fake_cid}/{fake_tag} → 404 (guard tenant) ===")
+s, _ = call("DELETE", "/api/tenants/tnt-demo/tags/contacts/fake_contact_p24a/fake_tag_p24a", tok)
+ck(s, 404, "IDOR : unassign contact-inexistant → 404 (guard tenant actif)")
+
+print("=== 138. POST /inbound-webhooks (admin create) → 201 + token ===")
+s, ibw = call("POST", "/api/tenants/tnt-demo/inbound-webhooks", tok,
+              {"source_name": "P24-A test", "active": True})
+ck(s, 201, "create inbound webhook 201")
+ck(bool(ibw.get("token")), True, "inbound webhook token retourné")
+
+print("=== 139. POST /inbound/webhook/{token} X-Webhook-Id:evt-e2e → 200 + created ===")
+_payload = {"first_name": "E2E", "last_name": "Idempotent", "email": "e2e-p24a@test.com"}
+s, r1 = call("POST", f"/api/inbound/webhook/{ibw['token']}", body=_payload,
+             headers={"X-Webhook-Id": "evt-e2e-p24a"})
+ck(s, 200, "1er inbound 200")
+ck(r1.get("action"), "created", "1er inbound → created")
+
+print("=== 140. POST /inbound/webhook/{token} X-Webhook-Id:evt-e2e (replay) → 200 + duplicate ===")
+s, r2 = call("POST", f"/api/inbound/webhook/{ibw['token']}", body=_payload,
+             headers={"X-Webhook-Id": "evt-e2e-p24a"})
+ck(s, 200, "2e inbound (replay) 200")
+ck(r2.get("action"), "duplicate", "2e inbound → duplicate (idempotent)")
+ck(r2.get("matched_by"), "event_id", "duplicate → matched_by=event_id")
+# Cleanup : delete le webhook P24-A + inbound
+call("DELETE", f"/api/tenants/tnt-demo/webhooks/{wh_a['id']}", tok)
+call("DELETE", f"/api/tenants/tnt-demo/inbound-webhooks/{ibw['id']}", tok)
 
 print()
 print(f"RESULT: {passed} passed, {failed} failed")

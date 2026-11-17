@@ -103,19 +103,19 @@ def _compute_score(
 
 def _engagement_signals(db: Session, c: models.Contact) -> tuple[int, datetime | None, bool]:
     """P17 : récupère les signals d'engagement depuis la DB — emails envoyés (Notification
-    type=email sent/dry_run, count), date du dernier e-mail (last_contact_at pour le decay),
-    opportunité active (Opportunity stage prospecting/qualified/proposal/negotiation). Réutilisé
-    par _score_contact + recompute_score (DRY — un seul point de query engagement)."""
+    type=email status=sent, count — P24-A : dry_run exclu, simulé ≠ réel), date du dernier e-mail
+    (last_contact_at pour le decay), opportunité active (Opportunity stage prospecting/qualified/
+    proposal/negotiation). Réutilisé par _score_contact + recompute_score (DRY — un seul point)."""
     emails_sent = (
         db.query(models.Notification)
         .filter_by(tenant_id=c.tenant_id, recipient_contact_id=c.id, type="email")
-        .filter(models.Notification.status.in_(["sent", "dry_run"]))
+        .filter(models.Notification.status == "sent")  # P24-A : exclure dry_run (simulé ≠ réel)
         .count()
     )
     last_notif = (
         db.query(models.Notification)
         .filter_by(tenant_id=c.tenant_id, recipient_contact_id=c.id, type="email")
-        .filter(models.Notification.status.in_(["sent", "dry_run"]))
+        .filter(models.Notification.status == "sent")  # P24-A : exclure dry_run (simulé ≠ réel)
         .order_by(models.Notification.created_at.desc())
         .first()
     )

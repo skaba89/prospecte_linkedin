@@ -830,6 +830,15 @@ class WebhookOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+class WebhookRotateResult(BaseModel):
+    """Résultat de la rotation du secret webhook (P24-A). secret = nouveau plaintext affiché UNE
+    SEULE FOIS — l'admin le copie chez le consumer ; non récupérable ultérieurement (chiffré au
+    repos dans secret_enc). Le consumer doit reconfigurer sa vérif X-RevPulse-Signature."""
+
+    webhook_id: str
+    secret: str
+
+
 class WebhookDeliveryOut(BaseModel):
     """Livraison d'un webhook (P18). payload = JSON envoyé (snap à l'émission)."""
 
@@ -895,9 +904,10 @@ class InboundWebhookOut(BaseModel):
 
 
 class InboundResult(BaseModel):
-    """Résultat d'une réception inbound (P20) : action created/updated, contact_id créé ou mis à
-    jour, matched_by = clé de dédup (email/linkedin_url/none pour création nette)."""
+    """Résultat d'une réception inbound (P20/P24-A) : action created/updated/duplicate (P24-A
+    idempotence — event_id déjà traité), contact_id créé ou mis à jour (None si duplicate),
+    matched_by = clé de dédup (email/linkedin_url/none/event_id)."""
 
-    action: str  # created | updated
-    contact_id: str
-    matched_by: str  # email | linkedin_url | none
+    action: str  # created | updated | duplicate (P24-A)
+    contact_id: str | None = None  # None si duplicate (P24-A)
+    matched_by: str  # email | linkedin_url | none | event_id (P24-A)

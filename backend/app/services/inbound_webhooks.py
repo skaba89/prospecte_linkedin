@@ -12,10 +12,13 @@ tenant_id/id/score/status/source). gen_token = 32 hex (128 bits), public dans l'
 au secret HMAC outbound jamais exposé).
 """
 
+import hashlib
+import json
 import logging
 import secrets as _secrets
 from datetime import datetime
 
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from .. import models
@@ -66,11 +69,38 @@ def _apply_field_map(payload: dict, field_map: dict | None) -> dict:
     return out
 
 
-def process_inbound(db: Session, *, webhook: models.InboundWebhook, payload: dict) -> dict:
+def process_inbound(db: Session, *, webhook: models.InboundWebhook, payload: dict,
+                    event_id: str | None = None) -> dict:
     """Parse le payload → crée ou met à jour un Contact. Retourne {action, contact_id, matched_by}.
     Dédup par email (normalisé) OU linkedin_url au sein du tenant. source="inbound". Pour les
     nouveaux : emit contact.created (→ outbound webhooks P18). Audit log. Ne commit pas (le router
-    commit). Best-effort sur le mapping (payload vide → 422 côté router avant cet appel)."""
+    commit). Best-effort sur le mapping (payload vide → 422 côté router avant cet appel).
+    P24-A : idempotence — si event_id fourni (header X-Webhook-Id/Webhook-Id ou payload event_id),
+    insert dans inbound_events (UniqueConstraint tenant/webhook/event_id) via SAVEPOINT ; si doublon
+    → retourne {action: 'duplicate', ...} sans retraiter (anti double-create sur retry/replay)."""
+    # P24-A : idempotence — dedup par event_id (anti double-traitement sur retry/replay sender).
+    if event_id:
+        payload_hash = hashlib.sha256(
+            json.dumps(payload, sort_keys=True, default=str).encode()
+        ).hexdigest()[:16]
+        sp = db.begin_nested()  # SAVEPOINT — rollback isolé si doublon (préserve la txn externe)
+        try:
+            db.add(models.InboundEvent(
+                tenant_id=webhook.tenant_id,
+                webhook_id=webhook.id,
+                event_id=event_id,
+                payload_hash=payload_hash,
+            ))
+            db.flush()  # déclenche IntegrityError si (tenant, webhook, event_id) existe déjà
+            sp.commit()
+        except IntegrityError:
+            sp.rollback()
+            return {
+                "action": "duplicate",
+                "contact_id": None,
+                "matched_by": "event_id",
+                "event_id": event_id,
+            }
     fields = _apply_field_map(payload, webhook.field_map)
     email = _normalize_email(fields.get("email", ""))
     linkedin_url = fields.get("linkedin_url", "")

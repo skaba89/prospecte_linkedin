@@ -23,6 +23,7 @@ from ..database import get_db
 from ..deps import get_tenant, require_permission
 from ..pagination import Page, page_dep, set_total
 from ..services import webhooks as wh_service
+from ..services.url_safety import validate_url
 
 router = APIRouter(prefix="/api/tenants/{tid}/webhooks", tags=["webhooks"])
 
@@ -63,14 +64,19 @@ def create_webhook(
         events = wh_service._validate_events(body.events)
     except ValueError as e:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(e)) from e
+    # P24-A : SSRF — valider l'URL avant de persister (bloque private/loopback/metadata/file + DNS rebinding).
+    ok, err, _ = validate_url(body.url)
+    if not ok:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, f"URL refusée (SSRF) : {err}")
     wh = models.Webhook(
         tenant_id=tid,
         url=body.url,
         events=events,
         active=body.active,
-        secret=body.secret or wh_service.gen_secret(),
+        secret="",  # P24-A : placeholder NOT NULL — le secret chiffré va dans secret_enc
         created_by=membership.user_id,
     )
+    wh_service._store_secret(wh, body.secret or wh_service.gen_secret())  # P24-A : encrypt-at-rest
     db.add(wh)
     db.flush()
     log_audit(
@@ -113,6 +119,10 @@ def update_webhook(
     wh = _get_wh(db, tid, wid)
     detail = {}
     if body.url is not None:
+        # P24-A : SSRF — valider la nouvelle URL avant de persister.
+        ok, err, _ = validate_url(body.url)
+        if not ok:
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, f"URL refusée (SSRF) : {err}")
         wh.url = body.url
         detail["url"] = body.url
     if body.events is not None:
@@ -197,6 +207,33 @@ def test_webhook(
         response_code=d.response_code,
         error=None if success else d.last_error,
     )
+
+
+@router.post("/{wid}/rotate", response_model=schemas.WebhookRotateResult)
+def rotate_secret(
+    tid: str,
+    wid: str,
+    db: Session = Depends(get_db),
+    _t: models.Tenant = Depends(get_tenant),
+    membership=Depends(require_permission("workspace.manage")),
+):
+    """Rotation du secret HMAC (P24-A) : génère un nouveau secret 32 hex, le chiffre dans secret_enc
+    (Fernet), clear l'ancien. Retourne le nouveau secret EN CLAIR (une seule fois — l'admin le copie
+    chez le consumer). Audit webhook.rotate. Le consumer doit reconfigurer sa vérif signature."""
+    wh = _get_wh(db, tid, wid)
+    new = wh_service.gen_secret()
+    wh_service._store_secret(wh, new)  # P24-A : encrypt-at-rest + clear ancien
+    log_audit(
+        db,
+        tenant_id=tid,
+        actor_user_id=membership.user_id,
+        actor_name=membership.name,
+        action="webhook.rotate",
+        target_type="webhook",
+        target_id=wh.id,
+    )
+    db.commit()
+    return schemas.WebhookRotateResult(webhook_id=wh.id, secret=new)
 
 
 @router.get("/{wid}/deliveries", response_model=list[schemas.WebhookDeliveryOut])

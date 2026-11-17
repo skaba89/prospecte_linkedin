@@ -45,6 +45,7 @@ def process_due_enrollments(db: Session) -> dict:
     due = (
         db.query(SequenceEnrollment)
         .filter(SequenceEnrollment.status == "active", SequenceEnrollment.next_step_at <= now)
+        .with_for_update(skip_locked=True)  # P24-A : lock anti double-process concurrent (PostgreSQL)
         .all()
     )
     stats = {"processed": 0, "sent": 0, "skipped": 0, "failed": 0, "completed": 0}
@@ -127,6 +128,7 @@ def process_sequence(db: Session, sequence_id: str, tenant_id: str) -> dict:
             EmailSequence.id == sequence_id,
             EmailSequence.tenant_id == tenant_id,
         )
+        .with_for_update(skip_locked=True)  # P24-A : lock anti double-process concurrent
         .all()
     )
     stats = {"processed": 0, "sent": 0, "skipped": 0, "failed": 0, "completed": 0}
@@ -185,10 +187,18 @@ def process_sequence(db: Session, sequence_id: str, tenant_id: str) -> dict:
     return stats
 
 
+# P24-A : overlap guard — lock non-bloquant pour empêcher 2 passes du scheduler de se chevaucher
+# (une passe lente > interval ne déclenche pas une 2e passe concurrente → anti double-send).
+_sched_lock = threading.Lock()
+
+
 def start_scheduler() -> None:
     """Démarre le scheduler de séquences (background thread daemon, stdlib threading — pas de
     nouvelle dep). Tourne toutes les SEQUENCE_SCHEDULER_INTERVAL_SECONDS (défaut 300s). Désactivé
-    si interval <= 0. Une boucle infinie : process_due_enrollments → sleep(interval)."""
+    si interval <= 0. P24-A : overlap guard (_sched_lock non-bloquant) — si la passe précédente est
+    encore en cours (passe lente > interval), le tick est skipé (pas de double-process). Le verrou
+    intra-process ne remplace pas le FOR UPDATE SKIP LOCKED (process_due_enrollments) ni un leader
+    election multi-workers — voir ROADMAP distributed worker (P24-B+)."""
     interval = int(os.getenv("SEQUENCE_SCHEDULER_INTERVAL_SECONDS", "300"))
     if interval <= 0:
         _log.info("Sequence scheduler disabled (SEQUENCE_SCHEDULER_INTERVAL_SECONDS=%s).", interval)
@@ -196,6 +206,10 @@ def start_scheduler() -> None:
 
     def _loop():
         while True:
+            if not _sched_lock.acquire(blocking=False):  # P24-A : overlap guard — skip si passe en cours
+                _log.debug("Sequence scheduler: passe précédente en cours — skip ce tick.")
+                time.sleep(interval)
+                continue
             db = SessionLocal()
             try:
                 process_due_enrollments(db)
@@ -204,6 +218,7 @@ def start_scheduler() -> None:
                 _log.exception("Sequence scheduler error: %s", e)
             finally:
                 db.close()
+                _sched_lock.release()
             time.sleep(interval)
 
     t = threading.Thread(target=_loop, daemon=True, name="revpulse-seq-scheduler")
