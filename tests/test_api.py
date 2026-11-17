@@ -1281,6 +1281,86 @@ ck("api_key" not in aip_upd, True, "api_key toujours non exposé après rotation
 # Cleanup P24-B : delete le provider (CASCADE generations) + pas de cleanup prompts (soft)
 call("DELETE", f"/api/tenants/tnt-demo/ai/providers/{aip['id']}", tok)
 
+# ─── P25 : 10 agents IA spécialisés + AI Copilot ──────────────────────────────
+print("=== 151. GET /ai/agents → liste des 10 agents ===")
+s, agents_list = call("GET", "/api/tenants/tnt-demo/ai/agents", tok)
+ck(s, 200, "list agents 200")
+ck(len(agents_list), 10, f"{len(agents_list)} agents (10 attendus)")
+agent_names = {a["name"] for a in agents_list}
+ck("qualification" in agent_names, True, "agent qualification présent")
+ck("linkedin" in agent_names, True, "agent linkedin présent")
+ck("performance" in agent_names, True, "agent performance présent")
+ck("synthesis" in agent_names, True, "agent synthesis présent")
+
+# Crée un contact pour les tests agents (le scénario 76 cid_score peut être nettoyé)
+s, c_p25 = call("POST", "/api/tenants/tnt-demo/crm/contacts", tok,
+                {"first_name": "AgentTest", "last_name": "P25", "email": "agent-p25@test.com",
+                 "title": "VP Sales", "company": "Acme"})
+
+print("=== 152. POST /ai/agents/qualification/run (contact_id) → 200 + simulated ===")
+s, qrun = call("POST", "/api/tenants/tnt-demo/ai/agents/qualification/run", tok,
+               {"params": {"contact_id": c_p25["id"]}})
+ck(s, 200, "qualification run 200")
+ck(qrun.get("agent"), "qualification", "run agent=qualification")
+ck(qrun.get("simulated"), True, "qualification run simulated=True (no provider configured → anti-fake)")
+ck(len(qrun.get("text", "")) > 0, True, "qualification run text généré")
+ck(qrun.get("agent_run_id") is not None, True, "agent_run_id persisté")
+
+print("=== 153. POST /ai/agents/linkedin/run (topic) → 200 + simulated ===")
+s, lrun = call("POST", "/api/tenants/tnt-demo/ai/agents/linkedin/run", tok,
+               {"params": {"topic": "Sales B2B 2026", "style": "expert terrain"}})
+ck(s, 200, "linkedin run 200")
+ck(lrun.get("agent"), "linkedin", "run agent=linkedin")
+ck(lrun.get("simulated"), True, "linkedin run simulated=True")
+
+print("=== 154. POST /ai/agents/performance/run (no params, tenant metrics) → 200 ===")
+s, prun = call("POST", "/api/tenants/tnt-demo/ai/agents/performance/run", tok, {"params": {}})
+ck(s, 200, "performance run 200")
+ck(prun.get("agent"), "performance", "run agent=performance")
+ck(len(prun.get("text", "")) > 0, True, "performance run text généré (avec metrics tenant)")
+
+print("=== 155. POST /ai/agents/research/run (icp_description) → 200 + simulated ===")
+s, rrun = call("POST", "/api/tenants/tnt-demo/ai/agents/research/run", tok,
+               {"params": {"icp_description": "SaaS B2B mid-market Europe, 50-500 employés"}})
+ck(s, 200, "research run 200")
+ck(rrun.get("agent"), "research", "run agent=research")
+ck(rrun.get("simulated"), True, "research run simulated=True")
+
+print("=== 156. POST /ai/copilot/chat 'qualifie ce prospect' → routed_agent=qualification ===")
+s, chat1 = call("POST", "/api/tenants/tnt-demo/ai/copilot/chat", tok,
+                {"message": "Qualifie ce prospect pour moi", "params": {"contact_id": c_p25["id"]}})
+ck(s, 200, "copilot chat 200")
+ck(chat1.get("routed_agent"), "qualification", "copilot route 'qualifie' → qualification")
+ck(chat1.get("simulated"), True, "copilot result simulated=True (propagé depuis agent)")
+ck(len(chat1.get("suggestions", [])) >= 1, True, f"copilot suggestions ({len(chat1.get('suggestions', []))})")
+
+print("=== 157. POST /ai/copilot/chat 'rédige un post linkedin' → routed_agent=linkedin ===")
+s, chat2 = call("POST", "/api/tenants/tnt-demo/ai/copilot/chat", tok,
+                {"message": "Rédige un post linkedin sur le sales B2B"})
+ck(s, 200, "copilot chat 2 200")
+ck(chat2.get("routed_agent"), "linkedin", "copilot route 'linkedin' → linkedin")
+
+print("=== 158. POST /ai/copilot/chat 'bonjour' (no match) → routed_agent=None + no_route ===")
+s, chat3 = call("POST", "/api/tenants/tnt-demo/ai/copilot/chat", tok, {"message": "bonjour comment ça va"})
+ck(s, 200, "copilot chat no-route 200")
+ck(chat3.get("routed_agent"), None, "copilot no match → routed_agent=None")
+ck(chat3.get("status"), "no_route", "copilot no match → status=no_route")
+
+print("=== 159. POST /ai/agents/unknown/run → 404 ===")
+s, _ = call("POST", "/api/tenants/tnt-demo/ai/agents/unknown_agent/run", tok, {"params": {}})
+ck(s, 404, "agent inconnu → 404")
+
+print("=== 160. GET /ai/agents/runs → historique (>=3 runs) ===")
+s, runs = call("GET", "/api/tenants/tnt-demo/ai/agents/runs", tok)
+ck(s, 200, "list agent runs 200")
+ck(len(runs) >= 3, True, f"{len(runs)} runs historisés (>=3 : qualif + linkedin + perf + research + copilot)")
+run_agents = {r["agent"] for r in runs}
+ck("qualification" in run_agents, True, "historique : qualification run présent")
+ck("linkedin" in run_agents, True, "historique : linkedin run présent")
+ck("performance" in run_agents, True, "historique : performance run présent")
+# Cleanup P25 : delete le contact créé
+call("DELETE", f"/api/tenants/tnt-demo/crm/contacts/{c_p25['id']}", tok)
+
 print()
 print(f"RESULT: {passed} passed, {failed} failed")
 sys.exit(0 if failed == 0 else 1)
