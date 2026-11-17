@@ -104,6 +104,8 @@ jobs:
         run: python tests/test_p35_job_search.py
       - name: P36 Career matching intelligent (score hybride 6 critères + missing skills + eliminatory + disclaimer)
         run: python tests/test_p36_matching.py
+      - name: P37 Career CV adaptatif (versions ciblées par offre + anti-invention + PDF/Word)
+        run: python tests/test_p37_cv_adaptatif.py
 
   test-api:
     name: API tests (sqlite, sans docker)

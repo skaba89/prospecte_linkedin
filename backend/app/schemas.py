@@ -1632,3 +1632,31 @@ class MatchingSearchRequest(BaseModel):
     location: str | None = None
     source: str | None = None
     limit: int = Field(default=20, ge=1, le=50)
+
+
+# ─── P37 — Career : CV adaptatif (versions ciblées par offre, anti-invention) ──
+
+
+class AdaptCVRequest(BaseModel):
+    """Requête d'adaptation de CV (P37). posting_id = offre cible (si adaptation pour une offre spécifique).
+    Si posting_id omis : target_job_title + target_company (critères libres). Le CV source est adapté
+    via cv_adapter.adapt_cv (réordonne skills par pertinence + sélectionne expériences + summary ciblé).
+    Invariant P37 : n'ajoute QUE ce qui est dans le CV source (anti-invention vérifié runtime)."""
+    posting_id: str | None = None  # None → critères libres (target_job_title requis)
+    target_job_title: str | None = Field(default=None, max_length=200)
+    target_company: str | None = Field(default=None, max_length=200)
+
+
+class AdaptedCVOut(BaseModel):
+    """CV adapté (P37). adapted_data = structure adaptée (targeted_title/summary/reordered_skills/
+    selected_experiences/matched_certifications/missing_skills/match_score). match_score = score P36."""
+    id: str
+    cv_source_id: str
+    career_profile_id: str
+    posting_id: str | None = None
+    target_job_title: str | None = None
+    target_company: str | None = None
+    adapted_data: dict
+    match_score: float | None = None
+    created_at: datetime
+    model_config = ConfigDict(from_attributes=True)
