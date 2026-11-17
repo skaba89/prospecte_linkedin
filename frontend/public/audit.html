@@ -1,0 +1,249 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>RevPulse Audit & Compliance</title>
+<style>
+  :root{--bg:#0a0e1a;--panel:#131826;--panel2:#1a2030;--border:#232a3d;--text:#e5e7eb;--muted:#8b95a8;
+        --accent:#635bff;--accent2:#0a66c2;--ok:#10b981;--warn:#f59e0b;--err:#ef4444;--grad:linear-gradient(135deg,#635bff,#0a66c2)}
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:var(--bg);color:var(--text);min-height:100vh}
+  a{color:var(--accent);text-decoration:none}
+  .topbar{display:flex;align-items:center;gap:16px;padding:14px 24px;background:var(--panel);border-bottom:1px solid var(--border);position:sticky;top:0;z-index:10}
+  .topbar h1{font-size:18px;font-weight:700;background:var(--grad);-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent}
+  .topbar .sub{color:var(--muted);font-size:13px}
+  .topbar .spacer{flex:1}
+  .topbar a{font-size:13px;padding:6px 12px;border:1px solid var(--border);border-radius:8px}
+  .topbar a:hover{background:var(--panel2)}
+  .wrap{max-width:1200px;margin:0 auto;padding:24px}
+  .login{max-width:380px;margin:80px auto;background:var(--panel);border:1px solid var(--border);border-radius:14px;padding:24px}
+  .login h2{margin-bottom:12px;font-size:16px}
+  .login p{color:var(--muted);font-size:13px;margin-bottom:14px}
+  .login button{width:100%;padding:10px;margin-top:8px;background:var(--grad);color:#fff;border:none;border-radius:8px;font-weight:600;cursor:pointer;font-size:14px}
+  .head{display:flex;align-items:center;gap:12px;margin-bottom:16px;flex-wrap:wrap}
+  .head h2{font-size:20px;flex:1}
+  .btn{padding:8px 14px;background:var(--grad);color:#fff;border:none;border-radius:8px;font-weight:600;cursor:pointer;font-size:13px}
+  .btn.sec{background:var(--panel2);border:1px solid var(--border)}
+  .btn.sm{padding:5px 10px;font-size:12px}
+  .card{background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:18px;margin-bottom:16px}
+  .card h3{font-size:14px;margin-bottom:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px}
+  .filters{display:grid;grid-template-columns:repeat(5,1fr);gap:10px;align-items:end}
+  @media(max-width:760px){.filters{grid-template-columns:1fr 1fr}}
+  label{font-size:11px;color:var(--muted);display:block;margin-bottom:4px}
+  input,select{width:100%;padding:7px;border:1px solid var(--border);border-radius:8px;background:var(--panel2);color:var(--text);font-size:13px;font-family:inherit}
+  .stats-grid{display:grid;grid-template-columns:1fr 2fr 2fr;gap:14px}
+  @media(max-width:760px){.stats-grid{grid-template-columns:1fr}}
+  .stat-total{display:flex;flex-direction:column;justify-content:center;align-items:center;text-align:center}
+  .stat-total .num{font-size:32px;font-weight:700;background:var(--grad);-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent}
+  .stat-total .lbl{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-top:4px}
+  .badge-list{display:flex;flex-wrap:wrap;gap:6px}
+  .badge{display:inline-flex;align-items:center;gap:6px;padding:4px 10px;border-radius:8px;font-size:12px;background:var(--panel2);border:1px solid var(--border)}
+  .badge .count{font-weight:700;color:var(--accent)}
+  .badge .label{color:var(--text);font-family:monospace;font-size:11px}
+  table{width:100%;border-collapse:collapse;font-size:12px}
+  th,td{text-align:left;padding:8px 10px;border-bottom:1px solid var(--border);vertical-align:top}
+  th{color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.5px;position:sticky;top:0;background:var(--panel)}
+  td.action{font-family:monospace;color:var(--accent);font-size:11px;white-space:nowrap}
+  td.ts{color:var(--muted);font-size:11px;white-space:nowrap}
+  td.detail{font-family:monospace;font-size:11px;color:var(--muted);max-width:320px;word-break:break-all;cursor:pointer}
+  td.detail:hover{color:var(--text)}
+  .pill{display:inline-block;padding:1px 6px;border-radius:4px;font-size:10px;font-weight:600;background:rgba(99,91,255,.15);color:var(--accent)}
+  .empty{color:var(--muted);text-align:center;padding:24px;font-size:13px}
+  .pager{display:flex;justify-content:space-between;align-items:center;margin-top:14px;font-size:12px;color:var(--muted)}
+  .info{font-size:12px;color:var(--muted);line-height:1.6;margin-bottom:14px}
+  .info code{background:var(--panel2);padding:1px 5px;border-radius:4px;color:var(--accent);font-size:11px}
+</style>
+</head>
+<body>
+<div class="topbar">
+  <h1>RevPulse Audit & Compliance</h1>
+  <span class="sub" id="tenant-name"></span>
+  <div class="spacer"></div>
+  <a href="index.html">← Dashboard</a>
+  <a href="crm.html">CRM</a>
+  <a href="webhooks.html">Webhooks</a>
+  <a href="inbound.html">Inbound</a>
+</div>
+
+<div class="wrap" id="content" style="display:none">
+  <div class="info">
+    <b>Audit & compliance (P21)</b> — trace immuable des actions mutantes du tenant (qui a fait quoi, quand).
+    Inclut les actions CRM (<code>crm.contact.create</code>), webhooks (<code>webhook.create</code>, <code>inbound.contact_created</code>),
+    approbations, séquences, etc. Filtrage par préfixe d'action, acteur, type de cible, plage de dates. Export CSV pour conformité.
+  </div>
+
+  <div class="card">
+    <h3>Filtres</h3>
+    <div class="filters">
+      <div><label>Action (préfixe)</label><input id="f-action" placeholder="crm.contact" list="actions-list"></div>
+      <div><label>Acteur (user id)</label><input id="f-actor" placeholder="usr_xxx"></div>
+      <div><label>Type cible</label><input id="f-target" placeholder="contact" list="targets-list"></div>
+      <div><label>Depuis</label><input type="datetime-local" id="f-since"></div>
+      <div><label>Jusqu'à</label><input type="datetime-local" id="f-until"></div>
+    </div>
+    <datalist id="actions-list">
+      <option value="crm.contact"><option value="crm.opportunity"><option value="crm.company">
+      <option value="webhook"><option value="inbound"><option value="sequence">
+      <option value="approval"><option value="member"><option value="content">
+    </datalist>
+    <datalist id="targets-list">
+      <option value="contact"><option value="opportunity"><option value="company">
+      <option value="webhook"><option value="inbound_webhook"><option value="sequence">
+      <option value="segment"><option value="tenant">
+    </datalist>
+    <div style="margin-top:12px;display:flex;gap:8px">
+      <button class="btn sm" onclick="applyFilters()">Appliquer</button>
+      <button class="btn sm sec" onclick="resetFilters()">Réinitialiser</button>
+      <button class="btn sm sec" onclick="exportCsv()">⬇ Export CSV</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <h3>Résumé compliance</h3>
+    <div class="stats-grid" id="stats-grid"></div>
+  </div>
+
+  <div class="card">
+    <h3>Trace des actions <span id="total-hint" style="color:var(--muted);font-weight:400;text-transform:none"></span></h3>
+    <table>
+      <thead><tr><th>Horodatage</th><th>Acteur</th><th>Action</th><th>Cible</th><th>ID cible</th><th>Détail</th></tr></thead>
+      <tbody id="audit-rows"></tbody>
+    </table>
+    <div id="audit-empty" class="empty" style="display:none">Aucune entrée audit pour ces filtres.</div>
+    <div class="pager">
+      <span id="page-info"></span>
+      <span><button class="btn sm sec" id="prev-btn" onclick="changePage(-1)">← Précédent</button> <button class="btn sm sec" id="next-btn" onclick="changePage(1)">Suivant →</button></span>
+    </div>
+  </div>
+</div>
+
+<div class="login" id="login" style="display:none">
+  <h2>Accès Audit</h2>
+  <p>Connecte-toi au dashboard RevPulse pour consulter la trace d'audit, ou utilise le compte démo (Owner).</p>
+  <button onclick="demoLogin()">Connexion démo</button>
+</div>
+
+<script>
+const API = (location.protocol === 'https:' ? 'https://' : 'http://') + location.host + '/api';
+let TOK = localStorage.getItem('revpulse_jwt');
+let TID = null;
+try { const s = JSON.parse(localStorage.getItem('revpulse_session') || '{}'); TID = s.activeTenantId; } catch(e){}
+const PAGE_SIZE = 25;
+let skip = 0;
+let total = 0;
+
+function esc(s){ return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])) }
+function fmtDate(iso){ if(!iso) return '—'; try { return new Date(iso).toLocaleString('fr-FR', {dateStyle:'short', timeStyle:'medium'}); } catch(e){ return iso } }
+function toISO(val){ if(!val) return null; try { return new Date(val).toISOString(); } catch(e){ return null } }
+
+async function api(method, path){
+  const opts = {method, headers: {'Authorization': 'Bearer ' + TOK, 'Content-Type': 'application/json'}};
+  try { const r = await fetch(API + path, opts); const total = r.headers.get('X-Total-Count'); let d; try { d = await r.json() } catch(e){ d = null } return {status: r.status, data: d, total: parseInt(total||'0')}; }
+  catch(e){ return {status: 0, data: null, total: 0}; }
+}
+
+async function demoLogin(){
+  const r = await fetch(API + '/auth/demo', {method:'POST'});
+  if(!r.ok){ alert('Login démo échoué'); return; }
+  const d = await r.json();
+  TOK = d.token; localStorage.setItem('revpulse_jwt', TOK);
+  const ts = await fetch(API + '/tenants', {headers:{'Authorization':'Bearer '+TOK}});
+  const tenants = await ts.json();
+  TID = tenants[0]?.id;
+  if(TID){ localStorage.setItem('revpulse_session', JSON.stringify({activeTenantId: TID})); init(); }
+}
+
+function buildQuery(){
+  const params = new URLSearchParams();
+  params.set('skip', skip); params.set('limit', PAGE_SIZE);
+  const a = document.getElementById('f-action').value.trim();
+  const ac = document.getElementById('f-actor').value.trim();
+  const tg = document.getElementById('f-target').value.trim();
+  const si = toISO(document.getElementById('f-since').value);
+  const un = toISO(document.getElementById('f-until').value);
+  if(a) params.set('action', a);
+  if(ac) params.set('actor_user_id', ac);
+  if(tg) params.set('target_type', tg);
+  if(si) params.set('since', si);
+  if(un) params.set('until', un);
+  return params.toString();
+}
+
+function init(){
+  if(!TOK || !TID){ document.getElementById('login').style.display='block'; return; }
+  document.getElementById('login').style.display='none';
+  document.getElementById('content').style.display='block';
+  document.getElementById('tenant-name').textContent = 'Tenant: ' + TID;
+  loadStats();
+  loadAudit();
+}
+
+async function loadStats(){
+  const {status, data} = await api('GET', '/tenants/' + TID + '/audit/stats');
+  const el = document.getElementById('stats-grid');
+  if(status !== 200 || !data){ el.innerHTML = '<div class="empty">Stats indisponibles</div>'; return; }
+  const actions = (data.by_action || []).map(b => `<span class="badge"><span class="count">${b.count}</span><span class="label">${esc(b.label)}</span></span>`).join('');
+  const actors = (data.by_actor || []).map(b => `<span class="badge"><span class="count">${b.count}</span><span class="label">${esc(b.label)}</span></span>`).join('');
+  el.innerHTML = `
+    <div class="stat-total"><div class="num">${data.total}</div><div class="lbl">actions tracées</div></div>
+    <div><div style="font-size:11px;color:var(--muted);margin-bottom:8px">Top actions</div><div class="badge-list">${actions || '<span class="empty">—</span>'}</div></div>
+    <div><div style="font-size:11px;color:var(--muted);margin-bottom:8px">Top acteurs</div><div class="badge-list">${actors || '<span class="empty">—</span>'}</div></div>`;
+}
+
+async function loadAudit(){
+  const {status, data, total: t} = await api('GET', '/tenants/' + TID + '/audit?' + buildQuery());
+  total = t;
+  const rows = document.getElementById('audit-rows');
+  const empty = document.getElementById('audit-empty');
+  document.getElementById('total-hint').textContent = '(' + total + ' entrées filtrées)';
+  if(status !== 200 || !Array.isArray(data) || data.length === 0){
+    rows.innerHTML = ''; empty.style.display = 'block';
+  } else {
+    empty.style.display = 'none';
+    rows.innerHTML = data.map(r => `
+      <tr>
+        <td class="ts">${esc(fmtDate(r.created_at))}</td>
+        <td>${esc(r.actor_name || '—')}<br><span style="font-size:10px;color:var(--muted)">${esc(r.actor_user_id || 'système')}</span></td>
+        <td class="action">${esc(r.action)}</td>
+        <td>${r.target_type ? `<span class="pill">${esc(r.target_type)}</span>` : '—'}</td>
+        <td style="font-family:monospace;font-size:11px;color:var(--muted)">${esc(r.target_id || '—')}</td>
+        <td class="detail" onclick="alert(this.dataset.full)" data-full='${esc(JSON.stringify(r.detail, null, 2))}'>${esc(JSON.stringify(r.detail).slice(0, 80))}${JSON.stringify(r.detail).length > 80 ? '…' : ''}</td>
+      </tr>`).join('');
+  }
+  updatePager();
+}
+
+function updatePager(){
+  const page = Math.floor(skip / PAGE_SIZE) + 1;
+  const pages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+  document.getElementById('page-info').textContent = `Page ${page} / ${pages} — ${total} entrées`;
+  document.getElementById('prev-btn').disabled = skip === 0;
+  document.getElementById('next-btn').disabled = skip + PAGE_SIZE >= total;
+}
+
+function applyFilters(){ skip = 0; loadAudit(); }
+function resetFilters(){ ['f-action','f-actor','f-target','f-since','f-until'].forEach(id => document.getElementById(id).value = ''); skip = 0; loadAudit(); }
+function changePage(dir){ skip = Math.max(0, skip + dir * PAGE_SIZE); loadAudit(); }
+
+function exportCsv(){
+  // Export avec les filtres courants (sans pagination) — déclenche un download direct
+  const q = buildQuery().replace(/skip=\d+&limit=\d+&?/, '');
+  const url = API + '/tenants/' + TID + '/audit/export' + (q ? '?' + q : '');
+  // Token en header : fetch puis blob (Content-Disposition ne marche pas cross-origin avec Authorization header)
+  fetch(url, {headers: {'Authorization': 'Bearer ' + TOK}})
+    .then(r => r.blob())
+    .then(b => {
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(b);
+      a.download = 'audit_' + TID + '.csv';
+      a.click();
+      URL.revokeObjectURL(a.href);
+    })
+    .catch(e => alert('Export échoué: ' + e.message));
+}
+
+init();
+</script>
+</body>
+</html>

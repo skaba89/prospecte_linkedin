@@ -249,6 +249,25 @@ class AuditLogOut(BaseModel):
     created_at: datetime | None = None
 
 
+# ---- P21 : Audit & compliance UI (stats + filtres + export) ----
+class AuditCountItem(BaseModel):
+    """Item de comptage agrégé (P21) : label (action ou actor_name) + nombre d'occurrences.
+    Utilisé dans AuditStatsOut.by_action / by_actor (top N trié décroissant)."""
+
+    label: str
+    count: int
+
+
+class AuditStatsOut(BaseModel):
+    """Stats agrégées de l'audit (P21) : total des entrées du tenant + top actions (group by
+    action) + top acteurs (group by actor_name). Supporte le résumé compliance du dashboard
+    audit.html (badges « 47 actions, top: crm.contact.create (12), webhook.create (3)…»)."""
+
+    total: int
+    by_action: list[AuditCountItem]
+    by_actor: list[AuditCountItem]
+
+
 # ---- P11 : CRM & prospection ----
 class CompanyCreate(BaseModel):
     name: str = Field(min_length=1, max_length=120)

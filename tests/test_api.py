@@ -861,6 +861,53 @@ ck(s, 422, "field_map ciblant tenant_id → 422 (anti-injection)")
 # Cleanup
 call("DELETE", f"/api/tenants/tnt-demo/inbound-webhooks/{ibw2['id']}", tok)
 
+# ─── P21 : Audit & compliance UI (filtres + stats + export) ────────────────────
+print("=== 100. GET /audit/stats (total + by_action + by_actor) ===")
+s, stats = call("GET", "/api/tenants/tnt-demo/audit/stats", tok)
+ck(s, 200, "audit stats 200")
+ck(stats.get("total", 0) > 0, True, "stats.total > 0 (actions tracées par les scénarios précédents)")
+ck(len(stats.get("by_action", [])) > 0, True, "stats.by_action non vide (top actions)")
+ck(len(stats.get("by_actor", [])) > 0, True, "stats.by_actor non vide (top acteurs)")
+ck(all("label" in b and "count" in b for b in stats.get("by_action", [])), True, "by_action items {label, count}")
+_stats_total = stats["total"]
+
+print("=== 101. GET /audit (liste paginée, non vide) ===")
+s, audit_list = call("GET", "/api/tenants/tnt-demo/audit", tok)
+ck(s, 200, "audit list 200")
+ck(len(audit_list) > 0, True, "audit list non vide")
+
+print("=== 102. GET /audit?action=crm.contact (prefix filter) ===")
+s, filtered = call("GET", "/api/tenants/tnt-demo/audit?action=crm.contact", tok)
+ck(s, 200, "audit action filter 200")
+ck(len(filtered) > 0, True, "audit crm.contact non vide")
+ck(all(a["action"].startswith("crm.contact") for a in filtered), True, "toutes les actions commencent par crm.contact (prefix LIKE)")
+
+print("=== 103. GET /audit?target_type=contact (exact filter) ===")
+s, tfilt = call("GET", "/api/tenants/tnt-demo/audit?target_type=contact", tok)
+ck(s, 200, "audit target_type filter 200")
+ck(all(a["target_type"] == "contact" for a in tfilt), True, "toutes les cibles = contact (exact match)")
+
+print("=== 104. GET /audit?since=future (→ liste vide) ===")
+s, future = call("GET", "/api/tenants/tnt-demo/audit?since=2099-01-01T00:00:00", tok)
+ck(s, 200, "audit since=future 200")
+ck(len(future), 0, "since=future → 0 entrées (borne supérieure non atteinte)")
+
+print("=== 105. GET /audit/export (CSV, content-type + header) ===")
+import urllib.request as _urq
+_req = _urq.Request(BASE + "/api/tenants/tnt-demo/audit/export", headers={"Authorization": f"Bearer {tok}"})
+with _urq.urlopen(_req, timeout=10) as _r:
+    _csv_status = _r.status
+    _csv_ct = _r.headers.get("Content-Type", "")
+    _csv_body = _r.read().decode("utf-8")
+ck(_csv_status, 200, "export CSV 200")
+ck("text/csv" in _csv_ct, True, "export Content-Type text/csv")
+ck(_csv_body.startswith("created_at,actor_name"), True, "export CSV header row (created_at,actor_name,…)")
+ck("crm.contact" in _csv_body or "webhook" in _csv_body or "inbound" in _csv_body, True, "export CSV contient des actions tracées")
+
+print("=== 106. GET /audit/stats RBAC (non-member → 403) ===")
+s, _ = call("GET", "/api/tenants/tnt-demo/audit/stats", ptok)
+ck(s, 403, "non-member → 403 sur audit/stats (workspace.manage)")
+
 print()
 print(f"RESULT: {passed} passed, {failed} failed")
 sys.exit(0 if failed == 0 else 1)
