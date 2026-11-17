@@ -1665,6 +1665,61 @@ ck(cfg_p32.get("base_url"), "https://api.openai.com/v1", "base_url publique pers
 # Cleanup P32 : delete le provider config créé.
 call("DELETE", f"/api/tenants/tnt-demo/ai/providers/{cfg_p32['id']}", tok)
 
+# ─── P34 : Career — référentiel métiers + CV (user-scoped, isolation du Business) ───
+print("=== 198. PUT /api/career/profile (upsert) → 200 ===")
+s, profile = call("PUT", "/api/career/profile", tok,
+                  {"target_job_title": "Product Owner", "preferred_location": "Paris, France",
+                   "mobility": True, "contract_types": ["CDI", "freelance"],
+                   "salary_min": 60000, "salary_max": 80000, "tjm_min": 500,
+                   "currency": "EUR", "languages": ["fr", "en"]})
+ck(s, 200, "career profile upsert 200")
+ck(profile.get("target_job_title"), "Product Owner", "profile.target_job_title")
+ck(profile.get("user_id"), profile.get("user_id", ""), "profile.user_id présent (isolation — pas tenant_id)")
+
+print("=== 199. GET /api/career/profile → 200 ===")
+s, profile2 = call("GET", "/api/career/profile", tok)
+ck(s, 200, "career profile get 200")
+ck(profile2.get("id"), profile["id"], "profile id cohérent")
+
+print("=== 200. POST /api/career/cv/text (import CV) → 201 ===")
+s, cv = call("POST", "/api/career/cv/text", tok,
+             {"title": "CV PO E2E 2026", "locale": "fr",
+              "text": "Sophie Martin — Product Owner\nParis\n\nExpérience\n- Product Owner chez TechCorp : agile, scrum, python, sql\n- Business Analyst : excel, tableau\n\nCompétences\n- Python, SQL, Agile, Scrum, Leadership, communication\n\nFormation\n- Master MIAGE\n\nCertifications\n- PSM I"})
+ck(s, 201, "career cv import text 201")
+ck(cv.get("source_type"), "text", "cv.source_type=text")
+ck(cv.get("is_active"), True, "cv.is_active=True (auto-activé)")
+ck(cv.get("version"), 1, f"cv.version={cv.get('version')} (1er)")
+parsed = cv.get("parsed_data", {})
+ck(parsed.get("heuristic"), True, "parsed_data.heuristic=True")
+ck("python" in parsed.get("skills", []), True, f"parse_cv skills contient python : {parsed.get('skills', [])[:5]}")
+
+print("=== 201. GET /api/career/cv (list) → 200 (>=1) ===")
+s, cvs = call("GET", "/api/career/cv", tok)
+ck(s, 200, "career cv list 200")
+ck(len(cvs) >= 1, True, f"{len(cvs)} CV (>=1)")
+
+print("=== 202. GET /api/career/cv/{id} → 200 ===")
+s, cv_detail = call("GET", f"/api/career/cv/{cv['id']}", tok)
+ck(s, 200, "career cv detail 200")
+ck(cv_detail.get("id"), cv["id"], "cv detail id cohérent")
+
+print("=== 203. POST /api/career/cv/{id}/activate → 200 ===")
+s, cv_act = call("POST", f"/api/career/cv/{cv['id']}/activate", tok, {})
+ck(s, 200, "career cv activate 200")
+ck(cv_act.get("is_active"), True, "cv activé is_active=True")
+
+print("=== 204. GET /api/career/cv/{id}/transferrable → 200 ===")
+s, transf = call("GET", f"/api/career/cv/{cv['id']}/transferrable", tok)
+ck(s, 200, "career transferrable 200")
+ck(isinstance(transf.get("transferrable_skills"), list), True, "transferrable_skills = list")
+ck("leadership" in transf.get("transferrable_skills", []), True, f"transferrable contient leadership : {transf.get('transferrable_skills', [])}")
+
+print("=== 205. GET /api/career/referential/jobs?category=data → 200 (>=3) ===")
+s, jobs = call("GET", "/api/career/referential/jobs?category=data", tok)
+ck(s, 200, "referential jobs 200")
+ck(len(jobs) >= 3, True, f"{len(jobs)} métiers data (>=3 — Data Scientist/Engineer/Analyst)")
+ck(any("Data Scientist" in j.get("label", "") for j in jobs), True, "contient Data Scientist")
+
 print()
 print(f"RESULT: {passed} passed, {failed} failed")
 sys.exit(0 if failed == 0 else 1)

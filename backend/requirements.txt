@@ -13,3 +13,5 @@ prometheus-client==0.24.1
 openpyxl==3.1.5
 python-multipart==0.0.33
 httpx==0.28.1  # P24-B : AI Gateway (appels REST aux providers IA — OpenAI/Anthropic/Gemini/etc.)
+pdfminer.six==20260107  # P34 : extraction texte PDF (import CV)
+python-docx==1.2.0  # P34 : extraction texte Word .docx (import CV)
