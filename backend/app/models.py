@@ -957,3 +957,31 @@ class SavedSearch(Base):
     last_run_postings_count = Column(Integer, default=0, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+
+# ─── P37 — Career : CV adaptatif (génération versions ciblées par offre) ──────
+
+
+class AdaptedCV(Base):
+    """CV adapté à une offre cible (P37). Généré à partir d'un CV source (cv_source_id FK CASCADE) via
+    cv_adapter.adapt_cv : réordonne les skills par pertinence (P36 matching), sélectionne les expériences
+    les plus alignées, génère un résumé objectif ciblé. posting_id FK nullable (si adaptation pour une
+    offre spécifique) OU NULL (adaptation pour critères libres).
+
+    Invariant P37 (anti-invention) : adapted_data ne contient QUE du contenu issu du CV source (réordonné,
+    sélectionné, résumé). JAMAIS d'invention de skills/expériences/certifications. Le résumé est construit
+    à partir des keywords du CV (pas généré de toutes pièces). Vérifié par cv_adapter._assert_no_invention.
+
+    adapted_data structure : {targeted_title, summary, reordered_skills, selected_experiences,
+    matched_certifications, missing_skills, match_score}. Téléchargeable en PDF/Word via cv_generator."""
+
+    __tablename__ = "adapted_cvs"
+    id = Column(String, primary_key=True, default=lambda: _uid("acv"))
+    cv_source_id = Column(String, ForeignKey("cvs.id", ondelete="CASCADE"), nullable=False, index=True)
+    career_profile_id = Column(String, ForeignKey("career_profiles.id", ondelete="CASCADE"), nullable=False, index=True)
+    posting_id = Column(String, ForeignKey("job_postings.id", ondelete="SET NULL"), nullable=True, index=True)
+    target_job_title = Column(String, nullable=True)  # poste visé (posting.title OU criteria)
+    target_company = Column(String, nullable=True)  # entreprise cible (posting.company OU criteria)
+    adapted_data = Column(JSONType, nullable=False)  # structure adaptée (anti-invention)
+    match_score = Column(Float, nullable=True)  # score P36 matching (référence)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)

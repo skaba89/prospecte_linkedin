@@ -110,7 +110,7 @@ ck('@router.get("/saved-searches"' in rtr_src, True, "GET /saved-searches (list)
 ck('@router.post("/saved-searches"' in rtr_src, True, "POST /saved-searches (create)")
 ck('@router.post("/saved-searches/{search_id}/run"' in rtr_src, True, "POST /saved-searches/{id}/run (execute)")
 ck('@router.delete("/saved-searches/{search_id}"' in rtr_src, True, "DELETE /saved-searches/{id}")
-ck("from ..services import career_cv, career_referential, job_search" in rtr_src, True, "import job_search")
+ck(("from ..services import" in rtr_src and "job_search" in rtr_src), True, "import job_search")
 ck("from ..services.job_connectors import SearchCriteria, list_connectors" in rtr_src, True, "import job_connectors")
 
 # ─── Source : schemas.py (P35 schemas) ───────────────────────────────────────

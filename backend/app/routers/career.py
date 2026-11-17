@@ -24,14 +24,17 @@ Sécurité (P34) :
   - Extraction heuristique v1 (parsed_data.heuristic=True) — pas présentée comme ML/NLP parfait.
   - n'invente JAMAIS de compétence (P37 invariant) — parse_cv n'ajoute que ce qui est dans le texte.
 """
+import io
+
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
+from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
 from .. import models, schemas
 from ..audit import log_audit
 from ..database import get_db
 from ..deps import get_current_user
-from ..services import career_cv, career_referential, job_search, matching
+from ..services import career_cv, career_referential, cv_adapter, cv_generator, job_search, matching
 from ..services.job_connectors import SearchCriteria, list_connectors
 
 router = APIRouter(prefix="/api/career", tags=["career"])
@@ -442,3 +445,103 @@ def matching_search(
         ))
     results.sort(key=lambda r: r.total_score, reverse=True)
     return results
+
+
+# ─── P37 : CV adaptatif (versions ciblées par offre, anti-invention) ──────────
+
+
+@router.post("/cv/{cv_id}/adapt", response_model=schemas.AdaptedCVOut, status_code=status.HTTP_201_CREATED)
+def adapt_cv(
+    cv_id: str,
+    body: schemas.AdaptCVRequest,
+    db: Session = Depends(get_db),
+    user: models.User = Depends(get_current_user),
+):
+    """Adapte le CV à une offre cible (P37). Réordonne skills par pertinence + sélectionne expériences
+    alignées + summary ciblé. Invariant P37 : n'ajoute QUE ce qui est dans le CV source (anti-invention
+    vérifié en runtime par cv_adapter._assert_no_invention). posting_id OU target_job_title requis."""
+    profile = _get_or_404_profile(db, user.id)
+    cv = db.query(models.CV).filter_by(id=cv_id, career_profile_id=profile.id).first()
+    if not cv:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "CV introuvable (isolation profil).")
+    posting = None
+    target_title = body.target_job_title
+    target_company = body.target_company
+    if body.posting_id:
+        posting = db.query(models.JobPosting).filter_by(id=body.posting_id).first()
+        if not posting:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "Offre cible introuvable.")
+        target_title = target_title or posting.title
+        target_company = target_company or posting.company
+    elif not target_title:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "posting_id OU target_job_title requis.")
+    adapted_data = cv_adapter.adapt_cv(cv, posting, profile)
+    adapted_data["targeted_title"] = target_title or adapted_data.get("targeted_title")
+    acv = models.AdaptedCV(
+        cv_source_id=cv.id, career_profile_id=profile.id,
+        posting_id=body.posting_id, target_job_title=target_title, target_company=target_company,
+        adapted_data=adapted_data, match_score=adapted_data.get("match_score"),
+    )
+    db.add(acv)
+    db.commit()
+    db.refresh(acv)
+    log_audit(db, tenant_id="career", actor_user_id=user.id, actor_name=user.name,
+              action="career.cv.adapt", target_type="adapted_cv", target_id=acv.id,
+              detail={"cv_source_id": cv.id, "posting_id": body.posting_id, "match_score": acv.match_score})
+    db.commit()
+    db.refresh(acv)
+    return acv
+
+
+@router.get("/cv-adapted", response_model=list[schemas.AdaptedCVOut])
+def list_adapted_cvs(
+    db: Session = Depends(get_db),
+    user: models.User = Depends(get_current_user),
+):
+    """Liste les CV adaptés du candidat (historique des adaptations générées)."""
+    profile = _get_or_404_profile(db, user.id)
+    return db.query(models.AdaptedCV).filter_by(career_profile_id=profile.id).order_by(
+        models.AdaptedCV.created_at.desc()).all()
+
+
+@router.get("/cv-adapted/{adapted_id}", response_model=schemas.AdaptedCVOut)
+def get_adapted_cv(
+    adapted_id: str,
+    db: Session = Depends(get_db),
+    user: models.User = Depends(get_current_user),
+):
+    """Récupère un CV adapté par id (isolation : career_profile_id vérifié)."""
+    profile = _get_or_404_profile(db, user.id)
+    acv = db.query(models.AdaptedCV).filter_by(id=adapted_id, career_profile_id=profile.id).first()
+    if not acv:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "CV adapté introuvable.")
+    return acv
+
+
+@router.get("/cv-adapted/{adapted_id}/download")
+def download_adapted_cv(
+    adapted_id: str,
+    format: str = "pdf",  # pdf|docx
+    db: Session = Depends(get_db),
+    user: models.User = Depends(get_current_user),
+):
+    """Télécharge le CV adapté en PDF ou Word (.docx). format=pdf (default) ou docx.
+    Le fichier est généré à la volée (cv_generator) à partir de adapted_data — pas de stockage fichier."""
+    if format not in ("pdf", "docx"):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "format doit être 'pdf' ou 'docx'.")
+    profile = _get_or_404_profile(db, user.id)
+    acv = db.query(models.AdaptedCV).filter_by(id=adapted_id, career_profile_id=profile.id).first()
+    if not acv:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "CV adapté introuvable.")
+    cv = db.query(models.CV).filter_by(id=acv.cv_source_id).first()
+    if format == "pdf":
+        content = cv_generator.generate_pdf(acv.adapted_data, profile, cv)
+        media = "application/pdf"
+        ext = "pdf"
+    else:
+        content = cv_generator.generate_docx(acv.adapted_data, profile, cv)
+        media = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        ext = "docx"
+    filename = f"cv_adapte_{acv.id}.{ext}"
+    return StreamingResponse(io.BytesIO(content), media_type=media,
+                             headers={"Content-Disposition": f'attachment; filename="{filename}"'})

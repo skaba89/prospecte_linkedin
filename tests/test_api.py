@@ -52,6 +52,20 @@ def call(method, path, token=None, body=None, headers=None):
         return 0, {"error": str(e)}
 
 
+def call_download(path, token):
+    """Téléchargement binaire (PDF/Word) — retourne (status, bytes, content_disposition)."""
+    req = urllib.request.Request(BASE + path, method="GET")
+    if token:
+        req.add_header("Authorization", f"Bearer {token}")
+    try:
+        with urllib.request.urlopen(req, timeout=10) as r:
+            return r.status, r.read(), r.headers.get("Content-Disposition", "")
+    except urllib.error.HTTPError as e:
+        return e.code, b"", ""
+    except Exception as e:
+        return 0, b"", ""
+
+
 def call_upload(path, token, filename, content, content_type="text/csv"):
     """Upload multipart/form-data (pour /crm/contacts/import). Retourne (status, json)."""
     boundary = "----revpulse" + str(int(time.time() * 1000))
@@ -1783,6 +1797,37 @@ s, ranked = call("POST", "/api/career/matching/search", tok, {"cv_id": cv["id"],
 ck(s, 200, "matching search 200")
 ck(isinstance(ranked, list), True, "ranked est une liste")
 ck(len(ranked), 0, f"{len(ranked)} résultats ranked (0 — v1 stubs ne génèrent pas de postings)")
+
+# ─── P37 : Career — CV adaptatif (versions ciblées par offre, anti-invention) ───
+print("=== 215. POST /api/career/cv/{cv_id}/adapt → 201 (critères libres, anti-invention) ===")
+s, adapted_cv = call("POST", f"/api/career/cv/{cv['id']}/adapt", tok,
+                     {"target_job_title": "Senior Product Owner", "target_company": "TechCorp"})
+ck(s, 201, "cv adapt 201")
+ck(adapted_cv.get("target_job_title"), "Senior Product Owner", "targeted_title")
+ck(bool(adapted_cv.get("adapted_data", {}).get("summary")), True, "adapted_data.summary non vide")
+ck(len(adapted_cv.get("adapted_data", {}).get("reordered_skills", [])) >= 1, True, "reordered_skills >= 1 (issus du CV)")
+ck(adapted_cv.get("match_score"), None, f"match_score=None (critères libres, pas de posting) : {adapted_cv.get('match_score')}")
+
+print("=== 216. GET /api/career/cv-adapted → 200 (>=1) ===")
+s, adapted_list = call("GET", "/api/career/cv-adapted", tok)
+ck(s, 200, "cv-adapted list 200")
+ck(len(adapted_list) >= 1, True, f"{len(adapted_list)} CV adaptés (>=1)")
+
+print("=== 217. GET /api/career/cv-adapted/{id} → 200 (isolation) ===")
+s, adapted_detail = call("GET", f"/api/career/cv-adapted/{adapted_cv['id']}", tok)
+ck(s, 200, "cv-adapted detail 200")
+ck(adapted_detail.get("id"), adapted_cv["id"], "detail id cohérent")
+
+print("=== 218. GET /api/career/cv-adapted/{id}/download?format=pdf → 200 (PDF bytes) ===")
+s, pdf_bytes, cd = call_download(f"/api/career/cv-adapted/{adapted_cv['id']}/download?format=pdf", tok)
+ck(s, 200, "download PDF 200")
+ck(len(pdf_bytes) > 100, True, f"PDF bytes > 100 : {len(pdf_bytes)}")
+ck(pdf_bytes[:4], b"%PDF", f"PDF magic bytes : {pdf_bytes[:4]}")
+ck("attachment" in cd, True, f"Content-Disposition attachment : {cd[:40]}")
+# Test format docx aussi.
+s, docx_bytes, _ = call_download(f"/api/career/cv-adapted/{adapted_cv['id']}/download?format=docx", tok)
+ck(s, 200, "download DOCX 200")
+ck(docx_bytes[:2], b"PK", f"DOCX magic bytes (ZIP) : {docx_bytes[:2]}")
 
 print()
 print(f"RESULT: {passed} passed, {failed} failed")

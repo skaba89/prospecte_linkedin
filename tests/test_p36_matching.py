@@ -67,7 +67,7 @@ rtr_src = (ROOT / "backend" / "app" / "routers" / "career.py").read_text(encodin
 print("\n=== routers/career.py : 2 endpoints P36 ===")
 ck('@router.post("/matching/{cv_id}/{posting_id}"' in rtr_src, True, "POST /matching/{cv_id}/{posting_id} (single)")
 ck('@router.post("/matching/search"' in rtr_src, True, "POST /matching/search (ranked)")
-ck("from ..services import career_cv, career_referential, job_search, matching" in rtr_src, True, "import matching")
+ck(("from ..services import" in rtr_src and "matching" in rtr_src), True, "import matching")
 ck("matching.compute_match(cv, posting, profile)" in rtr_src, True, "appel compute_match dans single")
 ck("results.sort(key=lambda r: r.total_score, reverse=True)" in rtr_src, True, "search ranked par score décroissant")
 ck("is_active=True" in rtr_src, True, "search : CV actif si cv_id omis")
