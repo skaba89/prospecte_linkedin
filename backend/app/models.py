@@ -350,34 +350,6 @@ class Segment(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
-# ─── P22 : Tags & catégorisation de contacts ─────────────────────────────────
-class Tag(Base):
-    """Étiquette/catégorie de contact (P22), scopée par tenant. Complète les Segments (P14) qui
-    sont des filtres dynamiques par requête : un Tag est un label explicite apposé sur des
-    contacts (ex. « VIP », « Cold », « Webinaire 2026 »). UniqueConstraint(tenant_id, name) → pas
-    de doublon de nom dans un tenant. color = hex pour le badge frontend. La suppression d'un tag
-    cascade-supprime les associations ContactTag (ondelete=CASCADE sur la FK côté association)."""
-
-    __tablename__ = "tags"
-    id = Column(String, primary_key=True, default=lambda: _uid("tag"))
-    tenant_id = Column(String, ForeignKey("tenants.id"), nullable=False, index=True)
-    name = Column(String, nullable=False)
-    color = Column(String, default="#635bff", nullable=False)  # hex badge frontend
-    created_at = Column(DateTime, default=datetime.utcnow)
-    __table_args__ = (UniqueConstraint("tenant_id", "name", name="uq_tenant_tag_name"),)
-
-
-class ContactTag(Base):
-    """Association many-to-many Contact ↔ Tag (P22). PK composite (contact_id, tag_id) → pas de
-    doublon d'assignation. CASCADE sur les deux FK (suppression d'un contact OU d'un tag nettoie
-    les associations). Pas de payload supplémentaire (assignation = présence de la ligne)."""
-
-    __tablename__ = "contact_tags"
-    contact_id = Column(String, ForeignKey("contacts.id", ondelete="CASCADE"), primary_key=True)
-    tag_id = Column(String, ForeignKey("tags.id", ondelete="CASCADE"), primary_key=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
-
-
 class SuppressionList(Base):
     """Exclusions RGPD (désinscription/bounce/réclamation), scopées par tenant.
     L'import de contacts skippe les emails présents ici (respect de la désinscription).
@@ -417,6 +389,34 @@ class Notification(Base):
     sent_at = Column(DateTime, nullable=True)
     error_detail = Column(Text, nullable=True)
     read_at = Column(DateTime, nullable=True)  # in-app feed : null = non lu
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+# ─── P22 : Tags & catégorisation de contacts ─────────────────────────────────
+class Tag(Base):
+    """Étiquette/catégorie de contact (P22), scopée par tenant. Complète les Segments (P14) qui
+    sont des filtres dynamiques par requête : un Tag est un label explicite apposé sur des
+    contacts (ex. « VIP », « Cold », « Webinaire 2026 »). UniqueConstraint(tenant_id, name) → pas
+    de doublon de nom dans un tenant. color = hex pour le badge frontend. La suppression d'un tag
+    cascade-supprime les associations ContactTag (ondelete=CASCADE sur la FK côté association)."""
+
+    __tablename__ = "tags"
+    id = Column(String, primary_key=True, default=lambda: _uid("tag"))
+    tenant_id = Column(String, ForeignKey("tenants.id"), nullable=False, index=True)
+    name = Column(String, nullable=False)
+    color = Column(String, default="#635bff", nullable=False)  # hex badge frontend
+    created_at = Column(DateTime, default=datetime.utcnow)
+    __table_args__ = (UniqueConstraint("tenant_id", "name", name="uq_tenant_tag_name"),)
+
+
+class ContactTag(Base):
+    """Association many-to-many Contact ↔ Tag (P22). PK composite (contact_id, tag_id) → pas de
+    doublon d'assignation. CASCADE sur les deux FK (suppression d'un contact OU d'un tag nettoie
+    les associations). Pas de payload supplémentaire (assignation = présence de la ligne)."""
+
+    __tablename__ = "contact_tags"
+    contact_id = Column(String, ForeignKey("contacts.id", ondelete="CASCADE"), primary_key=True)
+    tag_id = Column(String, ForeignKey("tags.id", ondelete="CASCADE"), primary_key=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
