@@ -46,6 +46,12 @@
   .btn.sec{background:var(--panel2);border:1px solid var(--border)}
   .sync-info{display:flex;gap:16px;flex-wrap:wrap;font-size:12px;color:var(--muted);margin-bottom:16px}
   .sync-info b{color:var(--text)}
+  .funnel-row{display:grid;grid-template-columns:140px 1fr 110px;gap:12px;align-items:center;padding:6px 0}
+  .funnel-bar{position:relative;height:28px;background:var(--panel2);border-radius:6px;overflow:hidden}
+  .funnel-bar > div{height:100%;border-radius:6px;opacity:.85}
+  .funnel-count{position:absolute;left:10px;top:50%;transform:translateY(-50%);font-size:12px;font-weight:600;color:#fff;text-shadow:0 1px 2px rgba(0,0,0,.6)}
+  .funnel-count small{font-weight:400;opacity:.8}
+  .funnel-conv{font-size:11px;color:var(--muted);text-align:right}
 </style>
 </head>
 <body>
@@ -74,6 +80,20 @@
     <h3>Sources de contacts <span class="pill" id="sources-total"></span></h3>
     <table><thead><tr><th>Source</th><th class="num">Contacts</th><th>Conversion</th></tr></thead>
       <tbody id="sources-rows"></tbody></table>
+  </div>
+  <div class="card">
+    <h3>Funnel de conversion <span class="pill" id="funnel-overall"></span></h3>
+    <div id="funnel-rows"></div>
+  </div>
+  <div class="card">
+    <h3>Cohortes par mois d'acquisition <span class="pill" id="cohorts-avg"></span></h3>
+    <table><thead><tr><th>Mois</th><th class="num">Opps</th><th>Répartition stages</th><th class="num">Won</th><th class="num">Win rate</th><th class="num">Revenue</th><th class="num">Time-to-close</th></tr></thead>
+      <tbody id="cohorts-rows"></tbody></table>
+  </div>
+  <div class="card">
+    <h3>Attribution revenue par source <span class="pill" id="attribution-best"></span></h3>
+    <table><thead><tr><th>Source</th><th class="num">Opps</th><th class="num">Won</th><th>Revenue won</th><th class="num">Win rate</th><th class="num">Deal size moy.</th></tr></thead>
+      <tbody id="attribution-rows"></tbody></table>
   </div>
   <button class="btn" onclick="exportCSV()">⬇ Exporter les contacts (CSV)</button>
 </div>
@@ -127,7 +147,7 @@ async function init(){
   document.getElementById('login').style.display='none';
   document.getElementById('content').style.display='block';
   document.getElementById('tenant-name').textContent = '· ' + TID;
-  await Promise.all([loadOverview(), loadPipeline(), loadEmails(), loadSources()]);
+  await Promise.all([loadOverview(), loadPipeline(), loadEmails(), loadSources(), loadFunnel(), loadCohorts(), loadAttribution()]);
 }
 
 async function loadOverview(){
@@ -196,6 +216,66 @@ async function loadSources(){
       <td><div>${fmtPct(s.conversion_pct)}
         <div class="bar"><div style="width:${Math.min(s.conversion_pct, 100)}%"></div></div>
       </div></td>
+    </tr>`;
+  }).join('');
+}
+
+async function loadFunnel(){
+  const {status, data} = await api('GET', '/tenants/' + TID + '/analytics/funnel');
+  if(status !== 200 || !data){ return; }
+  document.getElementById('funnel-overall').textContent = 'conversion globale ' + fmtPct(data.overall_conversion_pct) + ' · ' + data.total_won + '/' + data.total_entered + ' won';
+  if(!data.stages?.length){ document.getElementById('funnel-rows').innerHTML = '<div class="empty">Aucune opportunité.</div>'; return; }
+  const maxCum = Math.max(...data.stages.map(s => s.cumulative), 1);
+  document.getElementById('funnel-rows').innerHTML = data.stages.map(s => {
+    const c = STAGE_COLOR[s.stage] || '#8b95a8';
+    const w = Math.round(s.cumulative / maxCum * 100);
+    const conv = s.order === 0 ? 'entrée' : fmtPct(s.conversion_from_prev_pct) + ' (−' + s.drop_off + ')';
+    return `<div class="funnel-row">
+      <div><span class="badge" style="background:${c}22;color:${c}">${esc(STAGE_LABEL[s.stage] || s.stage)}</span></div>
+      <div class="funnel-bar"><div style="width:${w}%;background:${c}"></div><span class="funnel-count">${s.cumulative} <small>(${s.count} ici)</small></span></div>
+      <div class="funnel-conv">${conv}</div>
+    </div>`;
+  }).join('');
+}
+
+async function loadCohorts(){
+  const {status, data} = await api('GET', '/tenants/' + TID + '/analytics/cohorts');
+  if(status !== 200 || !data){ return; }
+  document.getElementById('cohorts-avg').textContent = 'win rate moyen ' + fmtPct(data.avg_win_rate_pct) + ' · ' + data.total_won + '/' + data.total_opps + ' won';
+  if(!data.cohorts?.length){ document.getElementById('cohorts-rows').innerHTML = '<tr><td colspan="7" class="empty">Aucune opportunité.</td></tr>'; return; }
+  document.getElementById('cohorts-rows').innerHTML = data.cohorts.map(c => {
+    const stages = Object.entries(c.by_stage).map(([st, n]) => {
+      const col = STAGE_COLOR[st] || '#8b95a8';
+      return `<span class="badge" style="background:${col}22;color:${col}">${esc(STAGE_LABEL[st] || st)} ${n}</span>`;
+    }).join(' ');
+    const ttc = c.avg_time_to_close_days != null ? c.avg_time_to_close_days + 'j' : '—';
+    return `<tr>
+      <td><b>${esc(c.month)}</b></td>
+      <td class="num">${c.total_opps}</td>
+      <td>${stages || '—'}</td>
+      <td class="num">${c.closed_won_count}</td>
+      <td class="num">${fmtPct(c.win_rate_pct)}</td>
+      <td class="num">${fmtMoney(c.revenue_won)}</td>
+      <td class="num">${ttc}</td>
+    </tr>`;
+  }).join('');
+}
+
+async function loadAttribution(){
+  const {status, data} = await api('GET', '/tenants/' + TID + '/analytics/attribution');
+  if(status !== 200 || !data){ return; }
+  document.getElementById('attribution-best').textContent = data.best_source ? 'top: ' + (SOURCE_LABEL[data.best_source] || data.best_source) + ' · ' + fmtMoney(data.total_revenue_won) + ' won' : 'aucun revenue won';
+  if(!data.by_source?.length){ document.getElementById('attribution-rows').innerHTML = '<tr><td colspan="6" class="empty">Aucune opportunité.</td></tr>'; return; }
+  const maxRev = Math.max(...data.by_source.map(s => s.revenue_won), 1);
+  document.getElementById('attribution-rows').innerHTML = data.by_source.map(s => {
+    const w = Math.round(s.revenue_won / maxRev * 100);
+    return `<tr>
+      <td><span class="badge accent">${esc(SOURCE_LABEL[s.source] || s.source)}</span></td>
+      <td class="num">${s.opps_count}</td>
+      <td class="num">${s.closed_won_count}</td>
+      <td><div>${fmtMoney(s.revenue_won)}<div class="bar"><div style="width:${w}%"></div></div></div></td>
+      <td class="num">${fmtPct(s.win_rate_pct)}</td>
+      <td class="num">${fmtMoney(s.avg_deal_size)}</td>
     </tr>`;
   }).join('');
 }

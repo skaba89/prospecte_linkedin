@@ -1061,6 +1061,79 @@ ck(all(t["status"] != "done" for t in today_list), True, "aucune tâche done dan
 for _tid_t in [task_rem["id"], task_overdue["id"], task_today["id"]]:
     call("DELETE", f"/api/tenants/tnt-demo/crm/tasks/{_tid_t}", tok)
 
+# ─── P24 : Analytics v2 (funnel, cohorts, attribution) ────────────────────────
+print("=== 123. GET /analytics/funnel (structure funnel de conversion) ===")
+s, funnel_data = call("GET", "/api/tenants/tnt-demo/analytics/funnel", tok)
+ck(s, 200, "funnel 200")
+ck(len(funnel_data["stages"]), 5, "funnel : 5 stages (prospecting→closed_won)")
+ck(all("cumulative" in st and "conversion_from_prev_pct" in st and "drop_off" in st for st in funnel_data["stages"]), True, "chaque stage a cumulative + conversion + drop_off")
+ck("total_entered" in funnel_data and "total_won" in funnel_data and "overall_conversion_pct" in funnel_data, True, "funnel : total_entered + total_won + overall_conversion_pct")
+# cumulative décroissant (funnel : prospecting >= qualified >= ... >= closed_won)
+cumuls = [st["cumulative"] for st in funnel_data["stages"]]
+ck(all(cumuls[i] >= cumuls[i+1] for i in range(len(cumuls)-1)), True, "funnel : cumulative décroissant (prospecting >= ... >= closed_won)")
+
+print("=== 124. GET /analytics/cohorts (groupés par mois d'acquisition) ===")
+s, cohorts_data = call("GET", "/api/tenants/tnt-demo/analytics/cohorts", tok)
+ck(s, 200, "cohorts 200")
+ck("cohorts" in cohorts_data and "total_opps" in cohorts_data and "avg_win_rate_pct" in cohorts_data, True, "cohorts : structure (cohorts + total_opps + avg_win_rate_pct)")
+ck(all("month" in c and "by_stage" in c and "win_rate_pct" in c and "revenue_won" in c for c in cohorts_data["cohorts"]), True, "chaque cohorte a month + by_stage + win_rate + revenue_won")
+ck(all(len(c["month"]) == 7 for c in cohorts_data["cohorts"]), True, "format mois YYYY-MM (7 chars)")
+
+print("=== 125. GET /analytics/attribution (revenue par source) ===")
+s, attr_data = call("GET", "/api/tenants/tnt-demo/analytics/attribution", tok)
+ck(s, 200, "attribution 200")
+ck("by_source" in attr_data and "total_revenue_won" in attr_data and "best_source" in attr_data, True, "attribution : by_source + total_revenue_won + best_source")
+ck(all("opps_count" in a and "closed_won_count" in a and "revenue_won" in a and "win_rate_pct" in a and "avg_deal_size" in a for a in attr_data["by_source"]), True, "chaque source a opps/won/revenue/win_rate/avg_deal_size")
+# Tri par revenue_won desc
+revs = [a["revenue_won"] for a in attr_data["by_source"]]
+ck(all(revs[i] >= revs[i+1] for i in range(len(revs)-1)), True, "attribution trié par revenue_won desc")
+
+print("=== 126. Create opp (stage=qualified, value=5000) pour test funnel/attribution ===")
+# Fetch un contact existant (pour contact_id)
+s, _cts2 = call("GET", "/api/tenants/tnt-demo/crm/contacts?limit=1", tok)
+_opp_ctc = _cts2[0]["id"] if _cts2 else None
+ck(_opp_ctc is not None, True, "contact récupéré pour créer l'opp")
+s, opp_p24 = call("POST", "/api/tenants/tnt-demo/crm/opportunities", tok, {
+    "contact_id": _opp_ctc, "title": "Opp P24 funnel", "value": 5000, "stage": "qualified",
+})
+ck(s, 201, "create opp P24 201")
+ck(opp_p24["closed_at"], None, "opp closed_at=None (stage=qualified, pas encore won)")
+
+print("=== 127. PATCH opp stage→closed_won (auto closed_at via HTTP) ===")
+s, opp_won = call("PATCH", f"/api/tenants/tnt-demo/crm/opportunities/{opp_p24['id']}", tok, {"stage": "closed_won"})
+ck(s, 200, "patch stage=closed_won 200")
+ck(opp_won["stage"], "closed_won", "stage=closed_won")
+ck(opp_won["closed_at"] is not None, True, "auto-set closed_at sur stage→closed_won (HTTP)")
+# Retour arrière → clear
+s, opp_back = call("PATCH", f"/api/tenants/tnt-demo/crm/opportunities/{opp_p24['id']}", tok, {"stage": "qualified"})
+ck(opp_back["closed_at"], None, "retour arrière closed_won→qualified → clear closed_at")
+
+print("=== 128. GET /analytics/funnel après create (total_entered a augmenté) ===")
+s, funnel2 = call("GET", "/api/tenants/tnt-demo/analytics/funnel", tok)
+ck(s, 200, "funnel 2 200")
+ck(funnel2["total_entered"] >= funnel_data["total_entered"], True, f"total_entered >= avant ({funnel2['total_entered']} >= {funnel_data['total_entered']})")
+
+print("=== 129. move_opportunity (Kanban) stage→closed_won (auto closed_at) ===")
+# Remet l'opp en prospecting puis move→closed_won via l'endpoint Kanban
+call("PATCH", f"/api/tenants/tnt-demo/crm/opportunities/{opp_p24['id']}", tok, {"stage": "prospecting"})
+s, opp_moved = call("PATCH", f"/api/tenants/tnt-demo/crm/opportunities/{opp_p24['id']}/stage", tok, {"stage": "closed_won"})
+ck(s, 200, "move_opportunity (Kanban) 200")
+ck(opp_moved["stage"], "closed_won", "move → stage=closed_won")
+ck(opp_moved["closed_at"] is not None, True, "move_opportunity auto-set closed_at (Kanban drag→won)")
+
+print("=== 130. GET /analytics/cohorts + attribution (l'opp won est comptabilisée) ===")
+s, cohorts2 = call("GET", "/api/tenants/tnt-demo/analytics/cohorts", tok)
+ck(s, 200, "cohorts 2 200")
+ck(cohorts2["total_won"] >= 1, True, f"cohorts total_won >= 1 ({cohorts2['total_won']})")
+# Au moins une cohorte a closed_won_count >= 1
+ck(any(c["closed_won_count"] >= 1 for c in cohorts2["cohorts"]), True, "au moins une cohorte a >= 1 won")
+s, attr2 = call("GET", "/api/tenants/tnt-demo/analytics/attribution", tok)
+ck(s, 200, "attribution 2 200")
+ck(attr2["total_won"] >= 1, True, f"attribution total_won >= 1 ({attr2['total_won']})")
+ck(attr2["total_revenue_won"] >= 5000, True, f"attribution total_revenue_won >= 5000 ({attr2['total_revenue_won']})")
+# Cleanup : delete l'opp P24
+call("DELETE", f"/api/tenants/tnt-demo/crm/opportunities/{opp_p24['id']}", tok)
+
 print()
 print(f"RESULT: {passed} passed, {failed} failed")
 sys.exit(0 if failed == 0 else 1)

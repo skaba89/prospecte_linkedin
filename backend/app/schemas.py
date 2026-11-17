@@ -409,6 +409,7 @@ class OpportunityOut(BaseModel):
     owner_id: str | None = None
     created_at: datetime | None = None
     updated_at: datetime | None = None
+    closed_at: datetime | None = None  # P24 : auto-set quand stage→closed_won (time-to-close)
 
 
 class StageUpdate(BaseModel):
@@ -613,6 +614,81 @@ class AnalyticsSources(BaseModel):
 
     by_source: list[SourceStat] = []
     total: int = 0
+
+
+# ---- Analytics v2 (P24) : funnel, cohorts, attribution ----
+_FUNNEL_STAGES = ["prospecting", "qualified", "proposal", "negotiation", "closed_won"]
+
+
+class FunnelStage(BaseModel):
+    """Maillon d'un funnel de conversion (P24). count = opps actuellement à ce stage ;
+    cumulative = opps ayant atteint AU MOINS ce stage (ce stage + tous les stages ultérieurs du
+    chemin gagnant). conversion_from_prev_pct = cumulative[i]/cumulative[i-1]. drop_off = perdus
+    entre le précédent et ce stage. closed_lost exclu du chemin gagnant (branche de perte)."""
+
+    stage: str
+    order: int
+    count: int  # opps actuellement à ce stage
+    cumulative: int  # opps à ce stage + stages ultérieurs (chemin gagnant)
+    conversion_from_prev_pct: float = 0.0  # cumulative / cumulative précédent
+    drop_off: int = 0  # cumulative précédent - cumulative
+
+
+class AnalyticsFunnel(BaseModel):
+    """Funnel de conversion pipeline (P24) : chemin prospecting→qualified→proposal→negotiation→
+    closed_won avec taux de conversion entre maillons + conversion globale (won/entered)."""
+
+    stages: list[FunnelStage] = []
+    total_entered: int = 0  # cumulative prospecting (toutes opps non closed_lost)
+    total_won: int = 0  # cumulative closed_won
+    overall_conversion_pct: float = 0.0  # total_won / total_entered
+
+
+class CohortRow(BaseModel):
+    """Ligne de cohorte (P24) : opportunités groupées par mois d'acquisition (created_at tronqué au
+    mois YYYY-MM). by_stage = répartition par stage actuel. win_rate_pct = closed_won/total.
+    revenue_won = somme des values closed_won. avg_time_to_close_days = jours moyens created_at→
+    closed_at pour les won (NULL si pas de closed_at)."""
+
+    month: str  # YYYY-MM
+    total_opps: int
+    by_stage: dict[str, int] = {}
+    closed_won_count: int = 0
+    win_rate_pct: float = 0.0
+    revenue_won: int = 0
+    avg_time_to_close_days: float | None = None
+
+
+class AnalyticsCohorts(BaseModel):
+    """Cohortes par mois d'acquisition (P24) : matrice mois x stage + win rate + revenue par cohorte."""
+
+    cohorts: list[CohortRow] = []
+    total_opps: int = 0
+    total_won: int = 0
+    avg_win_rate_pct: float = 0.0
+
+
+class AttributionSource(BaseModel):
+    """Attribution revenue par source d'acquisition (P24). Jointure Opportunity→Contact.source.
+    opps_count = nb d'opps issues de cette source. closed_won_count = won. revenue_won = somme
+    values won. win_rate_pct = won/opps. avg_deal_size = revenue_won/won (0 si pas de won)."""
+
+    source: str
+    opps_count: int
+    closed_won_count: int = 0
+    revenue_won: int = 0
+    win_rate_pct: float = 0.0
+    avg_deal_size: float = 0.0
+
+
+class AnalyticsAttribution(BaseModel):
+    """Attribution revenue multi-source (P24) : quel canal (LinkedIn/manual/import) génère le plus
+    de revenue won + win rate + deal size moyen."""
+
+    by_source: list[AttributionSource] = []
+    total_revenue_won: int = 0
+    total_won: int = 0
+    best_source: str | None = None  # source avec le plus de revenue_won
 
 
 # ---- Séquences & automatisation (P15) ----
