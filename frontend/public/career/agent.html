@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RevPulse Career — Agent autonome</title>
+<link rel="stylesheet" href="assets/career.css">
+</head>
+<body>
+<div class="rp-layout">
+  <aside class="rp-sidebar" data-rp-sidebar></aside>
+  <div class="rp-backdrop"></div>
+  <div class="rp-main">
+    <header class="rp-topbar">
+      <button class="rp-menu-btn" data-rp-menu>☰</button>
+      <span class="rp-topbar-title" data-rp-topbar-title>Agent autonome</span>
+      <button class="rp-btn rp-btn-ghost rp-btn-sm" data-rp-logout>Déconnexion</button>
+    </header>
+    <main class="rp-content" id="rp-content">
+      <div class="rp-loading">Chargement…</div>
+    </main>
+  </div>
+</div>
+<script src="assets/career.js"></script>
+<script>
+(async function () {
+  "use strict";
+  if (!RP.requireAuth()) return;
+  RP.bootstrap("agent", "Agent autonome");
+  var c = document.getElementById("rp-content");
+  await load();
+
+  async function load() {
+    var agent = null, runs = [];
+    try { agent = await RP.api("/api/career/agent"); } catch (e) { return fail(e); }
+    try { runs = await RP.api("/api/career/agent/runs?limit=10"); } catch (e) {}
+    var lastRun = runs[0] || null;
+    var statusBadge = { idle: ["Inactif", "neutral"], running: ["En cours", "info"], stopped: ["Arrêté", "danger"] }[agent.status] || [agent.status, "neutral"];
+
+    var consentWarning = "";
+    if (agent.auto_apply && agent.consent_given) {
+      consentWarning = '<div class="rp-badge rp-badge-danger" style="display:block;padding:10px;margin-bottom:12px">⚠️ Mode envoi auto ACTIVÉ — l\'agent soumettra des candidatures sans validation humaine supplémentaire (dans la limite de ' + agent.max_applications_per_day + '/jour). Arrêt immédiat possible via le bouton ci-dessous.</div>';
+    } else if (agent.auto_apply && !agent.consent_given) {
+      consentWarning = '<div class="rp-badge rp-badge-warning" style="display:block;padding:10px;margin-bottom:12px">⚠️ auto_apply activé SANS consentement — l\'agent préparera mais n\'enverra PAS (consent_required).</div>';
+    } else {
+      consentWarning = '<div class="rp-badge rp-badge-info" style="display:block;padding:10px;margin-bottom:12px">Mode préparation (par défaut) — l\'agent prépare CV/lettres/candidatures mais n\'envoie rien sans votre consentement explicite + auto_apply.</div>';
+    }
+
+    c.innerHTML =
+      '<h1>Agent autonome Career</h1>' +
+      '<p class="rp-muted">Agent configurable orchestrant les 10 étapes : recherche → matching → adapt CV → lettres → candidature prep → suivi → notifications → prep entretien → rapport. v1 : déclenchement manuel. <strong>Consent + limit + arrêt immédiat</strong>.</p>' +
+      consentWarning +
+      '<div class="rp-card"><div class="rp-card-header"><h3 class="rp-card-title">Configuration</h3><span class="rp-badge rp-badge-' + statusBadge[1] + '">' + statusBadge[0] + '</span></div>' +
+      '<form id="rp-agent-form">' +
+      '<div class="rp-form-row"><label style="display:flex;align-items:center;gap:8px"><input type="checkbox" name="enabled" ' + (agent.enabled ? "checked" : "") + '> <strong>Agent activé</strong></label></div>' +
+      '<div class="rp-form-row"><label style="display:flex;align-items:center;gap:8px"><input type="checkbox" name="auto_apply" ' + (agent.auto_apply ? "checked" : "") + '> <strong>Envoi auto des candidatures</strong> (sinon : préparation seulement)</label></div>' +
+      '<div class="rp-form-row"><label style="display:flex;align-items:center;gap:8px"><input type="checkbox" name="consent_given" ' + (agent.consent_given ? "checked" : "") + '> <strong>Consentement explicite</strong> pour l\'envoi auto (requis si auto_apply activé)</label></div>' +
+      '<div class="rp-form-row"><label class="rp-label">Max candidatures/jour (anti-abus, 1-20)</label><input class="rp-input" type="number" name="max_applications_per_day" value="' + agent.max_applications_per_day + '" min="1" max="20"></div>' +
+      '<div class="rp-btn-row"><button type="submit" class="rp-btn rp-btn-primary">Enregistrer la config</button>' +
+      '<button type="button" id="rp-run-btn" class="rp-btn rp-btn-secondary">▶ Lancer un run</button>' +
+      '<button type="button" id="rp-stop-btn" class="rp-btn rp-btn-danger">⏹ Arrêt immédiat</button></div>' +
+      '<p class="rp-small rp-muted" style="margin-top:10px;margin-bottom:0">Dernier run : ' + (agent.last_run_at ? RP.formatDateTime(agent.last_run_at) : "jamais") + ' · Envois aujourd\'hui : ' + agent.daily_sent_count + "/" + agent.max_applications_per_day + "</p>" +
+      "</form></div>" +
+
+      (lastRun ? renderRun(lastRun, "Dernier run") : "") +
+      '<div class="rp-card"><div class="rp-card-header"><h3 class="rp-card-title">Historique des runs (' + runs.length + ')</h3></div>' +
+      (runs.length ? renderRuns(runs) : '<div class="rp-empty"><div class="rp-empty-icon">🤖</div><div class="rp-empty-title">Aucun run</div><p>Lancez votre premier run ci-dessus.</p></div>') +
+      "</div>";
+
+    document.getElementById("rp-agent-form").addEventListener("submit", function (e) { e.preventDefault(); saveConfig(this); });
+    document.getElementById("rp-run-btn").addEventListener("click", runAgent);
+    document.getElementById("rp-stop-btn").addEventListener("click", stopAgent);
+    c.querySelectorAll("[data-run-detail]").forEach(function (b) { b.addEventListener("click", function () { showRun(b.dataset.runDetail, runs); }); });
+  }
+
+  function renderRun(run, title) {
+    var steps = run.steps || [];
+    var sm = run.summary || {};
+    var stepsHtml = steps.map(function (st) {
+      var cls = st.status === "ok" ? "success" : (st.status === "skipped" ? "neutral" : (st.status === "stopped" ? "danger" : "warning"));
+      return '<tr><td><strong>' + RP.esc(st.step) + '</strong></td><td><span class="rp-badge rp-badge-' + cls + '">' + RP.esc(st.status) + '</span></td><td>' + (st.count || 0) + '</td><td class="rp-small">' + RP.esc(st.detail || "") + '</td></tr>';
+    }).join("");
+    var smHtml = "";
+    if (sm.offers_found != null) smHtml += '<span class="rp-tag">Offres : ' + sm.offers_found + '</span>';
+    if (sm.offers_compatible != null) smHtml += '<span class="rp-tag">Compatibles : ' + sm.offers_compatible + '</span>';
+    if (sm.applications_sent != null) smHtml += '<span class="rp-tag">Envoyées : ' + sm.applications_sent + '</span>';
+    if (sm.notifications_unread != null) smHtml += '<span class="rp-tag">Notifs non lues : ' + sm.notifications_unread + '</span>';
+    var statusBadge = { success: ["success", "Succès"], stopped: ["danger", "Arrêté"], failed: ["warning", "Échec"], running: ["info", "En cours"] }[run.status] || ["neutral", run.status];
+    return '<div class="rp-card"><div class="rp-card-header"><h3 class="rp-card-title">' + RP.esc(title) + '</h3><span class="rp-badge rp-badge-' + statusBadge[0] + '">' + statusBadge[1] + '</span></div>' +
+      '<p class="rp-small rp-muted">Début : ' + RP.formatDateTime(run.started_at) + ' · Fin : ' + (run.completed_at ? RP.formatDateTime(run.completed_at) : "—") + ' · Préparées : ' + run.applications_prepared + ' · Envoyées : ' + run.applications_sent + '</p>' +
+      (smHtml ? '<div class="rp-pill-list" style="margin:10px 0">' + smHtml + '</div>' : '') +
+      '<div class="rp-table-wrap"><table class="rp-table"><thead><tr><th>Étape</th><th>Statut</th><th>Count</th><th>Détail</th></tr></thead><tbody>' + stepsHtml + '</tbody></table></div>' +
+      (sm.note ? '<p class="rp-small rp-muted" style="margin-top:8px;margin-bottom:0">⚠️ ' + RP.esc(sm.note) + '</p>' : '') +
+      '</div>';
+  }
+  function renderRuns(runs) {
+    var html = '<div class="rp-table-wrap"><table class="rp-table"><thead><tr><th>Date</th><th>Statut</th><th>Préparées</th><th>Envoyées</th><th></th></tr></thead><tbody>';
+    runs.forEach(function (r) {
+      html += '<tr><td class="rp-small">' + RP.formatDateTime(r.started_at) + '</td><td><span class="rp-badge rp-badge-' + (r.status === "success" ? "success" : (r.status === "stopped" ? "danger" : "warning")) + '">' + RP.esc(r.status) + '</span></td><td>' + r.applications_prepared + '</td><td>' + r.applications_sent + '</td><td><button class="rp-btn rp-btn-secondary rp-btn-sm" data-run-detail="' + r.id + '">Détail</button></td></tr>';
+    });
+    return html + '</tbody></table></div>';
+  }
+  function showRun(id, runs) {
+    var r = runs.find(function (x) { return x.id === id; });
+    if (!r) return;
+    var detail = renderRun(r, "Run " + r.id.slice(-6));
+    var detailEl = document.createElement("div");
+    detailEl.innerHTML = detail;
+    var existing = document.querySelector("[data-run-detail-display]");
+    if (existing) existing.remove();
+    detailEl.querySelector(".rp-card").setAttribute("data-run-detail-display", "1");
+    var form = document.getElementById("rp-agent-form").closest(".rp-card");
+    form.parentNode.insertBefore(detailEl.querySelector(".rp-card"), form.nextSibling);
+    detailEl.querySelector(".rp-card").scrollIntoView({ behavior: "smooth" });
+  }
+  async function saveConfig(form) {
+    var fd = new FormData(form);
+    var body = { enabled: !!fd.get("enabled"), auto_apply: !!fd.get("auto_apply"), consent_given: !!fd.get("consent_given"), max_applications_per_day: Number(fd.get("max_applications_per_day")) };
+    var btn = form.querySelector("button[type=submit]"); btn.disabled = true; btn.textContent = "…";
+    try { await RP.api("/api/career/agent", { method: "PUT", body: body }); RP.toast("Config enregistrée.", "success"); await load(); }
+    catch (e) { RP.toast(e.message, "error"); btn.disabled = false; btn.textContent = "Enregistrer la config"; }
+  }
+  async function runAgent() {
+    if (!confirm("Lancer un run de l'agent ? Il effectuera les 10 étapes (recherche, matching, adapt, lettres, candidature prep, rapport).")) return;
+    RP.toast("Run en cours (peut prendre quelques secondes)…", "success");
+    try { var run = await RP.api("/api/career/agent/run", { method: "POST" }); RP.toast("Run terminé : " + run.status + " (" + run.applications_sent + " envoyée(s)).", "success"); await load(); }
+    catch (e) { RP.toast(e.message, "error"); }
+  }
+  async function stopAgent() {
+    if (!confirm("Arrêt immédiat ? Le run en cours s'interrompt au prochain check.")) return;
+    try { await RP.api("/api/career/agent/stop", { method: "POST" }); RP.toast("Arrêt demandé.", "success"); await load(); }
+    catch (e) { RP.toast(e.message, "error"); }
+  }
+  function fail(e) { c.innerHTML = '<div class="rp-card"><p>Erreur : ' + RP.esc(e.message) + '</p><a class="rp-btn rp-btn-secondary" href="dashboard.html">Retour</a></div>'; }
+})().catch(function (e) { document.getElementById("rp-content").innerHTML = '<div class="rp-card"><p>Erreur : ' + RP.esc(e.message) + '</p><a class="rp-btn rp-btn-secondary" href="dashboard.html">Retour</a></div>'; });
+</script>
+</body>
+</html>

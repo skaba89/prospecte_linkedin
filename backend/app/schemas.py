@@ -1789,3 +1789,46 @@ class InterviewSessionOut(BaseModel):
     created_at: datetime
     completed_at: datetime | None = None
     model_config = ConfigDict(from_attributes=True)
+
+
+# ─── P42 — Agent autonome Career ──────────────────────────────────────────────
+class CareerAgentOut(BaseModel):
+    """Agent Career (P42). auto_apply=False par défaut → prépare sans envoyer. consent_given requis
+    pour envoi auto. status : idle|running|stopped (bouton arrêt immédiat). max_applications_per_day cap."""
+    id: str
+    career_profile_id: str
+    enabled: bool
+    auto_apply: bool
+    consent_given: bool
+    max_applications_per_day: int
+    daily_sent_count: int
+    last_run_at: datetime | None = None
+    status: str
+    created_at: datetime
+    updated_at: datetime
+    model_config = ConfigDict(from_attributes=True)
+
+
+class CareerAgentConfigUpdate(BaseModel):
+    """Mise à jour config agent (P42). enabled + auto_apply + consent_given (consent explicite).
+    max_applications_per_day cap anti-abus (1-20)."""
+    enabled: bool | None = None
+    auto_apply: bool | None = None
+    consent_given: bool | None = None
+    max_applications_per_day: int | None = Field(default=None, ge=1, le=20)
+
+
+class CareerAgentRunOut(BaseModel):
+    """Run de l'agent (P42). steps JSON [{step, status, count, detail}] (audit trail). summary JSON
+    (rapport quotidien agrégé). status : running|success|stopped|failed. Anti-invention : factuel."""
+    id: str
+    career_profile_id: str
+    agent_id: str
+    started_at: datetime
+    completed_at: datetime | None = None
+    status: str
+    steps: list | None = None
+    summary: dict | None = None
+    applications_prepared: int
+    applications_sent: int
+    model_config = ConfigDict(from_attributes=True)

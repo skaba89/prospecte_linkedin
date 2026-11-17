@@ -270,6 +270,27 @@ def main():
         # Pipeline bars rendus
         ck(page.locator(".rp-bar-fill").count() >= 3, f"analytics : ≥3 barres pipeline rendues ({page.locator('.rp-bar-fill').count()})")
 
+        # ── 12. P42 Agent autonome (config + run + rapport + consent invariant) ──
+        print("\n--- 12. Agent autonome (P42) ---")
+        page.goto(f"{URL}/career/agent.html", wait_until="networkidle")
+        page.wait_for_selector("#rp-agent-form", timeout=8000)
+        ck(page.locator("#rp-agent-form").count() == 1, "agent page : formulaire config rendu")
+        # Consent invariant visible (mode préparation par défaut — auto_apply=False)
+        ck(page.locator("text=Mode préparation").count() >= 1, "agent : mode préparation affiché (consent invariant v1)")
+        ck(page.locator('[name="consent_given"]').count() == 1, "agent : champ consent_given présent")
+        ck(page.locator('[name="max_applications_per_day"]').count() == 1, "agent : champ max_applications_per_day (cap anti-abus)")
+        ck(page.locator("#rp-stop-btn").count() == 1, "agent : bouton arrêt immédiat présent")
+        # Auto-accept confirm dialogs (runAgent/stopAgent utilisent confirm() — Playwright les dismiss par défaut)
+        page.on("dialog", lambda d: d.accept())
+        # Lancer un run (consent_given=False → 0 envoyée, préparation only)
+        page.click("#rp-run-btn")
+        page.wait_for_timeout(5000)  # le run orchestre 10 étapes
+        ck(page.locator("text=Dernier run").count() >= 1 or page.locator("text=Run").count() >= 1, "agent : run exécuté + rapport affiché")
+        # Le rapport doit contenir les steps (search, match_rank, submit, report)
+        body_text = page.inner_text("body")
+        ck("search" in body_text.lower() or "Offres" in body_text, "agent rapport : étape search visible")
+        ck("Envoyées" in body_text, "agent rapport : compteur candidatures envoyées visible")
+
         # Capture token pour le test responsive mobile (évite re-register/re-demo)
         captured_tok = page.evaluate("localStorage.getItem('revpulse_jwt')")
 

@@ -1078,3 +1078,51 @@ class InterviewSession(Base):
     score = Column(Integer, nullable=True)  # 0-100 (score global, nullable tant que in_progress)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     completed_at = Column(DateTime, nullable=True)
+
+
+class CareerAgent(Base):
+    """Agent autonome Career (P42) — config + état (1 par profil). Orchestre les 10 étapes (recherche,
+    matching, adapt, lettres, candidature prep, suivi, notifications, entretien, rapport). career_profile_id
+    FK CASCADE (isolation). unique par profil.
+
+    Anti-spam + consent (P42 invariant) :
+      - auto_apply=False par défaut → l'agent PRÉPARE mais n'ENVOIE JAMAIS sans consent_given=True +
+        auto_apply=True + validation humaine.
+      - consent_given=False → aucune candidature envoyée (préparation seulement).
+      - max_applications_per_day cap anti-abus + daily_sent_count reset quotidien.
+      - status=stopped = bouton d'arrêt immédiat interrompable à tout moment.
+      - Journalisation complète : chaque run persisté dans career_agent_runs + steps détaillés.
+    v2 : scheduler quotidien (celery/APScheduler) + monitoring continu."""
+
+    __tablename__ = "career_agents"
+    id = Column(String, primary_key=True, default=lambda: _uid("cag"))
+    career_profile_id = Column(String, ForeignKey("career_profiles.id", ondelete="CASCADE"), nullable=False, unique=True)
+    enabled = Column(Boolean, default=True, nullable=False)
+    auto_apply = Column(Boolean, default=False, nullable=False)  # False = prépare sans envoyer (v1)
+    consent_given = Column(Boolean, default=False, nullable=False)  # consentement explicite pour auto_apply
+    max_applications_per_day = Column(Integer, default=5, nullable=False)
+    daily_sent_count = Column(Integer, default=0, nullable=False)
+    daily_reset_at = Column(DateTime, nullable=True)  # reset quotidien du compteur
+    last_run_at = Column(DateTime, nullable=True)
+    status = Column(String, default="idle", nullable=False)  # idle|running|stopped
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+
+class CareerAgentRun(Base):
+    """Historique + rapport d'un run de l'agent Career (P42). career_profile_id + agent_id FK CASCADE.
+    steps JSON [{step, status, count, detail}] (audit trail complet). summary JSON (offres trouvées,
+    compatibles, candidatures préparées/envoyées, notifications, interview_sessions, analytics snapshot).
+    status : running|success|stopped|failed. Anti-invention : rapport factuel agrégé."""
+
+    __tablename__ = "career_agent_runs"
+    id = Column(String, primary_key=True, default=lambda: _uid("car"))
+    career_profile_id = Column(String, ForeignKey("career_profiles.id", ondelete="CASCADE"), nullable=False, index=True)
+    agent_id = Column(String, ForeignKey("career_agents.id", ondelete="CASCADE"), nullable=False)
+    started_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    completed_at = Column(DateTime, nullable=True)
+    status = Column(String, default="running", nullable=False, index=True)  # running|success|stopped|failed
+    steps = Column(JSONType, nullable=True)  # [{step, status, count, detail}]
+    summary = Column(JSONType, nullable=True)
+    applications_prepared = Column(Integer, default=0, nullable=False)
+    applications_sent = Column(Integer, default=0, nullable=False)
