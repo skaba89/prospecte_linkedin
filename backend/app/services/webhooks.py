@@ -24,7 +24,6 @@ import hmac
 import json
 import logging
 import os
-import secrets as _secrets
 import threading
 import time
 import urllib.error
@@ -35,6 +34,8 @@ from sqlalchemy.orm import Session
 
 from .. import models
 from ..database import SessionLocal
+from . import crypto
+from .url_safety import safe_urlopen, validate_url
 
 log = logging.getLogger("revpulse.webhooks")
 
@@ -55,13 +56,34 @@ DELIVERY_TIMEOUT = 5.0
 
 
 def gen_secret() -> str:
-    """Génère un secret HMAC 32 chars hex (128 bits)."""
-    return _secrets.token_hex(16)
+    """Génère un secret HMAC 32 chars hex (128 bits). Alias de crypto.new_secret (P24-A)."""
+    return crypto.new_secret()
 
 
 def _sign(secret: str, body: bytes) -> str:
     """HMAC-SHA256(secret, body) → hex. Le destinataire recalcule avec son secret partagé."""
     return hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()
+
+
+def _get_secret(wh: models.Webhook) -> str:
+    """Récupère le secret de signature (P24-A — decrypt secret_enc). Lazy-migration : si secret_enc
+    est NULL + secret plaintext non vide → encrypte vers secret_enc + clear secret (persisté au
+    commit du router appelant). Lève RuntimeError si aucun secret (webhook corrompu)."""
+    if wh.secret_enc:
+        return crypto.decrypt(wh.secret_enc)
+    if wh.secret:
+        plaintext = wh.secret
+        wh.secret_enc = crypto.encrypt(plaintext)
+        wh.secret = ""  # clear plaintext (NOT NULL → empty string satisfait)
+        return plaintext
+    raise RuntimeError(f"Webhook {wh.id} sans secret (ni secret_enc ni secret)")
+
+
+def _store_secret(wh: models.Webhook, plaintext: str) -> None:
+    """Chiffre + stocke un secret dans secret_enc + clear le plaintext secret (P24-A). Utilisé à la
+    création + rotation. Le plaintext n'est JAMAIS persisté en clair (secret="")."""
+    wh.secret_enc = crypto.encrypt(plaintext)
+    wh.secret = ""
 
 
 def _validate_events(events: list[str]) -> list[str]:
@@ -120,15 +142,24 @@ def deliver(db: Session, delivery: models.WebhookDelivery) -> bool:
         delivery.last_error = "webhook not found (deleted)"
         db.flush()
         return False
+    # P24-A : SSRF — valider l'URL avant tout POST (bloque private/loopback/metadata/file + DNS rebinding).
+    ok, err, _ips = validate_url(wh.url)
+    if not ok:
+        delivery.attempts += 1
+        delivery.status = "failed"
+        delivery.last_error = f"SSRF bloqué : {err}"
+        db.flush()
+        return False
     body = json.dumps(delivery.payload, ensure_ascii=False).encode()
-    sig = _sign(wh.secret, body)
+    secret = _get_secret(wh)  # decrypt secret_enc (lazy-migrate plaintext si besoin)
+    sig = _sign(secret, body)
     req = urllib.request.Request(wh.url, data=body, method="POST")
     req.add_header("Content-Type", "application/json")
     req.add_header("X-RevPulse-Signature", sig)
     req.add_header("X-RevPulse-Event", delivery.event)
     delivery.attempts += 1
     try:
-        with urllib.request.urlopen(req, timeout=DELIVERY_TIMEOUT) as r:
+        with safe_urlopen(req, DELIVERY_TIMEOUT) as r:
             delivery.response_code = r.status
             if 200 <= r.status < 300:
                 delivery.status = "success"
@@ -154,7 +185,13 @@ def deliver_pending(db: Session, limit: int = 50) -> int:
     """Retry les deliveries pending (limit). Retourne le nombre traitées. Synchronous —
     appelé par l'endpoint retry manuel OU par le cron P19 (start_scheduler). Ne commit pas
     (le caller commit — le router pour l'endpoint, le scheduler pour le cron)."""
-    pendings = db.query(models.WebhookDelivery).filter_by(status="pending").limit(limit).all()
+    pendings = (
+        db.query(models.WebhookDelivery)
+        .filter_by(status="pending")
+        .limit(limit)
+        .with_for_update(skip_locked=True)  # P24-A : lock anti double-delivery concurrent (PostgreSQL)
+        .all()
+    )
     for d in pendings:
         deliver(db, d)
     return len(pendings)

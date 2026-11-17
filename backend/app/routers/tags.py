@@ -204,7 +204,16 @@ def unassign_tag(
     _t: models.Tenant = Depends(get_tenant),
     membership=Depends(require_permission("crm.manage")),
 ):
-    """Détache un tag d'un contact. 404 si l'association n'existe pas."""
+    """Détache un tag d'un contact. 404 si le contact, le tag ou l'association n'existe pas.
+    P24-A (IDOR fix) : vérifie que le contact ET le tag appartiennent au tenant courant avant la
+    suppression — sinon un Editor du tenant A pouvait retirer un tag du contact d'un tenant B."""
+    # P24-A : guard tenant — le contact + le tag doivent appartenir au tenant courant.
+    contact = db.query(models.Contact).filter_by(id=cid, tenant_id=tid).first()
+    if not contact:
+        raise HTTPException(404, "Contact introuvable dans ce tenant")
+    tag = db.query(models.Tag).filter_by(id=tag_id, tenant_id=tid).first()
+    if not tag:
+        raise HTTPException(404, "Tag introuvable dans ce tenant")
     ct = db.query(models.ContactTag).filter_by(contact_id=cid, tag_id=tag_id).first()
     if not ct:
         raise HTTPException(404, "Association tag/contact introuvable")

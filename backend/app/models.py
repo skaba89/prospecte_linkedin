@@ -502,7 +502,8 @@ class Webhook(Base):
     id = Column(String, primary_key=True, default=lambda: _uid("whk"))
     tenant_id = Column(String, ForeignKey("tenants.id"), nullable=False, index=True)
     url = Column(String, nullable=False)
-    secret = Column(String, nullable=False)
+    secret = Column(String, nullable=False)  # P24-A : legacy plaintext (lazy-migré vers secret_enc)
+    secret_enc = Column(Text, nullable=True)  # P24-A : secret chiffré Fernet (encrypt-at-rest)
     events = Column(JSONType, nullable=False)  # ["contact.created", "contact.scored", ...]
     active = Column(Boolean, default=True, nullable=False)
     created_by = Column(String, ForeignKey("users.id"), nullable=True)
@@ -551,3 +552,20 @@ class InboundWebhook(Base):
     created_by = Column(String, ForeignKey("users.id"), nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+
+class InboundEvent(Base):
+    """Événement inbound traité (P24-A — idempotence). Un row par (webhook_id, event_id) reçu :
+    empêche le retraitement d'un même événement sur retry/replay (sender qui renvoie sur timeout).
+    event_id extrait du header X-Webhook-Id / Webhook-Id OU d'un champ payload event_id/messageId.
+    UniqueConstraint(tenant_id, webhook_id, event_id) → IntegrityError sur doublon → skip idempotent.
+    payload_hash = sha256 du payload (audit/dedup secondaire). processed_at = timestamp du 1er traitement."""
+
+    __tablename__ = "inbound_events"
+    __table_args__ = (UniqueConstraint("tenant_id", "webhook_id", "event_id", name="uq_inbound_event"),)
+    id = Column(String, primary_key=True, default=lambda: _uid("ibe"))
+    tenant_id = Column(String, ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
+    webhook_id = Column(String, ForeignKey("inbound_webhooks.id", ondelete="CASCADE"), nullable=False, index=True)
+    event_id = Column(String, nullable=False)  # idempotence — vient du header/payload source
+    payload_hash = Column(String, nullable=True)  # sha256 du payload (audit)
+    processed_at = Column(DateTime, default=datetime.utcnow, nullable=False)

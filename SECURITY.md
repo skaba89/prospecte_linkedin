@@ -26,14 +26,21 @@ pour une vulnérabilité de sécurité). Délai de réponse visé : 72h. Program
 ### CVE acceptées (justifications + échéances)
 python-jose bumpé 3.3.0 → **3.4.0** (CVE alg-confusion PYSEC-2024-232/233 + PYSEC-2025-185 fixées).
 PYSEC-2026-4298 persiste en 3.4.0 (jose non maintenu, pas de fix amont) — acceptée (usage HS256 +
-`algorithms=` explicite). Les autres CVE restantes sont **transitives** (sans contrôle direct) :
+`algorithms=` explicite). Les autres CVE restantes sont **transitives** (sans contrôle direct).
+
+**P24-A** : tentative d'upgrade pyasn1 0.4.8 → 0.6.5 — **bloquée** par la contrainte
+`python-jose 3.4.0 requires pyasn1<0.5.0` (jose pin dur). Le fix réel = migration `python-jose →
+PyJWT` (PyJWT n'a pas ces deps transitives pyasn1/ecdsa). Re-planifiée en **P24-B** (AI Gateway —
+les providers IA utilisent des auths JWT-like, naturel pour basculer la stack JWT en même temps).
+ecdsa 0.19.2 déjà à la latest (pas de fix amont pour PYSEC-2026-1325). starlette 0.50 nécessite un
+bump FastAPI coordonné (P25+).
 
 | CVE | Paquet | Sévérité | Justification | Échéance rééval. |
 |-----|--------|----------|---------------|------------------|
-| PYSEC-2026-4298 | python-jose 3.4.0 | variable | jose non maintenu, pas de fix amont ; RevPulse utilise HS256 + `algorithms=` explicite (mitigue alg-confusion) ; migration PyJWT planifiée | P18 |
-| PYSEC-2026-2263, 3455/3456/3457, CVE-2026-119194/5/6/7 | pyasn1 0.4.8 | variable | Transitive (jose→ecdsa→pyasn1), pas d'usage direct ; bump coordonné planifié | P18 |
-| PYSEC-2026-161, 2280/2281, 248/249 | starlette 0.50 | HIGH (DoS) | Transitive (FastAPI) ; mitigé par reverse proxy nginx (limit headers) + rate-limit ; bump FastAPI/starlette coordonné planifié | P18 |
-| PYSEC-2026-1325 | ecdsa 0.19.2 | variable | Transitive (jose) ; RevPulse utilise HS256 (algos EC de jose non utilisés) ; pas de fix amont | P18 |
+| PYSEC-2026-4298 | python-jose 3.4.0 | variable | jose non maintenu, pas de fix amont ; RevPulse utilise HS256 + `algorithms=` explicite (mitigue alg-confusion) ; migration PyJWT planifiée | P24-B |
+| PYSEC-2026-2263, 3455/3456/3457, CVE-2026-119194/5/6/7 | pyasn1 0.4.8 | variable | Transitive (jose→ecdsa→pyasn1) ; P24-A a tenté upgrade 0.6.5 → bloqué par jose (requires pyasn1<0.5.0) ; fix = migration jose→PyJWT | P24-B |
+| PYSEC-2026-161, 2280/2281, 248/249 | starlette 0.50 | HIGH (DoS) | Transitive (FastAPI) ; mitigé par reverse proxy nginx (limit headers) + rate-limit ; bump FastAPI/starlette coordonné planifié | P25+ |
+| PYSEC-2026-1325 | ecdsa 0.19.2 | variable | Transitive (jose) ; déjà à la latest 0.19.2 (pas de fix amont) ; RevPulse utilise HS256 (algos EC de jose non utilisés) | P24-B |
 
 ## Chiffrement des tokens OAuth (P10.2)
 - `access_token` LinkedIn stocké **chiffré** (Fernet, `cryptography`). Jamais renvoyé par l'API.

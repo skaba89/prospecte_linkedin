@@ -6,8 +6,9 @@ Couvre (par lecture des sources + introspection, pas de serveur) :
     has_active_opportunity) + composantes breakdown engagement/opportunity/decay + formule
     (profil cap 100 + engagement cap 40 - decay cap 30, clamp 0-100). Backward compat :
     sans engagement (défaut) → score = profil seul (P11 préservé).
-  - crm.py : _score_contact query engagement depuis DB (Notification type=email sent/dry_run
-    count + last created_at, Opportunity stage actif prospecting/qualified/proposal/negotiation).
+  - crm.py : _score_contact query engagement depuis DB (Notification type=email status=sent
+    count + last created_at — P24-A : dry_run exclu du scoring, simulé ≠ réel ; Opportunity stage
+    actif prospecting/qualified/proposal/negotiation).
   - crm.py : endpoint POST /crm/contacts/score-recompute (batch, audit crm.score_recompute_batch,
     retourne ScoreRecomputeResult {recomputed, avg_score}).
   - schemas.py : ScoreRecomputeResult.
@@ -58,7 +59,7 @@ ck("profile = min(sum(breakdown.values()), 100)" in crm, True, "profil cap 100 (
 print("\n=== crm.py : _score_contact (query engagement DB P17) ===")
 ck("db.query(models.Notification)" in crm, True, "query Notification count")
 ck('recipient_contact_id=c.id, type="email"' in crm, True, "filtre recipient_contact_id + type=email")
-ck('models.Notification.status.in_(["sent", "dry_run"])' in crm, True, "filtre status sent/dry_run (engagement valide)")
+ck('models.Notification.status == "sent"' in crm, True, "filtre status == sent (P24-A : dry_run exclu du scoring — simulé ≠ réel)")
 ck("order_by(models.Notification.created_at.desc())" in crm, True, "last notification (last_contact_at)")
 ck("last_notif.created_at if last_notif else None" in crm, True, "last_contact_at extrait (None si jamais contacté)")
 ck("db.query(models.Opportunity)" in crm and ".filter_by(tenant_id=c.tenant_id, contact_id=c.id)" in crm, True, "query Opportunity par contact")
