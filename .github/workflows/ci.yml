@@ -110,6 +110,8 @@ jobs:
         run: python tests/test_p37_cv_adaptatif.py
       - name: P38 Career candidatures + Gmail/Outlook (pipeline + cover letter anti-invention + anti-spam)
         run: python tests/test_p38_candidatures.py
+      - name: P40 Career notifications intelligentes (modèle + service anti-spam + hooks matching/applications)
+        run: python tests/test_p40_notifications.py
 
   test-api:
     name: API tests (sqlite, sans docker)

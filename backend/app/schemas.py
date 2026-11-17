@@ -1443,6 +1443,11 @@ class CareerProfileRequest(BaseModel):
     tjm_min: int | None = Field(default=None, ge=0)
     currency: str = "EUR"
     languages: list[str] | None = None
+    # P40 — préférences notification (opt-in anti-spam, optionnelles sur l'upsert profil)
+    alert_enabled: bool | None = None
+    alert_min_score: int | None = Field(default=None, ge=0, le=100)
+    alert_channels: list[str] | None = None  # ["in_app","email"]
+    alert_frequency: str | None = None  # daily|weekly|instant
 
 
 class CareerProfileOut(BaseModel):
@@ -1458,6 +1463,11 @@ class CareerProfileOut(BaseModel):
     tjm_min: int | None = None
     currency: str
     languages: list[str] | None = None
+    # P40 — préférences notification (opt-in anti-spam)
+    alert_enabled: bool = True
+    alert_min_score: int = 70
+    alert_channels: list[str] | None = None
+    alert_frequency: str = "daily"
     created_at: datetime
     updated_at: datetime
     model_config = ConfigDict(from_attributes=True)
@@ -1708,3 +1718,39 @@ class JobApplicationOut(BaseModel):
     created_at: datetime
     updated_at: datetime
     model_config = ConfigDict(from_attributes=True)
+
+
+# ─── P40 — Notifications intelligentes ────────────────────────────────────────
+class CareerNotificationOut(BaseModel):
+    """Notification Career (P40). type : new_match|application_status|interview_reminder.
+    channel : email|in_app. read_at null = non lu. payload JSON (posting_id/application_id/score/message).
+    Isolée du Business Notification (tenant_id) — user_id scoped."""
+    id: str
+    user_id: str
+    career_profile_id: str
+    type: str
+    channel: str
+    title: str
+    body: str
+    payload: dict | None = None
+    read_at: datetime | None = None
+    created_at: datetime
+    model_config = ConfigDict(from_attributes=True)
+
+
+class NotificationPrefsOut(BaseModel):
+    """Préférences notification Career (P40). alert_enabled = opt-in explicite (False → aucune notif,
+    anti-spam invariant). alert_min_score = seuil P36 déclenchant new_match (0-100)."""
+    alert_enabled: bool
+    alert_min_score: int
+    alert_channels: list[str] | None = None
+    alert_frequency: str
+    model_config = ConfigDict(from_attributes=True)
+
+
+class NotificationPrefsUpdate(BaseModel):
+    """Mise à jour préférences notification (P40). Tous optionnels — opt-in explicite anti-spam."""
+    alert_enabled: bool | None = None
+    alert_min_score: int | None = Field(default=None, ge=0, le=100)
+    alert_channels: list[str] | None = None  # sous-ensemble de ["in_app","email"]
+    alert_frequency: str | None = Field(default=None, pattern="^(daily|weekly|instant)$")

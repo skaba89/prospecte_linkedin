@@ -114,7 +114,8 @@
       { href: "/career/cvs.html", icon: "📄", label: "Mes CV", key: "cvs" },
       { href: "/career/search.html", icon: "🔍", label: "Recherche d'emplois", key: "search" },
       { href: "/career/matching.html", icon: "🎯", label: "Opportunités recommandées", key: "matching" },
-      { href: "/career/applications.html", icon: "📋", label: "Mes candidatures", key: "applications" }
+      { href: "/career/applications.html", icon: "📋", label: "Mes candidatures", key: "applications" },
+      { href: "/career/notifications.html", icon: "🔔", label: "Notifications", key: "notifications" }
     ];
     var html = '<div class="rp-brand"><div class="rp-brand-logo">R</div>' +
       '<div><div class="rp-brand-name">RevPulse</div><div class="rp-brand-sub">Career</div></div></div>';
@@ -152,6 +153,28 @@
       try { await RP.api("/api/auth/logout", { method: "POST" }); } catch (e) { /* token may be invalid */ }
       RP.clearSession(); window.location.href = "/career/login.html";
     });
+    // P40 — badge non-lus sur l'item nav Notifications (best-effort, n'interrompt pas le rendu).
+    RP.refreshUnreadBadge();
+  };
+
+  // ─── P40 — badge notifications non lues sur l'item nav ───
+  RP.refreshUnreadBadge = async function () {
+    if (!RP.isLoggedIn()) return;
+    try {
+      var u = await RP.api("/api/career/notifications/unread-count");
+      var n = (u && u.unread) || 0;
+      var navItem = document.querySelector('.rp-nav-item[href="/career/notifications.html"]');
+      if (navItem) {
+        var existing = navItem.querySelector(".rp-nav-badge");
+        if (existing) existing.remove();
+        if (n > 0) {
+          var b = document.createElement("span");
+          b.className = "rp-nav-badge";
+          b.textContent = n > 99 ? "99+" : n;
+          navItem.appendChild(b);
+        }
+      }
+    } catch (e) { /* silencieux — le badge est cosmétique */ }
   };
 
   // ─── Logout helper (used by login page too) ───
