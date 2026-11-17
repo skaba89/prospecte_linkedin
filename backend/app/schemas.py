@@ -3,7 +3,7 @@
 from datetime import date, datetime
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
 
 
 # ---- Auth ----
@@ -128,10 +128,52 @@ class BillingOut(BaseModel):
     seats: int
     member_count: int
     usage_pct: float
+    # P30 — quota IA + devise
+    ia_calls_used: int = 0
+    ia_calls_limit: int | None = None  # None = illimité (Enterprise)
+    currency: str = "EUR"
 
 
 class PlanUpdate(BaseModel):
     plan: str
+
+
+class SubscriptionOut(BaseModel):
+    plan: str
+    status: str
+    ia_calls_used: int
+    ia_calls_limit: int | None = None
+    ia_calls_reset_at: str | None = None
+    current_period_end: str | None = None
+    stripe_customer_id: str | None = None
+    simulated: bool = True  # True si pas de Stripe configuré (mock)
+
+
+class CheckoutRequest(BaseModel):
+    target_plan: str
+    success_url: str = "https://revpulse.io/billing?status=success"
+    cancel_url: str = "https://revpulse.io/billing?status=cancel"
+
+
+class CheckoutOut(BaseModel):
+    checkout_url: str | None = None
+    session_id: str | None = None
+    simulated: bool = True
+    upgraded_directly: bool = False
+    plan: str | None = None
+    message: str | None = None
+
+
+class WebhookResult(BaseModel):
+    processed: bool = False
+    type: str = ""
+    tenant_id: str | None = None
+    plan: str | None = None
+    error: str | None = None
+
+
+class CurrencyUpdate(BaseModel):
+    currency: str  # EUR|USD|GNF|XOF
 
 
 # ---- Content (authoring) ----
@@ -1448,6 +1490,17 @@ class CareerProfileRequest(BaseModel):
     alert_min_score: int | None = Field(default=None, ge=0, le=100)
     alert_channels: list[str] | None = None  # ["in_app","email"]
     alert_frequency: str | None = None  # daily|weekly|instant
+
+    @field_validator("currency")
+    @classmethod
+    def _validate_currency(cls, v: str) -> str:
+        """P30 : valide la devise (EUR|USD|GNF|XOF). Accepte minuscules + normalise en majuscules."""
+        if not v:
+            return "EUR"
+        code = v.upper().strip()
+        if code not in ("EUR", "USD", "GNF", "XOF"):
+            raise ValueError(f"Devise non supportée : {v}. Supportées : EUR, USD, GNF, XOF.")
+        return code
 
 
 class CareerProfileOut(BaseModel):

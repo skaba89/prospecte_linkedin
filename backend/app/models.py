@@ -72,6 +72,7 @@ class Tenant(Base):
     id = Column(String, primary_key=True, default=lambda: _uid("tnt"))
     name = Column(String, nullable=False)
     plan = Column(String, default="Starter", nullable=False)
+    currency = Column(String(8), default="EUR", nullable=False)  # P30 : EUR|USD|GNF|XOF
     owner_id = Column(String, ForeignKey("users.id"), nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow)
 
@@ -661,6 +662,29 @@ class AIProviderConfig(Base):
         """True si une clé API chiffrée est stockée (P24-B). Exposé via AIProviderConfigOut.has_api_key
         (la clé elle-même n'est JAMAIS exposée — seulement ce booléen)."""
         return bool(self.api_key_enc)
+
+
+class Subscription(Base):
+    """Abonnement par tenant (P30 Commercialisation). 1 par tenant (unique tenant_id).
+    plan = Free|Starter|Pro|Enterprise (PLANS config dans services/billing_service). status =
+    active|past_due|canceled|trialing. stripe_customer_id + stripe_subscription_id (null si pas de
+    Stripe configuré — mode mock). ia_calls_used = compteur mensuel d'appels IA (reset via
+    ia_calls_reset_at). Le guard est dans services/ai/gateway.generate() (check_and_increment_ia_quota
+    avant provider) — si quota dépassé → fallback SimulatedProvider + flag quota_exceeded (le gateway
+    ne lève jamais). current_period_end = fin de période d'abonnement (Stripe ou mock)."""
+
+    __tablename__ = "subscriptions"
+    id = Column(String, primary_key=True, default=lambda: _uid("sub"))
+    tenant_id = Column(String, ForeignKey("tenants.id", ondelete="CASCADE"), unique=True, nullable=False, index=True)
+    plan = Column(String, nullable=False, default="Free")  # Free|Starter|Pro|Enterprise
+    status = Column(String, nullable=False, default="active")  # active|past_due|canceled|trialing
+    stripe_customer_id = Column(String, nullable=True)
+    stripe_subscription_id = Column(String, nullable=True)
+    current_period_end = Column(DateTime, nullable=True)
+    ia_calls_used = Column(Integer, default=0, nullable=False)  # reset mensuel
+    ia_calls_reset_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 
 
 class PromptVersion(Base):

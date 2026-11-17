@@ -37,7 +37,7 @@ from datetime import datetime
 from sqlalchemy.orm import Session
 
 from ... import models
-from .. import crypto
+from .. import billing_service, crypto
 from .base import GenerationRequest, ProviderError
 from .providers import PROVIDERS, SimulatedProvider, get_provider
 from .safety import detect_injection, redact_pii, render_prompt
@@ -118,6 +118,17 @@ def generate(
     suspicious, injection_reasons = detect_injection(redacted_prompt)
     require_human_validation = suspicious
 
+    # 3.bis P30 — Plan-based IA quota guard. Compte l'appel dans le quota mensuel du tenant (Free=10,
+    # Starter=200, Pro=2000, Enterprise=illimité). Si quota dépassé → fallback SimulatedProvider +
+    # flag quota_exceeded (le gateway ne lève jamais — best-effort). Skip si dry_run (ne consomme pas).
+    quota_exceeded = False
+    quota_used = 0
+    quota_limit: int | None = None
+    if not dry_run:
+        allowed, quota_used, quota_limit = billing_service.check_and_increment_ia_quota(db, tenant_id)
+        if not allowed:
+            quota_exceeded = True
+
     # 4. Sélection provider configs (enabled, priority asc).
     configs = (
         db.query(models.AIProviderConfig)
@@ -126,11 +137,11 @@ def generate(
         .all()
     )
 
-    # 5. Détermine si on doit simuler (dry_run OU aucun provider configuré OU aucun dans quota).
+    # 5. Détermine si on doit simuler (dry_run OU aucun provider configuré OU aucun dans quota OU quota plan dépassé).
     # P24-B : historization_config_id = premier config (avant filter quota) → persiste l'AIGeneration
     # même si le provider est hors quota (audit trail complet). None si aucun config (dry_run sans config).
     historization_config_id = configs[0].id if configs else None
-    use_simulated = dry_run or not configs
+    use_simulated = dry_run or not configs or quota_exceeded
     if not use_simulated:
         configs_in_quota = [c for c in configs if _within_quota(c)]
         if not configs_in_quota:
@@ -246,6 +257,9 @@ def generate(
         "latency_ms": latency_ms,
         "error": error,
         "status": status,
+        "quota_exceeded": quota_exceeded,
+        "quota_used": quota_used,
+        "quota_limit": quota_limit,
     }
 
 

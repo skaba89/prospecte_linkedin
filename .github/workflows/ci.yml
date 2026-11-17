@@ -154,6 +154,11 @@ jobs:
         run: python tests/test_api.py
         env:
           BACKEND_URL: http://127.0.0.1:8000
+      - name: P30 Commercialisation (abonnements + quotas IA + checkout Stripe mock + devises)
+        run: python tests/test_p30_billing.py
+        env:
+          REVPULSE_DATABASE_URL: sqlite:///./p30_test.db
+          REVPULSE_ENV: test
       - name: Run P3 tests (pagination + request-ID + health)
         run: python tests/test_p3.py
         env:

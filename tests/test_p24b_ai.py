@@ -135,7 +135,8 @@ ck("ProviderError" in gw_src, True, "generate : catch ProviderError → fallback
 ck("models.AIGeneration(" in gw_src, True, "generate : historisation AIGeneration")
 ck("simulated" in gw_src, True, "generate : simulated flag propagé")
 ck("from ... import models" in gw_src, True, "import models (relatif 3 dots)")
-ck("from .. import crypto" in gw_src, True, "import crypto (relatif 2 dots)")
+import re as _re
+ck(bool(_re.search(r"from \.\. import.*\bcrypto\b", gw_src)), True, "import crypto (relatif 2 dots, standalone ou fusionné)")
 
 # ─── Source : routers/ai.py (9 endpoints + RBAC) ─────────────────────────────
 rtr_src = (ROOT / "backend" / "app" / "routers" / "ai.py").read_text(encoding="utf-8")
