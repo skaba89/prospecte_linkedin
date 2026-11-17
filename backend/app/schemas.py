@@ -1754,3 +1754,38 @@ class NotificationPrefsUpdate(BaseModel):
     alert_min_score: int | None = Field(default=None, ge=0, le=100)
     alert_channels: list[str] | None = None  # sous-ensemble de ["in_app","email"]
     alert_frequency: str | None = Field(default=None, pattern="^(daily|weekly|instant)$")
+
+
+# ─── P41 — Coach IA entretiens ────────────────────────────────────────────────
+class InterviewStartRequest(BaseModel):
+    """Démarre une session de simulation d'entretien (P41). target_job_title requis (métier visé).
+    session_type : tech (questions techniques + 1 négo) | rhmixed (tech + RH + 1 négo)."""
+    target_job_title: str = Field(..., max_length=200)
+    category: str | None = None  # data|product|finance|cyber|rh|generic (auto-détecté si null)
+    session_type: str = Field(default="rhmixed", pattern="^(tech|rhmixed)$")
+    application_id: str | None = None  # lien optionnel à une candidature
+
+
+class AnswerRequest(BaseModel):
+    """Soumet une réponse à une question de la session (P41). question_id requis + answer_text."""
+    question_id: str = Field(..., max_length=50)
+    answer_text: str = Field(..., min_length=5, max_length=5000)
+
+
+class InterviewSessionOut(BaseModel):
+    """Session d'entretien (P41). questions/answers/feedback JSON. score 0-100 (null si in_progress).
+    Anti-invention : feedback factuel (keywords + missing skills cross-référence CV)."""
+    id: str
+    career_profile_id: str
+    application_id: str | None = None
+    target_job_title: str
+    category: str | None = None
+    session_type: str
+    status: str
+    questions: list | None = None
+    answers: list | None = None
+    feedback: dict | None = None
+    score: int | None = None
+    created_at: datetime
+    completed_at: datetime | None = None
+    model_config = ConfigDict(from_attributes=True)

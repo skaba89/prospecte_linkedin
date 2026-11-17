@@ -1051,3 +1051,30 @@ class CareerNotification(Base):
     payload = Column(JSONType, nullable=True)  # {posting_id, application_id, score, message, interview_at}
     read_at = Column(DateTime, nullable=True, index=True)  # null = non lu
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+
+class InterviewSession(Base):
+    """Session de simulation d'entretien Career (P41). career_profile_id FK CASCADE (isolation) +
+    application_id FK SET NULL (lien optionnel à une candidature dont on prépare l'entretien).
+    session_type : tech (questions techniques) | rhmixed (RH + tech mixte). status : in_progress|completed.
+    questions JSON [{id, text, type, topic, expected_keywords}]. answers JSON [{question_id, text, score,
+    feedback, matched, missing}]. feedback JSON (récap global + skills manquantes + formations). score 0-100.
+
+    Anti-invention (P41 invariant) : questions + feedback basés sur référentiel P34 + CV parsed_data —
+    aucune affirmation non vérifiable sur le candidat. analyze_answer = heuristic keywords (pas de note
+    arbitraire). recommend_missing_skills cross-référence CV vs métier (transparence)."""
+
+    __tablename__ = "interview_sessions"
+    id = Column(String, primary_key=True, default=lambda: _uid("int"))
+    career_profile_id = Column(String, ForeignKey("career_profiles.id", ondelete="CASCADE"), nullable=False, index=True)
+    application_id = Column(String, ForeignKey("job_applications.id", ondelete="SET NULL"), nullable=True)
+    target_job_title = Column(String, nullable=False)
+    category = Column(String, nullable=True)  # data|product|finance|cyber|rh|...
+    session_type = Column(String, nullable=False)  # tech|rhmixed
+    status = Column(String, default="in_progress", nullable=False, index=True)  # in_progress|completed
+    questions = Column(JSONType, nullable=True)  # [{id, text, type, topic, expected_keywords}]
+    answers = Column(JSONType, nullable=True)  # [{question_id, text, score, feedback, matched, missing}]
+    feedback = Column(JSONType, nullable=True)  # récap global + missing_skills + formations + negotiation
+    score = Column(Integer, nullable=True)  # 0-100 (score global, nullable tant que in_progress)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    completed_at = Column(DateTime, nullable=True)

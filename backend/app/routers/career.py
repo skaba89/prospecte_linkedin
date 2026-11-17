@@ -43,6 +43,7 @@ from ..services import (
     cv_adapter,
     cv_generator,
     email_sender,
+    interview_coach,
     job_search,
     matching,
 )
@@ -834,3 +835,123 @@ def update_notification_prefs(
     db.commit()
     db.refresh(profile)
     return profile
+
+
+# ─── P41 — Coach IA entretiens ────────────────────────────────────────────────
+@router.post("/interviews", response_model=schemas.InterviewSessionOut, status_code=status.HTTP_201_CREATED)
+def start_interview_session(
+    body: schemas.InterviewStartRequest,
+    db: Session = Depends(get_db),
+    user: models.User = Depends(get_current_user),
+):
+    """Démarre une session de simulation d'entretien (P41). Génère des questions adaptées au métier
+    (catégorie auto-détectée depuis target_job_title ou explicite). session_type : tech | rhmixed.
+    Lien optionnel à une candidature (application_id). Anti-invention : questions issues de la banque."""
+    profile = _get_or_404_profile(db, user.id)
+    if body.application_id:
+        app = db.query(models.JobApplication).filter_by(id=body.application_id, career_profile_id=profile.id).first()
+        if not app:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "Candidature introuvable.")
+    questions = interview_coach.generate_questions(body.target_job_title, body.category, body.session_type)
+    session = models.InterviewSession(
+        career_profile_id=profile.id, application_id=body.application_id,
+        target_job_title=body.target_job_title, category=interview_coach._category_for(body.target_job_title, body.category),
+        session_type=body.session_type, status="in_progress", questions=questions, answers=[],
+    )
+    db.add(session)
+    db.commit()
+    db.refresh(session)
+    log_audit(db, tenant_id="career", actor_user_id=user.id, actor_name=user.name,
+              action="career.interview.start", target_type="interview_session", target_id=session.id,
+              detail={"target_job_title": body.target_job_title, "session_type": body.session_type})
+    db.commit()
+    db.refresh(session)
+    return session
+
+
+@router.post("/interviews/{session_id}/answer", response_model=schemas.InterviewSessionOut)
+def submit_interview_answer(
+    session_id: str,
+    body: schemas.AnswerRequest,
+    db: Session = Depends(get_db),
+    user: models.User = Depends(get_current_user),
+):
+    """Soumet une réponse à une question (P41). Analyse heuristic (keywords) + feedback factuel.
+    Anti-invention : aucune affirmation non vérifiable — feedback basé sur expected_keywords."""
+    profile = _get_or_404_profile(db, user.id)
+    session = db.query(models.InterviewSession).filter_by(id=session_id, career_profile_id=profile.id).first()
+    if not session:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Session introuvable.")
+    if session.status == "completed":
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Session déjà terminée.")
+    question = next((q for q in (session.questions or []) if q["id"] == body.question_id), None)
+    if not question:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, f"Question {body.question_id} introuvable dans la session.")
+    # CV actif pour cross-référence (anti-invention : feedback basé sur le CV du candidat)
+    cv = db.query(models.CV).filter_by(career_profile_id=profile.id, is_active=True).first()
+    cv_data = cv.parsed_data if cv else None
+    analysis = interview_coach.analyze_answer(question, body.answer_text, cv_data)
+    answers = list(session.answers or [])
+    # retire une éventuelle réponse précédente à la même question (re-passage)
+    answers = [a for a in answers if a.get("question_id") != body.question_id]
+    answers.append({**analysis, "answer_text": body.answer_text})
+    session.answers = answers
+    db.commit()
+    db.refresh(session)
+    return session
+
+
+@router.post("/interviews/{session_id}/complete", response_model=schemas.InterviewSessionOut)
+def complete_interview_session(
+    session_id: str,
+    db: Session = Depends(get_db),
+    user: models.User = Depends(get_current_user),
+):
+    """Termine la session (P41) : calcule le score global + feedback (missing skills + formations +
+    negotiation prep). Anti-invention : missing skills cross-référence CV, negotiation basé sur profil."""
+    profile = _get_or_404_profile(db, user.id)
+    session = db.query(models.InterviewSession).filter_by(id=session_id, career_profile_id=profile.id).first()
+    if not session:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Session introuvable.")
+    if session.status == "completed":
+        return session  # idempotent
+    cv = db.query(models.CV).filter_by(career_profile_id=profile.id, is_active=True).first()
+    cv_data = cv.parsed_data if cv else None
+    session.feedback = interview_coach.build_session_feedback(db, session, cv_data)
+    session.score = session.feedback["overall_score"]
+    session.status = "completed"
+    session.completed_at = datetime.utcnow()
+    db.commit()
+    db.refresh(session)
+    log_audit(db, tenant_id="career", actor_user_id=user.id, actor_name=user.name,
+              action="career.interview.complete", target_type="interview_session", target_id=session.id,
+              detail={"score": session.score, "answered": session.feedback["answered"]})
+    db.commit()
+    db.refresh(session)
+    return session
+
+
+@router.get("/interviews", response_model=list[schemas.InterviewSessionOut])
+def list_interview_sessions(
+    limit: int = 50,
+    db: Session = Depends(get_db),
+    user: models.User = Depends(get_current_user),
+):
+    """Liste les sessions d'entretien du user (P41). Plus récentes d'abord. Isolation user_id."""
+    profile = _get_or_404_profile(db, user.id)
+    return db.query(models.InterviewSession).filter_by(career_profile_id=profile.id).order_by(
+        models.InterviewSession.created_at.desc()).limit(limit).all()
+
+
+@router.get("/interviews/{session_id}", response_model=schemas.InterviewSessionOut)
+def get_interview_session(
+    session_id: str,
+    db: Session = Depends(get_db),
+    user: models.User = Depends(get_current_user),
+):
+    """Détail d'une session (P41) : questions + answers + feedback (si completed). Isolation user_id."""
+    profile = _get_or_404_profile(db, user.id)
+    session = db.query(models.InterviewSession).filter_by(id=session_id, career_profile_id=profile.id).first()
+    if not session:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Session introuvable.")
+    return session
