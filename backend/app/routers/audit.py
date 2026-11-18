@@ -30,10 +30,11 @@ router = APIRouter(prefix="/api/tenants/{tid}/audit", tags=["audit"])
 
 
 def _apply_filters(q, *, action: str | None, actor_user_id: str | None,
-                   target_type: str | None, since: datetime | None, until: datetime | None):
+                   target_type: str | None, since: datetime | None, until: datetime | None,
+                   ip: str | None = None):
     """Applique les filtres optionnels à une query AuditLog. action = prefix match (LIKE 'x%')
     pour filtrer une famille (ex. « crm.contact » → create/update/delete/import). Les autres
-    sont exact match. since/until = bornes created_at incluses."""
+    sont exact match. since/until = bornes created_at incluses. ip = exact match (P52 SOC2)."""
     if action:
         q = q.filter(models.AuditLog.action.like(f"{action}%"))
     if actor_user_id:
@@ -44,6 +45,8 @@ def _apply_filters(q, *, action: str | None, actor_user_id: str | None,
         q = q.filter(models.AuditLog.created_at >= since)
     if until:
         q = q.filter(models.AuditLog.created_at <= until)
+    if ip:
+        q = q.filter(models.AuditLog.ip == ip)
     return q
 
 
@@ -57,6 +60,7 @@ def list_audit(
     target_type: str | None = Query(None, description="Filtrer par type de cible (contact/opportunity/webhook…)"),
     since: datetime | None = Query(None, description="Borne inférieure created_at (ISO 8601)"),
     until: datetime | None = Query(None, description="Borne supérieure created_at (ISO 8601)"),
+    ip: str | None = Query(None, description="Filtrer par IP source (P52 SOC2 — investigation « qui depuis où »)"),
     db: Session = Depends(get_db),
     _t: models.Tenant = Depends(get_tenant),
     _perm=Depends(require_permission("workspace.manage")),
@@ -66,7 +70,7 @@ def list_audit(
     q = _apply_filters(
         db.query(models.AuditLog).filter_by(tenant_id=tid),
         action=action, actor_user_id=actor_user_id, target_type=target_type,
-        since=since, until=until,
+        since=since, until=until, ip=ip,
     ).order_by(models.AuditLog.created_at.desc())
     set_total(response, q.count())
     return q.offset(page.skip).limit(page.limit).all()
@@ -113,23 +117,24 @@ def export_audit(
     target_type: str | None = Query(None),
     since: datetime | None = Query(None),
     until: datetime | None = Query(None),
+    ip: str | None = Query(None, description="Filtrer par IP source (P52)"),
     db: Session = Depends(get_db),
     _t: models.Tenant = Depends(get_tenant),
     _perm=Depends(require_permission("workspace.manage")),
 ):
     """Export CSV des entrées audit filtrées (mêmes filtres que la liste, sans pagination — export
     complet). Colonnes : created_at, actor_name, actor_user_id, action, target_type, target_id,
-    detail (JSON), request_id. Content-Disposition: attachment. RBAC workspace.manage."""
+    detail (JSON), request_id, ip, user_agent (P52 SOC2/GDPR). Content-Disposition: attachment. RBAC workspace.manage."""
     q = _apply_filters(
         db.query(models.AuditLog).filter_by(tenant_id=tid),
         action=action, actor_user_id=actor_user_id, target_type=target_type,
-        since=since, until=until,
+        since=since, until=until, ip=ip,
     ).order_by(models.AuditLog.created_at.desc())
     rows = q.all()
     buf = io.StringIO()
     w = csv.writer(buf)
     w.writerow(["created_at", "actor_name", "actor_user_id", "action",
-                "target_type", "target_id", "detail", "request_id"])
+                "target_type", "target_id", "detail", "request_id", "ip", "user_agent"])
     for r in rows:
         w.writerow([
             r.created_at.isoformat() if r.created_at else "",
@@ -140,6 +145,8 @@ def export_audit(
             r.target_id or "",
             json.dumps(r.detail, ensure_ascii=False) if r.detail is not None else "",
             r.request_id or "",
+            r.ip or "",
+            r.user_agent or "",
         ])
     csv_data = buf.getvalue()
     return Response(

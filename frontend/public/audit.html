@@ -28,7 +28,7 @@
   .btn.sm{padding:5px 10px;font-size:12px}
   .card{background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:18px;margin-bottom:16px}
   .card h3{font-size:14px;margin-bottom:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px}
-  .filters{display:grid;grid-template-columns:repeat(5,1fr);gap:10px;align-items:end}
+  .filters{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;align-items:end}
   @media(max-width:760px){.filters{grid-template-columns:1fr 1fr}}
   label{font-size:11px;color:var(--muted);display:block;margin-bottom:4px}
   input,select{width:100%;padding:7px;border:1px solid var(--border);border-radius:8px;background:var(--panel2);color:var(--text);font-size:13px;font-family:inherit}
@@ -49,6 +49,10 @@
   td.detail{font-family:monospace;font-size:11px;color:var(--muted);max-width:320px;word-break:break-all;cursor:pointer}
   td.detail:hover{color:var(--text)}
   .pill{display:inline-block;padding:1px 6px;border-radius:4px;font-size:10px;font-weight:600;background:rgba(99,91,255,.15);color:var(--accent)}
+  td.source{font-family:monospace;font-size:11px;white-space:nowrap}
+  td.source .ip{color:var(--accent2);font-weight:600;cursor:pointer;text-decoration:underline dotted}
+  td.source .ip:hover{color:var(--accent)}
+  td.source .ua{display:block;color:var(--muted);font-size:10px;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .empty{color:var(--muted);text-align:center;padding:24px;font-size:13px}
   .pager{display:flex;justify-content:space-between;align-items:center;margin-top:14px;font-size:12px;color:var(--muted)}
   .info{font-size:12px;color:var(--muted);line-height:1.6;margin-bottom:14px}
@@ -69,9 +73,12 @@
 
 <div class="wrap" id="content" style="display:none">
   <div class="info">
-    <b>Audit & compliance (P21)</b> — trace immuable des actions mutantes du tenant (qui a fait quoi, quand).
+    <b>Audit & compliance (P21 + P48/P52)</b> — trace immuable des actions mutantes du tenant (qui a fait quoi, quand, depuis quelle IP).
     Inclut les actions CRM (<code>crm.contact.create</code>), webhooks (<code>webhook.create</code>, <code>inbound.contact_created</code>),
-    approbations, séquences, etc. Filtrage par préfixe d'action, acteur, type de cible, plage de dates. Export CSV pour conformité.
+    approbations, séquences, <b>membres</b> (<code>member.invite</code>, <code>member.role_change</code>),
+    <b>SSO Enterprise</b> (<code>sso.config.upsert</code>, <code>sso.config.delete</code> — P48) et
+    <b>facturation</b> (<code>billing.plan.change</code>, <code>billing.currency.change</code> — P48).
+    Filtrage par préfixe d'action, acteur, type de cible, plage de dates, <b>IP source</b> (P52 SOC2). Export CSV pour conformité.
   </div>
 
   <div class="card">
@@ -80,6 +87,7 @@
       <div><label>Action (préfixe)</label><input id="f-action" placeholder="crm.contact" list="actions-list"></div>
       <div><label>Acteur (user id)</label><input id="f-actor" placeholder="usr_xxx"></div>
       <div><label>Type cible</label><input id="f-target" placeholder="contact" list="targets-list"></div>
+      <div><label>IP source (P52)</label><input id="f-ip" placeholder="203.0.113.42"></div>
       <div><label>Depuis</label><input type="datetime-local" id="f-since"></div>
       <div><label>Jusqu'à</label><input type="datetime-local" id="f-until"></div>
     </div>
@@ -87,11 +95,12 @@
       <option value="crm.contact"><option value="crm.opportunity"><option value="crm.company">
       <option value="webhook"><option value="inbound"><option value="sequence">
       <option value="approval"><option value="member"><option value="content">
+      <option value="sso.config"><option value="billing.plan"><option value="billing.currency">
     </datalist>
     <datalist id="targets-list">
       <option value="contact"><option value="opportunity"><option value="company">
       <option value="webhook"><option value="inbound_webhook"><option value="sequence">
-      <option value="segment"><option value="tenant">
+      <option value="segment"><option value="tenant"><option value="sso_config">
     </datalist>
     <div style="margin-top:12px;display:flex;gap:8px">
       <button class="btn sm" onclick="applyFilters()">Appliquer</button>
@@ -108,7 +117,7 @@
   <div class="card">
     <h3>Trace des actions <span id="total-hint" style="color:var(--muted);font-weight:400;text-transform:none"></span></h3>
     <table>
-      <thead><tr><th>Horodatage</th><th>Acteur</th><th>Action</th><th>Cible</th><th>ID cible</th><th>Détail</th></tr></thead>
+      <thead><tr><th>Horodatage</th><th>Acteur</th><th>Action</th><th>Cible</th><th>ID cible</th><th>Source (IP / UA)</th><th>Détail</th></tr></thead>
       <tbody id="audit-rows"></tbody>
     </table>
     <div id="audit-empty" class="empty" style="display:none">Aucune entrée audit pour ces filtres.</div>
@@ -161,14 +170,22 @@ function buildQuery(){
   const a = document.getElementById('f-action').value.trim();
   const ac = document.getElementById('f-actor').value.trim();
   const tg = document.getElementById('f-target').value.trim();
+  const ip = document.getElementById('f-ip').value.trim();
   const si = toISO(document.getElementById('f-since').value);
   const un = toISO(document.getElementById('f-until').value);
   if(a) params.set('action', a);
   if(ac) params.set('actor_user_id', ac);
   if(tg) params.set('target_type', tg);
+  if(ip) params.set('ip', ip);
   if(si) params.set('since', si);
   if(un) params.set('until', un);
   return params.toString();
+}
+
+// P52 : clic sur une IP dans la table → remplit le filtre IP + recharge (investigation SOC2 rapide)
+function filterByIp(ip){
+  document.getElementById('f-ip').value = ip;
+  applyFilters();
 }
 
 function init(){
@@ -209,6 +226,7 @@ async function loadAudit(){
         <td class="action">${esc(r.action)}</td>
         <td>${r.target_type ? `<span class="pill">${esc(r.target_type)}</span>` : '—'}</td>
         <td style="font-family:monospace;font-size:11px;color:var(--muted)">${esc(r.target_id || '—')}</td>
+        <td class="source">${r.ip ? `<span class="ip" title="Cliquer pour filtrer par IP" onclick="filterByIp('${esc(r.ip)}')">${esc(r.ip)}</span>` : '<span style="color:var(--muted)">—</span>'}${r.user_agent ? `<br><span class="ua" title="${esc(r.user_agent)}">${esc(r.user_agent.slice(0, 28))}${r.user_agent.length > 28 ? '…' : ''}</span>` : ''}</td>
         <td class="detail" onclick="alert(this.dataset.full)" data-full='${esc(JSON.stringify(r.detail, null, 2))}'>${esc(JSON.stringify(r.detail).slice(0, 80))}${JSON.stringify(r.detail).length > 80 ? '…' : ''}</td>
       </tr>`).join('');
   }
@@ -224,7 +242,7 @@ function updatePager(){
 }
 
 function applyFilters(){ skip = 0; loadAudit(); }
-function resetFilters(){ ['f-action','f-actor','f-target','f-since','f-until'].forEach(id => document.getElementById(id).value = ''); skip = 0; loadAudit(); }
+function resetFilters(){ ['f-action','f-actor','f-target','f-ip','f-since','f-until'].forEach(id => document.getElementById(id).value = ''); skip = 0; loadAudit(); }
 function changePage(dir){ skip = Math.max(0, skip + dir * PAGE_SIZE); loadAudit(); }
 
 function exportCsv(){
