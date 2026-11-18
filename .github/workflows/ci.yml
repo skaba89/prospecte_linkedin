@@ -194,6 +194,12 @@ jobs:
           REVPULSE_DATABASE_URL: sqlite:///./revpulse_p45_test.db
           REVPULSE_ENV: test
           REVPULSE_TOKEN_ENCRYPTION_KEY: ZmDfcTF7_60GrrY167zsiPd67pEvs0aGOv2o1OMe4YI=
+      - name: P46 Admin SSO CRUD + lookup by email (permission gate workspace.manage, TestClient)
+        run: python tests/test_p46_admin_sso_crud.py
+        env:
+          REVPULSE_DATABASE_URL: sqlite:///./revpulse_p46_test.db
+          REVPULSE_ENV: test
+          REVPULSE_TOKEN_ENCRYPTION_KEY: ZmDfcTF7_60GrrY167zsiPd67pEvs0aGOv2o1OMe4YI=
       - name: Run P3 tests (pagination + request-ID + health)
         run: python tests/test_p3.py
         env:

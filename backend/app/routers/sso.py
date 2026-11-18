@@ -31,9 +31,10 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import RedirectResponse
 from sqlalchemy.orm import Session
 
-from .. import models, security
+from .. import models, schemas, security
 from ..config import settings
 from ..database import get_db
+from ..deps import get_tenant, require_permission
 from ..i18n import get_lang, t
 
 router = APIRouter(prefix="/api/auth/sso", tags=["sso"])
@@ -194,3 +195,114 @@ def sso_callback(code: str, state: str, request: Request, db: Session = Depends(
     base = getattr(settings, "app_base_url", "/") or "/"
     sep = "&" if "?" in base else "?"
     return RedirectResponse(url=f"{base}{sep}sso_token={jwt_token}&lang={user.locale}")
+
+
+# ─── P46 : SSO lookup by email (public — pour le bouton "Sign in with SSO") ───
+@router.post("/lookup")
+def sso_lookup(body: schemas.SSOLookupRequest, db: Session = Depends(get_db)):
+    """POST /api/auth/sso/lookup {email} → trouve le tenant SSO dont domains contient le domaine de l'email.
+    Public (pas d'auth) — permet au frontend de proposer SSO sans connaître le tenant_id.
+    Retourne {tenant_id, tenant_name, initiate_url} ou 404 si aucun SSO configuré pour ce domaine."""
+    domain = _email_domain(body.email)
+    if not domain:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "E-mail invalide.")
+    # Scan toutes les configs SSO enabled → trouve celle dont domains contient ce domaine.
+    configs = db.query(models.EnterpriseSSO).filter_by(enabled=True).all()
+    for cfg in configs:
+        domains = [d.lower().strip() for d in json.loads(cfg.domains or "[]")]
+        if domain in domains:
+            tenant = db.query(models.Tenant).filter_by(id=cfg.tenant_id).first()
+            if tenant:
+                return schemas.SSOLookupResponse(
+                    tenant_id=tenant.id, tenant_name=tenant.name,
+                    initiate_url=f"/api/auth/sso/{tenant.id}/initiate",
+                )
+    raise HTTPException(status.HTTP_404_NOT_FOUND, "Aucun SSO configuré pour ce domaine e-mail.")
+
+
+# ─── P46 : Admin SSO CRUD (tenant-scoped, Owner-only via workspace.manage) ───
+admin_router = APIRouter(prefix="/api/tenants/{tid}/sso", tags=["sso-admin"])
+
+
+def _sso_to_out(sso: models.EnterpriseSSO) -> schemas.EnterpriseSSOOut:
+    """Mappe le modèle → schema de sortie (client_secret JAMAIS inclus, juste has_secret)."""
+    return schemas.EnterpriseSSOOut(
+        tenant_id=sso.tenant_id, provider_type=sso.provider_type, client_id=sso.client_id,
+        has_secret=bool(sso.client_secret_encrypted), issuer_url=sso.issuer_url,
+        authorize_url=sso.authorize_url, token_url=sso.token_url, userinfo_url=sso.userinfo_url,
+        scopes=sso.scopes, domains=json.loads(sso.domains or "[]"), enabled=sso.enabled,
+        created_at=sso.created_at, updated_at=sso.updated_at,
+    )
+
+
+@admin_router.get("", response_model=schemas.EnterpriseSSOOut)
+def get_sso_config(_t: models.Tenant = Depends(get_tenant),
+                   db: Session = Depends(get_db),
+                   _m=Depends(require_permission("workspace.manage"))):
+    """GET /api/tenants/{tid}/sso : retourne la config SSO du tenant (client_secret masqué).
+    404 si aucun SSO configuré. Owner-only (workspace.manage)."""
+    sso = db.query(models.EnterpriseSSO).filter_by(tenant_id=_t.id).first()
+    if not sso:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Aucune config SSO pour ce tenant.")
+    return _sso_to_out(sso)
+
+
+@admin_router.put("", response_model=schemas.EnterpriseSSOOut)
+def upsert_sso_config(body: schemas.EnterpriseSSOConfig,
+                      _t: models.Tenant = Depends(get_tenant),
+                      db: Session = Depends(get_db),
+                      _m=Depends(require_permission("workspace.manage"))):
+    """PUT /api/tenants/{tid}/sso : upsert config SSO OIDC (create or update).
+    client_secret chiffré Fernet à la sauvegarde. ≥1 domaine requis (JIT gate). Owner-only.
+    Met à jour tenant.sso_enabled = body.enabled (flag cohérent)."""
+    if not body.domains:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Au moins 1 domaine requis (JIT gate SSO).")
+    if not body.client_id or not body.client_secret:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "client_id et client_secret requis.")
+    domains_clean = [d.lower().strip().lstrip("@") for d in body.domains if d.strip()]
+    if not domains_clean:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Domaines invalides.")
+    sso = db.query(models.EnterpriseSSO).filter_by(tenant_id=_t.id).first()
+    if sso:
+        sso.client_id = body.client_id
+        sso.client_secret_encrypted = security.encrypt_token(body.client_secret)
+        sso.issuer_url = body.issuer_url
+        sso.authorize_url = body.authorize_url
+        sso.token_url = body.token_url
+        sso.userinfo_url = body.userinfo_url
+        sso.scopes = body.scopes
+        sso.domains = json.dumps(domains_clean)
+        sso.enabled = body.enabled
+        sso.updated_at = datetime.utcnow()
+    else:
+        sso = models.EnterpriseSSO(
+            tenant_id=_t.id, provider_type="oidc", client_id=body.client_id,
+            client_secret_encrypted=security.encrypt_token(body.client_secret),
+            issuer_url=body.issuer_url, authorize_url=body.authorize_url,
+            token_url=body.token_url, userinfo_url=body.userinfo_url,
+            scopes=body.scopes, domains=json.dumps(domains_clean), enabled=body.enabled,
+        )
+        db.add(sso)
+    # Cohérence : tenant.sso_enabled reflète la config SSO.
+    _t.sso_enabled = body.enabled
+    db.commit()
+    db.refresh(sso)
+    _log.info("SSO config upserted : tenant=%s enabled=%s domains=%s", _t.id, body.enabled, domains_clean)
+    return _sso_to_out(sso)
+
+
+@admin_router.delete("")
+def delete_sso_config(_t: models.Tenant = Depends(get_tenant),
+                      db: Session = Depends(get_db),
+                      _m=Depends(require_permission("workspace.manage"))):
+    """DELETE /api/tenants/{tid}/sso : supprime la config SSO + désactive tenant.sso_enabled. Owner-only.
+    Les users SSO existants conservent leur sso_id (peuvent encore se logger via SSO si reconfiguré plus tard,
+    mais sans config active → initiate 404)."""
+    sso = db.query(models.EnterpriseSSO).filter_by(tenant_id=_t.id).first()
+    if not sso:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Aucune config SSO pour ce tenant.")
+    db.delete(sso)
+    _t.sso_enabled = False
+    db.commit()
+    _log.info("SSO config deleted : tenant=%s", _t.id)
+    return {"deleted": True, "tenant_id": _t.id}

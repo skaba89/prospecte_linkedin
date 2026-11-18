@@ -1885,3 +1885,48 @@ class CareerAgentRunOut(BaseModel):
     applications_prepared: int
     applications_sent: int
     model_config = ConfigDict(from_attributes=True)
+
+
+# ─── P46 : Admin SSO Enterprise OIDC (CRUD + lookup by email) ─────────────
+class EnterpriseSSOOut(BaseModel):
+    """Réponse admin : config SSO d'un tenant. client_secret JAMAIS retourné (has_secret seulement)."""
+    tenant_id: str
+    provider_type: str
+    client_id: str
+    has_secret: bool  # True si un client_secret est stocké (jamais la valeur)
+    issuer_url: str
+    authorize_url: str
+    token_url: str
+    userinfo_url: str
+    scopes: str
+    domains: list[str]  # domaines e-mail autorisés pour JIT provisioning
+    enabled: bool
+    created_at: datetime
+    updated_at: datetime
+    model_config = ConfigDict(from_attributes=True)
+
+
+class EnterpriseSSOConfig(BaseModel):
+    """Body PUT /api/tenants/{tid}/sso : upsert config SSO OIDC. client_secret en clair (chiffré Fernet à la sauvegarde).
+    Au moins 1 domaine requis (JIT gate — deny par défaut si domains vide)."""
+    client_id: str
+    client_secret: str  # plain → encrypt_token à la sauvegarde
+    issuer_url: str
+    authorize_url: str
+    token_url: str
+    userinfo_url: str
+    scopes: str = "openid profile email"
+    domains: list[str]  # ["corp.io", "revpulse.io"]
+    enabled: bool = True
+
+
+class SSOLookupRequest(BaseModel):
+    """Body POST /api/auth/sso/lookup : email → trouve le tenant SSO par domaine."""
+    email: str
+
+
+class SSOLookupResponse(BaseModel):
+    """Réponse lookup : tenant SSO + URL initiate (le frontend redirect vers cette URL)."""
+    tenant_id: str
+    tenant_name: str
+    initiate_url: str  # /api/auth/sso/{tenant_id}/initiate
