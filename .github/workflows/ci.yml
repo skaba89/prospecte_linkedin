@@ -301,6 +301,14 @@ jobs:
           REVPULSE_ENV: test
           REVPULSE_TOKEN_ENCRYPTION_KEY: ZmDfcTF7_60GrrY167zsiPd67pEvs0aGOv2o1OMe4YI=
           REVPULSE_RATE_LIMIT_ENABLED: false
+      - name: P68 Auth P0 (SSO email_verified gate A4 + email verification A5, TestClient)
+        run: python tests/test_p68_auth_p0_sso_email_verify.py
+        env:
+          REVPULSE_DATABASE_URL: sqlite:///./revpulse_p68_test.db
+          REVPULSE_ENV: test
+          REVPULSE_TOKEN_ENCRYPTION_KEY: ZmDfcTF7_60GrrY167zsiPd67pEvs0aGOv2o1OMe4YI=
+          REVPULSE_FRONTEND_DIR: frontend/public
+          REVPULSE_RATE_LIMIT_ENABLED: false
       - name: P67 Frontend auth API hardening (override HTTP /api/auth/login + btoa retiré, static grep)
         run: python tests/test_p67_frontend_auth_api.py
       - name: Run P3 tests (pagination + request-ID + health)
