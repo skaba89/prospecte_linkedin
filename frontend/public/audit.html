@@ -86,6 +86,7 @@
     Filtrage par préfixe d'action, acteur, type de cible, plage de dates, <b>IP source</b> (P52 SOC2). Export CSV pour conformité.
     <br/><b>P53 compliance-grade</b> : <b>alertes</b> (burst IP &gt; 10/h = brute-force suspect, actions système/anonymes),
     <b>purge rétention</b> (rétention 7 ans SOC2, loggée meta <code>audit.purge</code>), <b>export PDF signé HMAC-SHA256</b> (non-répudiation tamper-evident).
+    <br/><b>P55 webhook alerts</b> : config webhook Slack/email + seuil min_severity + <b>notify push</b> (POST alertes vers webhook) + <b>cron hebdo</b> (purge + notify auto).
   </div>
 
   <div class="card">
@@ -133,6 +134,27 @@
   </div>
 
   <div class="card">
+    <h3>Webhook alerts <span style="color:var(--muted);font-weight:400;text-transform:none;font-size:11px">(P55 — notification push Slack/email)</span></h3>
+    <div style="display:flex;flex-direction:column;gap:10px">
+      <div>
+        <label style="font-size:11px;color:var(--muted);display:block;margin-bottom:4px">URL webhook (Slack incoming webhook / custom — vide = désactivé)</label>
+        <input type="text" id="wh-url" placeholder="https://hooks.slack.com/services/T.../B.../..." style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:8px;background:var(--panel2);color:var(--text);font-size:12px;font-family:monospace">
+      </div>
+      <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+        <label style="font-size:11px;color:var(--muted)">Sévérité min :</label>
+        <select id="wh-sev" style="padding:6px 10px;border:1px solid var(--border);border-radius:8px;background:var(--panel2);color:var(--text);font-size:12px">
+          <option value="high">high (critique seulement)</option>
+          <option value="medium">medium (+ modéré)</option>
+          <option value="low">low (+ info système)</option>
+        </select>
+        <button class="btn sm" style="margin-left:auto" onclick="saveWebhookConfig()" title="PUT /audit/alerts/webhook — update config + logge audit.alert_webhook.update">💾 Sauvegarder</button>
+        <button class="btn sm sec" onclick="testNotify()" title="POST /audit/alerts/notify — évalue alerts + POST vers webhook configuré">⚡ Tester notify</button>
+      </div>
+      <div id="notify-results" style="display:none;margin-top:6px"></div>
+    </div>
+  </div>
+
+  <div class="card">
     <h3>Trace des actions <span id="total-hint" style="color:var(--muted);font-weight:400;text-transform:none"></span></h3>
     <table>
       <thead><tr><th>Horodatage</th><th>Acteur</th><th>Action</th><th>Cible</th><th>ID cible</th><th>Source (IP / UA)</th><th>Détail</th></tr></thead>
@@ -165,8 +187,9 @@ function esc(s){ return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','
 function fmtDate(iso){ if(!iso) return '—'; try { return new Date(iso).toLocaleString('fr-FR', {dateStyle:'short', timeStyle:'medium'}); } catch(e){ return iso } }
 function toISO(val){ if(!val) return null; try { return new Date(val).toISOString(); } catch(e){ return null } }
 
-async function api(method, path){
+async function api(method, path, body){
   const opts = {method, headers: {'Authorization': 'Bearer ' + TOK, 'Content-Type': 'application/json'}};
+  if(body !== undefined) opts.body = JSON.stringify(body);
   try { const r = await fetch(API + path, opts); const total = r.headers.get('X-Total-Count'); let d; try { d = await r.json() } catch(e){ d = null } return {status: r.status, data: d, total: parseInt(total||'0')}; }
   catch(e){ return {status: 0, data: null, total: 0}; }
 }
@@ -213,6 +236,7 @@ function init(){
   document.getElementById('tenant-name').textContent = 'Tenant: ' + TID;
   loadStats();
   loadAlerts();
+  loadWebhookConfig();
   loadAudit();
 }
 
@@ -277,6 +301,42 @@ function exportPdf(){
       URL.revokeObjectURL(a.href);
     })
     .catch(e => alert('Export PDF échoué: ' + e.message));
+}
+
+// ─── P55 : Webhook config + notify test (UI self-service) ────────────────────
+async function loadWebhookConfig(){
+  const {status, data} = await api('GET', '/tenants/' + TID + '/audit/alerts/webhook');
+  if(status !== 200 || !data) return;
+  document.getElementById('wh-url').value = data.webhook_url || '';
+  document.getElementById('wh-sev').value = data.min_severity || 'high';
+}
+
+async function saveWebhookConfig(){
+  const body = {webhook_url: document.getElementById('wh-url').value.trim() || null,
+                min_severity: document.getElementById('wh-sev').value};
+  const {status, data} = await api('PUT', '/tenants/' + TID + '/audit/alerts/webhook', body);
+  if(status !== 200 || !data){ alert('Sauvegarde échouée (' + status + ')'); return; }
+  alert('✓ Webhook configuré :\n• URL : ' + (data.webhook_url ? '(set)' : '(désactivé)') + '\n• Sévérité min : ' + data.min_severity + '\n• Config loggée (audit.alert_webhook.update)');
+}
+
+async function testNotify(){
+  const {status, data} = await api('POST', '/tenants/' + TID + '/audit/alerts/notify?window_hours=24&burst_threshold=10');
+  const el = document.getElementById('notify-results');
+  if(status !== 200 || !data){ el.style.display='block'; el.innerHTML = '<div class="empty">Notify échoué (' + status + ') — Owner requis</div>'; return; }
+  const sevColor = {high: 'var(--err)', medium: 'var(--warn)', low: 'var(--muted)'};
+  el.style.display = 'block';
+  el.innerHTML = `
+    <div style="font-size:11px;color:var(--muted);margin-bottom:8px;padding:8px 10px;background:var(--panel2);border-radius:8px;border:1px solid var(--border)">
+      <b>Résultat notify</b> : ${data.evaluated} alerte(s) évaluée(s), <b style="color:var(--accent)">${data.notified} notifiée(s)</b> (webhook : ${data.webhook_url ? 'on' : 'off'}, min_severity=${data.min_severity})
+    </div>
+    ${(data.results || []).map(r => `
+      <div class="alert-row">
+        <span class="sev" style="background:${sevColor[r.severity] || 'var(--muted)'}">${esc(r.severity)}</span>
+        <span class="kind">${esc(r.kind)}</span>
+        <span class="lbl">${esc(r.label)}</span>
+        <span class="cnt">${r.count}</span>
+        <span style="font-size:10px;color:${r.delivered ? 'var(--accent)' : 'var(--err)'};margin-left:8px">${r.delivered ? '✓ livré ('+r.status+')' : '✗ '+r.status}</span>
+      </div>`).join('') || '<div class="empty" style="padding:8px">Aucune alerte sur la fenêtre (window_hours=24).</div>'}`;
 }
 
 async function loadAudit(){
