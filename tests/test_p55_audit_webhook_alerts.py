@@ -110,9 +110,12 @@ def main():
     cfg = r.json()
     ck(cfg["webhook_url"] == "https://hooks.slack.com/services/T00/B00/XXX", "webhook_url mis à jour")
     ck(cfg["min_severity"] == "medium", "min_severity=medium")
-    # Tenant réellement persisté
+    # Tenant réellement persisté — P57 : webhook_url stocké CHIFFRÉ Fernet en DB (pas plaintext)
+    from app.security import decrypt_token
     t_db = test_db.query(M.Tenant).filter_by(id="tnt_c9").first()
-    ck(t_db.audit_alert_webhook_url == "https://hooks.slack.com/services/T00/B00/XXX", "tenant.persisted webhook_url")
+    ck(t_db.audit_alert_webhook_url != "https://hooks.slack.com/services/T00/B00/XXX", "DB stocke ciphertext (pas plaintext — P57 encrypt-at-rest)")
+    ck(t_db.audit_alert_webhook_url.startswith("gAAAAA"), "ciphertext Fernet (préfixe gAAAAA)")
+    ck(decrypt_token(t_db.audit_alert_webhook_url) == "https://hooks.slack.com/services/T00/B00/XXX", "decrypt_token(url) == plaintext")
     ck(t_db.audit_alert_min_severity == "medium", "tenant.persisted min_severity=medium")
     # Audit entry loggée
     cfg_log = test_db.query(M.AuditLog).filter_by(action="audit.alert_webhook.update").first()

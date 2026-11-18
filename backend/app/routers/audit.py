@@ -34,6 +34,7 @@ from ..config import settings
 from ..database import get_db
 from ..deps import get_tenant, require_permission
 from ..pagination import Page, page_dep, set_total
+from ..security import decrypt_token, encrypt_token
 
 router = APIRouter(prefix="/api/tenants/{tid}/audit", tags=["audit"])
 
@@ -295,6 +296,15 @@ def _compute_alerts(db: Session, tid: str, window_hours: int, burst_threshold: i
 _SEV_ORDER = {"low": 1, "medium": 2, "high": 3}
 
 
+def _decrypt_webhook_url(val: str | None) -> str | None:
+    """Helper P57 : déchiffre l'URL webhook stockée Fernet (encrypt-at-rest). Retourne None si None/vide.
+    Réutilise security.decrypt_token (legacy-tolerant : valeur non-Fernet retournée tel quel — utile
+    pour migration smooth pre-P57 où un tenant aurait une URL plaintext, jusqu'au prochain PUT qui chiffre)."""
+    if not val:
+        return None
+    return decrypt_token(val)
+
+
 def _build_slack_payload(tenant_name: str, tid: str, alert: schemas.AuditAlertItem) -> dict:
     """Helper P55 : construit le payload Slack-compatible pour une alerte (pure function testable).
     Format Slack incoming webhook : {"text": "...", "attachments": [{...}]}. Compatible Slack/Teams/custom."""
@@ -372,8 +382,8 @@ def get_alert_webhook(
     _t: models.Tenant = Depends(get_tenant),
     _perm=Depends(require_permission("workspace.manage")),
 ):
-    """GET /audit/alerts/webhook : config webhook alerts du tenant (P55). RBAC workspace.manage."""
-    return schemas.AuditWebhookConfig(webhook_url=_t.audit_alert_webhook_url,
+    """GET /audit/alerts/webhook : config webhook alerts du tenant (P55/P57 — URL déchiffrée Fernet). RBAC workspace.manage."""
+    return schemas.AuditWebhookConfig(webhook_url=_decrypt_webhook_url(_t.audit_alert_webhook_url),
                                       min_severity=_t.audit_alert_min_severity)
 
 
@@ -385,13 +395,13 @@ def put_alert_webhook(
     _t: models.Tenant = Depends(get_tenant),
     _perm=Depends(require_permission("workspace.manage")),
 ):
-    """PUT /audit/alerts/webhook : configure le webhook alerts + seuil min de notification (P55).
-    webhook_url nullable = désactivé. min_severity parmi high|medium|low. Logge la config change.
-    RBAC workspace.manage."""
+    """PUT /audit/alerts/webhook : configure le webhook alerts + seuil min de notification (P55/P57).
+    webhook_url chiffré Fernet à la persistence (encrypt-at-rest). nullable = désactivé.
+    min_severity parmi high|medium|low. Logge la config change. RBAC workspace.manage."""
     if cfg.min_severity not in ("high", "medium", "low"):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
                             detail="min_severity must be one of: high, medium, low")
-    _t.audit_alert_webhook_url = cfg.webhook_url or None
+    _t.audit_alert_webhook_url = encrypt_token(cfg.webhook_url) if cfg.webhook_url else None
     _t.audit_alert_min_severity = cfg.min_severity
     db.commit()
     from ..audit import log_audit
@@ -400,7 +410,7 @@ def put_alert_webhook(
               detail={"webhook_url": "(set)" if cfg.webhook_url else "(cleared)",
                       "min_severity": cfg.min_severity})
     db.commit()
-    return schemas.AuditWebhookConfig(webhook_url=_t.audit_alert_webhook_url,
+    return schemas.AuditWebhookConfig(webhook_url=_decrypt_webhook_url(_t.audit_alert_webhook_url),
                                       min_severity=_t.audit_alert_min_severity)
 
 
@@ -419,7 +429,7 @@ def notify_alerts(
     alerts = _compute_alerts(db, tid, window_hours, burst_threshold)
     min_sev = _t.audit_alert_min_severity or "high"
     min_rank = _SEV_ORDER.get(min_sev, 3)
-    webhook_url = _t.audit_alert_webhook_url
+    webhook_url = _decrypt_webhook_url(_t.audit_alert_webhook_url)
     results = []
     notified = 0
     for a in alerts:
