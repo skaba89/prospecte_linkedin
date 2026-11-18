@@ -726,9 +726,12 @@ def send_application(
     db: Session = Depends(get_db),
     user: models.User = Depends(get_current_user),
 ):
-    """Envoie une candidature via email (P38) — CONSENTEMENT EXPLICITE (POST explicite, pas d'auto).
-    Anti-spam : une candidature à la fois, rate-limit 50/jour. v1 : stub not_configured (OAuth2 Gmail/Outlook
-    non configuré — comme P35 connectors). v2 : OAuth2 concret."""
+    """Envoie une candidature via email (P38-V2) — CONSENTEMENT EXPLICITE (POST explicite, pas d'auto).
+    Anti-spam : une candidature à la fois, rate-limit 50/jour.
+    - not_configured (app Gmail non configurée) → 200, sent_at=None (enregistré, pas envoyé).
+    - not_connected (app configurée, user n'a pas connecté Gmail) → 422 (doit faire OAuth).
+    - unauthorized (token expiré + refresh échec) → 401 (reconnecter Gmail).
+    - sent → 200, sent_at + timeline mis à jour."""
     profile = _get_or_404_profile(db, user.id)
     app = db.query(models.JobApplication).filter_by(id=application_id, career_profile_id=profile.id).first()
     if not app:
@@ -738,7 +741,13 @@ def send_application(
     result = email_sender.send_application_email(app, profile, db)
     if result.status == "error":
         raise HTTPException(status.HTTP_400_BAD_REQUEST, result.error or "Erreur envoi email.")
-    # not_configured → on enregistre la tentative mais sent_at reste None (v1 stub).
+    if result.status == "not_connected":
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
+                            result.error or "Gmail non connecté. Connectez via /api/career/email/connect/gmail_oauth.")
+    if result.status == "unauthorized":
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED,
+                            result.error or "Token Gmail expiré. Reconnectez votre Gmail.")
+    # not_configured → on enregistre la tentative mais sent_at reste None (v1 stub / app non configurée).
     if result.status == "sent":
         app.sent_at = result.sent_at or datetime.utcnow()
         timeline = list(app.timeline or [])  # nouvel objet — SQLAlchemy ne détecte pas les mutations in-place JSON.
@@ -753,6 +762,101 @@ def send_application(
     db.commit()
     db.refresh(app)
     return app
+
+
+# ─── P38-V2 — OAuth2 Gmail (authorization code flow) ─────────────────────────
+def _email_oauth_state(db: Session, user_id: str) -> str:
+    """JWT signé {uid, nonce, exp} + nonce single-use (OAuthState) — anti-CSRF + anti-rejeu (P10.3).
+    Scoped user_id (Career est user-scoped, pas tenant)."""
+    import secrets as _secrets
+    from datetime import timedelta
+
+    from .. import security
+    from ..config import settings
+    nonce = _secrets.token_urlsafe(24)
+    exp = datetime.utcnow() + timedelta(minutes=10)
+    db.add(models.OAuthState(tenant_id=f"career:{user_id}", nonce=nonce, expires_at=exp, used=False))
+    db.commit()
+    return security.jwt.encode({"uid": user_id, "nonce": nonce, "exp": exp},
+                               settings.jwt_secret, algorithm=settings.jwt_algo)
+
+
+def _verify_email_oauth_state(state: str, db: Session) -> str:
+    """Valide signature + nonce (existant, non utilisé, non expiré) → marque utilisé. Retourne user_id."""
+    from .. import security
+    from ..config import settings
+    try:
+        payload = security.jwt.decode(state, settings.jwt_secret, algorithms=[settings.jwt_algo])
+    except security.JWTError:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "State OAuth invalide (CSRF ?)") from None
+    uid, nonce = payload.get("uid"), payload.get("nonce")
+    if not uid or not nonce:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "State OAuth incomplet")
+    row = db.query(models.OAuthState).filter_by(nonce=nonce).first()
+    if not row:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "State OAuth inconnu (rejeu bloqué)")
+    if row.used:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "State OAuth déjà utilisé (rejeu bloqué)")
+    if row.expires_at and row.expires_at < datetime.utcnow():
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "State OAuth expiré")
+    row.used = True
+    db.commit()
+    return uid
+
+
+@router.get("/email/connect/{provider}")
+def email_connect(provider: str, db: Session = Depends(get_db), user: models.User = Depends(get_current_user)):
+    """Démarre l'OAuth Gmail : renvoie l'URL de consentement Google (state signé + nonce single-use).
+    Provider supporté : gmail_oauth. Outlook v3 (Microsoft Graph)."""
+    if provider not in email_sender.SUPPORTED_PROVIDERS:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, f"Provider inconnu : {provider}")
+    if provider == "gmail_oauth":
+        if not email_sender.is_gmail_configured():
+            raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE,
+                                "App Gmail non configurée (GMAIL_CLIENT_ID/SECRET absents).")
+        state = _email_oauth_state(db, user.id)
+        return {"provider": "gmail_oauth", "auth_url": email_sender.get_gmail_oauth_url(state)}
+    # v3 : outlook_oauth (Microsoft Graph).
+    raise HTTPException(status.HTTP_501_NOT_IMPLEMENTED, "Provider non implémenté en v2 (Outlook v3).")
+
+
+@router.get("/email/oauth/callback")
+def email_oauth_callback(code: str, state: str, db: Session = Depends(get_db)):
+    """Callback OAuth Gmail : vérifie state (anti-CSRF) + exchange code → tokens (chiffrés en DB).
+    Endpoint public (pas get_current_user — Google redirige ici après consent, le user_id est dans le state JWT).
+    Retourne {status, provider, email} ou erreur."""
+    user_id = _verify_email_oauth_state(state, db)
+    result = email_sender.handle_gmail_oauth_callback(code, state, db, user_id)
+    if result["status"] == "error":
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, result.get("error", "Échec connexion Gmail."))
+    log_audit(db, tenant_id="career", actor_user_id=user_id, actor_name="",
+              action="career.email.connect", target_type="user_email_integration",
+              target_id=result.get("email", ""), detail={"provider": result.get("provider")})
+    db.commit()
+    return result
+
+
+@router.get("/email/status")
+def email_status(db: Session = Depends(get_db), user: models.User = Depends(get_current_user)):
+    """Liste les intégrations email connectées de l'utilisateur (provider + email + scopes)."""
+    integrations = email_sender.list_user_integrations(db, user.id)
+    return {"integrations": integrations,
+            "gmail_app_configured": email_sender.is_gmail_configured()}
+
+
+@router.delete("/email/disconnect/{provider}")
+def email_disconnect(provider: str, db: Session = Depends(get_db), user: models.User = Depends(get_current_user)):
+    """Déconnecte une intégration email (supprime refresh_token chiffré de la DB). Révocation user-side."""
+    if provider not in email_sender.SUPPORTED_PROVIDERS:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, f"Provider inconnu : {provider}")
+    deleted = email_sender.disconnect_integration(db, user.id, provider)
+    if not deleted:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, f"Aucune intégration {provider} connectée.")
+    log_audit(db, tenant_id="career", actor_user_id=user.id, actor_name=user.name,
+              action="career.email.disconnect", target_type="user_email_integration",
+              target_id=provider, detail={"provider": provider})
+    db.commit()
+    return {"disconnected": True, "provider": provider}
 
 
 # ─── P40 — Notifications intelligentes ────────────────────────────────────────

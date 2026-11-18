@@ -1865,6 +1865,25 @@ s, app_sent = call("POST", f"/api/career/applications/{app_created['id']}/send",
 ck(s, 200, "application send 200 (v1 stub not_configured — pas d'erreur, enregistré)")
 ck(app_sent.get("sent_at"), None, f"sent_at=None (v1 stub, OAuth non configuré) : {app_sent.get('sent_at')}")
 
+print("=== 224. GET /api/career/email/connect/gmail_oauth → 503 (app Gmail non configurée) ===")
+s, connect_resp = call("GET", "/api/career/email/connect/gmail_oauth", tok, None)
+ck(s, 503, f"email connect 503 (app Gmail non configurée en test) : {s}")
+ck("GMAIL_CLIENT_ID/SECRET" in (connect_resp.get("detail") or ""), True, "detail mentionne app Gmail non configurée")
+
+print("=== 225. GET /api/career/email/status → 200 (0 intégration, app non configurée) ===")
+s, status_resp = call("GET", "/api/career/email/status", tok, None)
+ck(s, 200, f"email status 200 : {s}")
+ck(status_resp.get("gmail_app_configured"), False, "gmail_app_configured=False (pas de creds en test)")
+ck(len(status_resp.get("integrations", [])), 0, "0 intégration connectée (user n'a pas OAuth)")
+
+print("=== 226. DELETE /api/career/email/disconnect/gmail_oauth → 404 (aucune intégration) ===")
+s, disc_resp = call("DELETE", "/api/career/email/disconnect/gmail_oauth", tok, None)
+ck(s, 404, f"email disconnect 404 (aucune intégration connectée) : {s}")
+
+print("=== 227. GET /api/career/email/connect/unknown → 400 (provider inconnu) ===")
+s, _ = call("GET", "/api/career/email/connect/unknown_provider", tok, None)
+ck(s, 400, "email connect provider inconnu → 400")
+
 print()
 print(f"RESULT: {passed} passed, {failed} failed")
 sys.exit(0 if failed == 0 else 1)
