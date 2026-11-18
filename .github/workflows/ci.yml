@@ -252,6 +252,12 @@ jobs:
           REVPULSE_DATABASE_URL: sqlite:///./revpulse_p57_test.db
           REVPULSE_ENV: test
           REVPULSE_TOKEN_ENCRYPTION_KEY: ZmDfcTF7_60GrrY167zsiPd67pEvs0aGOv2o1OMe4YI=
+      - name: P60 GDPR data export (Art. 20) + right-to-be-forgotten erase (Art. 17, TestClient)
+        run: python tests/test_p60_gdpr_export_erase.py
+        env:
+          REVPULSE_DATABASE_URL: sqlite:///./revpulse_p60_test.db
+          REVPULSE_ENV: test
+          REVPULSE_TOKEN_ENCRYPTION_KEY: ZmDfcTF7_60GrrY167zsiPd67pEvs0aGOv2o1OMe4YI=
       - name: Run P3 tests (pagination + request-ID + health)
         run: python tests/test_p3.py
         env:
