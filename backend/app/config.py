@@ -100,6 +100,13 @@ class Settings(BaseSettings):
     gmail_token_url: str = "https://oauth2.googleapis.com/token"
     gmail_api_base: str = "https://gmail.googleapis.com/gmail/v1/users/me"
 
+    # Hunter.io — P29-V2 enrichment prospects Business. Email Finder API (free tier 25 searches/mois).
+    # GET https://api.hunter.io/v2/email-finder?domain=X&first_name=Y&last_name=Z&api_key=KEY
+    # → {email, score (confiance 0-100), position, company}. Si api_key non renseigné → status "not_configured"
+    # (JAMAIS d'email inventé — fallback simulé sans email). Registration : https://hunter.io/api-keys.
+    hunter_api_key: str = ""
+    hunter_api_base: str = "https://api.hunter.io/v2"
+
     # Logging structuré — JSON (prod) ou texte (dev/test). Niveau configurable.
     log_level: str = "INFO"
     log_format: str = "json"  # json | text

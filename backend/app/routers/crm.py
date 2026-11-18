@@ -22,6 +22,7 @@ from ..audit import log_audit
 from ..database import get_db
 from ..deps import get_tenant, require_permission
 from ..pagination import Page, page_dep, set_total
+from ..services import prospect_enrichment
 from ..services.webhooks import emit_event
 
 router = APIRouter(prefix="/api/tenants/{tid}/crm", tags=["crm"])
@@ -457,6 +458,101 @@ def create_contact(
     db.commit()
     db.refresh(c)
     return c
+
+
+# ─── P29-V2 — Enrichissement de prospects (Hunter.io Email Finder) ──────────
+def _extract_domain(website: str) -> str:
+    """Extrait le domaine d'une URL website (fallback si company.domain vide).
+    'https://www.example.com/page' → 'example.com'. Simple (pas de validation eTLD)."""
+    if not website:
+        return ""
+    w = website.strip().lower()
+    for prefix in ("https://", "http://", "www."):
+        if w.startswith(prefix):
+            w = w[len(prefix):]
+    return w.split("/")[0].strip()
+
+
+@router.post("/contacts/{cid}/enrich")
+def enrich_contact(
+    tid: str,
+    cid: str,
+    db: Session = Depends(get_db),
+    _t: models.Tenant = Depends(get_tenant),
+    membership=Depends(require_permission("crm.manage")),
+):
+    """Enrichit un prospect via Hunter.io Email Finder (P29-V2). Le commercial déclenche l'enrichment
+    explicite — le contact doit avoir une entreprise (company) avec un domaine (ou website).
+
+    - enriched → 200, contact mis à jour (email, title, linkedin_url, score recompute).
+    - not_configured → 503 (HUNTER_API_KEY absent — simulé, AUCUN email inventé).
+    - not_found → 422 (API appelée, aucun email fiable — confidence < seuil).
+    - error → 400 (échec technique / rate-limit).
+    """
+    c = db.query(models.Contact).filter_by(id=cid, tenant_id=tid).first()
+    if not c:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Contact introuvable.")
+    # Récupérer le domaine (company.domain OU extrait de company.website).
+    company = db.query(models.Company).filter_by(id=c.company_id).first() if c.company_id else None
+    domain = ""
+    if company:
+        domain = (company.domain or "").strip().lower() or _extract_domain(company.website or "")
+    if not domain:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "Le contact doit avoir une entreprise avec un domaine (ou website) pour l'enrichment.")
+    if not c.first_name or not c.last_name:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST,
+                            "Le contact doit avoir first_name + last_name pour l'enrichment.")
+
+    result = prospect_enrichment.enrich_prospect(domain, c.first_name, c.last_name, db, tid)
+
+    if result.status == "error":
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, result.error or "Échec enrichment.")
+    if result.status == "not_configured":
+        # Simulé : on log l'audit mais on ne modifie pas le contact (anti-fake : AUCUN email inventé).
+        log_audit(db, tenant_id=tid, actor_user_id=membership.user_id, actor_name=membership.name,
+                  action="crm.contact.enrich", target_type="contact", target_id=c.id,
+                  detail={"status": "not_configured", "simulated": True, "domain": domain})
+        db.commit()
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE,
+                            result.error or "Hunter.io non configuré (HUNTER_API_KEY absent).")
+    if result.status == "not_found":
+        log_audit(db, tenant_id=tid, actor_user_id=membership.user_id, actor_name=membership.name,
+                  action="crm.contact.enrich", target_type="contact", target_id=c.id,
+                  detail={"status": "not_found", "confidence": result.confidence, "domain": domain})
+        db.commit()
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
+                            result.error or "Aucun email fiable trouvé (confidence insuffisante).")
+
+    # enriched → mettre à jour le contact (email, title, linkedin_url) + recompute score.
+    old_email = c.email
+    if result.email:
+        # Dédup : l'email ne doit pas appartenir à un autre contact du tenant.
+        existing = db.query(models.Contact).filter_by(tenant_id=tid, email=result.email).first()
+        if existing and existing.id != c.id:
+            raise HTTPException(status.HTTP_409_CONFLICT,
+                                f"Email enrichi déjà utilisé par le contact {existing.id}.")
+        c.email = result.email
+    if result.position:
+        c.title = result.position
+    if result.linkedin_url and not c.linkedin_url:
+        c.linkedin_url = result.linkedin_url
+    score, breakdown = _score_contact(db, c)  # recompute score post-enrichment
+    log_audit(db, tenant_id=tid, actor_user_id=membership.user_id, actor_name=membership.name,
+              action="crm.contact.enrich", target_type="contact", target_id=c.id,
+              detail={"status": "enriched", "email": result.email, "confidence": result.confidence,
+                      "old_email": old_email, "position": result.position,
+                      "domain": domain, "score": score})
+    emit_event(db, tenant_id=tid, event="contact.enriched",
+               payload={"contact_id": c.id, "email": result.email,
+                        "confidence": result.confidence, "position": result.position})
+    db.commit()
+    db.refresh(c)
+    return {"status": "enriched", "contact_id": c.id, "email": result.email,
+            "confidence": result.confidence, "position": result.position,
+            "company": result.company, "score": score, "score_breakdown": breakdown,
+            "provider": "hunter.io"}
 
 
 @router.get("/contacts/export")
