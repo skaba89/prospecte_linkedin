@@ -17,7 +17,7 @@ def upgrade() -> None:
     # totp_secret_encrypted : secret base32 pyotp chiffré Fernet (jamais en clair en DB).
     # totp_enabled : False par défaut — passe à True après verify (anti-lockout : setup sans verify = no-op).
     op.add_column("users", sa.Column("totp_secret_encrypted", sa.Text(), nullable=True))
-    op.add_column("users", sa.Column("totp_enabled", sa.Boolean(), server_default=sa.text("0"), nullable=False))
+    op.add_column("users", sa.Column("totp_enabled", sa.Boolean(), server_default=sa.false(), nullable=False))
 
 
 def downgrade() -> None:
