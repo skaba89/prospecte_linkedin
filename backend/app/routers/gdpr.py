@@ -81,7 +81,7 @@ def gdpr_export(
     consents = db.query(models.ConsentRecord).filter_by(tenant_id=tid, user_id=user_id).all()
     notifications = db.query(models.Notification).filter_by(tenant_id=tid, user_id=user_id).all()
 
-    return {
+    result = {
         "tenant_id": tid,
         "user_id": user_id,
         "exported_at": datetime.utcnow().isoformat(),
@@ -138,6 +138,12 @@ def gdpr_export(
                    "email_integrations": len(oauth_integrations), "cvs": len(cvs),
                    "consents": len(consents), "notifications": len(notifications)},
     }
+    # P69 (P1-7) — audit log de l'export (preuve DPO Art. 15/20 — qui a exporté les données de qui, quand).
+    log_audit(db, tenant_id=tid, actor_user_id=_perm.user_id, actor_name=_perm.name,
+              action="gdpr.export", target_type="user", target_id=user_id,
+              detail={"exported_user_id": user_id, "counts": result["counts"]})
+    db.commit()
+    return result
 
 
 @router.delete("/erase")

@@ -24,6 +24,8 @@ class UserOut(BaseModel):
     email: str
     name: str
     created_at: datetime | None = None
+    locale: str | None = None  # P69 : exposé pour PATCH /me (rectification Art. 16) + frontend i18n
+    email_verified: bool | None = None  # P68 : exposé pour UI (badge "e-mail vérifié")
 
 
 class Token(BaseModel):
@@ -79,6 +81,14 @@ class EmailVerify(BaseModel):
     """POST /auth/verify-email body : token stateless (JWT 24h, claim verify_email) émis par /register.
     Décode le token + set user.email_verified=True. 400 si token invalide/expiré."""
     token: str
+
+
+# ─── P69 — rectification Art. 16 (P1-6) ───
+class ProfileUpdate(BaseModel):
+    """PATCH /auth/me body : rectification self-service (RGPD Art. 16). name + locale modifiables.
+    Email NON modifiable ici (changement = flow verify-email séparé, anti takeover via email swap)."""
+    name: str | None = None
+    locale: str | None = None
 
 
 
