@@ -37,6 +37,7 @@ from ..config import settings
 from ..database import get_db
 from ..deps import get_tenant, require_permission
 from ..i18n import get_lang, t
+from ..services.url_safety import validate_url_strict
 
 router = APIRouter(prefix="/api/auth/sso", tags=["sso"])
 _log = logging.getLogger("revpulse.sso")
@@ -268,6 +269,16 @@ def upsert_sso_config(body: schemas.EnterpriseSSOConfig,
     domains_clean = [d.lower().strip().lstrip("@") for d in body.domains if d.strip()]
     if not domains_clean:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, t("sso.admin.domains_invalid", lang))
+    # P64 (P0-O1) — SSRF defense : valider authorize_url/token_url/userinfo_url (config-side SSRF).
+    # Sans cette validation, un admin compromis pointe token_url vers attacker.tld → le serveur POST le
+    # client_secret OIDC chez l'attaquant (exfil secret) + userinfo_url vers 169.254.169.254 (metadata cloud).
+    for field_label, url_val in (("authorize_url", body.authorize_url),
+                                  ("token_url", body.token_url),
+                                  ("userinfo_url", body.userinfo_url)):
+        ok, err, _ = validate_url_strict(url_val)
+        if not ok:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST,
+                                f"SSRF — {field_label} invalide : {err} (bloque metadata/loopback/CGNAT)")
     sso = db.query(models.EnterpriseSSO).filter_by(tenant_id=_t.id).first()
     # P48 : capture BEFORE pour audit diff (sans client_secret — jamais loggé).
     before = None

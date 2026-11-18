@@ -43,7 +43,10 @@ class Settings(BaseSettings):
     jwt_secret: str = "revpulse-demo-secret-change-me"
     jwt_algo: str = "HS256"
     jwt_expiry_hours: int = 24
-    cors_origins: str = "*"
+    # P64 (P0-O3) — default cors_origins="" (pas de wildcard en prod). "*" + allow_credentials=True est
+    # une combinaison interdite par la spec CORS (CSRF credentialed depuis toute origine). En prod, exiger
+    # une liste explicite (fail-fast _fail_fast_secrets). Dev/test peuvent mettre "*" via env.
+    cors_origins: str = ""
     # URL publique de l'app (utilisée pour les liens d'invitation e-mail).
     app_base_url: str = "http://localhost:8000"
     # Identifiants du compte démo (recréés idempotemment par le seed)
@@ -173,6 +176,14 @@ class Settings(BaseSettings):
             raise ValueError(
                 "STRIPE_SECRET_KEY + STRIPE_WEBHOOK_SECRET requis en production "
                 "(anti free-plan-bypass : sans signature webhook vérifiée, les events Stripe sont forgables)."
+            )
+        # P64 (P0-O3) : en production, CORS wildcard ("*") + allow_credentials=True est interdit (spec CORS).
+        # Toute origine pourrait faire des requêtes authentifiées cross-origin (CSRF credentialed).
+        # Exiger une liste explicite d'origines (ex: "https://app.revpulse.io,https://www.revpulse.io").
+        if self.is_production and (not self.cors_origins or self.cors_origins.strip() == "*"):
+            raise ValueError(
+                "REVPULSE_CORS_ORIGINS requis en production (liste explicite d'origines, pas de wildcard '*'). "
+                "La combinaison '*' + allow_credentials=True est interdite par la spec CORS (CSRF credentialed)."
             )
         return self
 
