@@ -200,6 +200,13 @@ jobs:
           REVPULSE_DATABASE_URL: sqlite:///./revpulse_p46_test.db
           REVPULSE_ENV: test
           REVPULSE_TOKEN_ENCRYPTION_KEY: ZmDfcTF7_60GrrY167zsiPd67pEvs0aGOv2o1OMe4YI=
+      - name: P47 Admin SSO UI + i18n admin endpoints (page load + FR/EN/ES, TestClient)
+        run: python tests/test_p47_admin_sso_ui.py
+        env:
+          REVPULSE_DATABASE_URL: sqlite:///./revpulse_p47_test.db
+          REVPULSE_ENV: test
+          REVPULSE_TOKEN_ENCRYPTION_KEY: ZmDfcTF7_60GrrY167zsiPd67pEvs0aGOv2o1OMe4YI=
+          REVPULSE_FRONTEND_DIR: frontend/public
       - name: Run P3 tests (pagination + request-ID + health)
         run: python tests/test_p3.py
         env:

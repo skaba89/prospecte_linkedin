@@ -1,0 +1,262 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RevPulse · Configuration SSO Enterprise</title>
+<link rel="stylesheet" href="../assets/app.css">
+<style>
+  :root{
+    --bg:#eef1f8; --card:#ffffff; --ink:#0f1733; --ink-2:#3a4266; --muted:#7a83a3;
+    --line:#e7eaf3; --brand:#635bff; --brand2:#a855f7; --green:#10b981; --amber:#f59e0b; --red:#ef4444;
+    --grad:linear-gradient(135deg,#635bff,#a855f7);
+    --shadow:0 1px 2px rgba(15,23,51,.04),0 8px 24px rgba(15,23,51,.06);
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif}
+  .wrap{max-width:760px;margin:0 auto;padding:clamp(16px,4vw,32px)}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:14px;box-shadow:var(--shadow);padding:clamp(18px,3vw,28px);margin-bottom:18px}
+  h1{font-size:clamp(1.3rem,3.5vw,1.7rem);margin:0 0 4px;background:var(--grad);-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent}
+  .sub{color:var(--muted);font-size:13px;margin:0 0 18px}
+  .back{display:inline-block;color:var(--brand);text-decoration:none;font-size:13px;margin-bottom:14px}
+  .back:hover{text-decoration:underline}
+  label{display:block;font-weight:600;font-size:12.5px;color:var(--ink-2);margin:14px 0 5px}
+  label:first-child{margin-top:0}
+  input,textarea{width:100%;padding:10px 12px;border:1px solid var(--line);border-radius:8px;font:inherit;color:var(--ink);background:#fff}
+  input:focus,textarea:focus{outline:none;border-color:var(--brand);box-shadow:0 0 0 3px rgba(99,91,255,.12)}
+  textarea{min-height:64px;resize:vertical;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12.5px}
+  .hint{color:var(--muted);font-size:11.5px;margin:4px 0 0}
+  .row2{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+  @media(max-width:560px){.row2{grid-template-columns:1fr}}
+  .toggle{display:flex;align-items:center;gap:10px;margin-top:18px}
+  .toggle input{width:18px;height:18px}
+  .badge{display:inline-flex;align-items:center;gap:6px;padding:5px 11px;border-radius:20px;font-size:12px;font-weight:600}
+  .badge.ok{background:rgba(16,185,129,.12);color:var(--green)}
+  .badge.no{background:rgba(245,158,11,.12);color:var(--amber)}
+  .actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:22px}
+  button{padding:11px 20px;border:none;border-radius:8px;font:600 13px inherit;cursor:pointer;transition:.15s}
+  .btn-primary{background:var(--grad);color:#fff}
+  .btn-primary:hover{filter:brightness(1.08)}
+  .btn-primary:disabled{opacity:.5;cursor:not-allowed}
+  .btn-danger{background:rgba(239,68,68,.1);color:var(--red)}
+  .btn-danger:hover{background:rgba(239,68,68,.18)}
+  .btn-ghost{background:transparent;color:var(--ink-2);border:1px solid var(--line)}
+  .alert{padding:12px 14px;border-radius:8px;font-size:13px;margin-bottom:16px}
+  .alert.err{background:rgba(239,68,68,.08);color:var(--red);border:1px solid rgba(239,68,68,.2)}
+  .alert.warn{background:rgba(245,158,11,.08);color:var(--amber);border:1px solid rgba(245,158,11,.2)}
+  .alert.ok{background:rgba(16,185,129,.08);color:var(--green);border:1px solid rgba(16,185,129,.2)}
+  .alert.forbidden{background:rgba(239,68,68,.06);color:var(--red);border:1px solid rgba(239,68,68,.18)}
+  .meta{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:6px}
+  .tid{font-family:ui-monospace,monospace;font-size:11.5px;color:var(--muted);background:#f7f9fc;padding:3px 8px;border-radius:6px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <a class="back" href="/">← Retour à l'app</a>
+  <div class="card">
+    <h1>🔐 Configuration SSO Enterprise</h1>
+    <p class="sub">Connexion OIDC (Entra ID, Google Workspace, Okta, Keycloak…) pour les membres de ce tenant.</p>
+
+    <div id="alert"></div>
+
+    <div class="meta">
+      <span class="tid" id="tid-display">tenant: —</span>
+      <span class="badge no" id="secret-badge">Aucun secret stocké</span>
+      <span class="badge no" id="status-badge">Désactivé</span>
+    </div>
+
+    <div id="form-area" style="display:none">
+      <label for="f-client-id">Client ID *</label>
+      <input id="f-client-id" type="text" placeholder="oidc_client_xxx (identifiant public)">
+      <label for="f-client-secret">Client Secret *</label>
+      <input id="f-client-secret" type="password" placeholder="•••••••• (chiffré Fernet à la sauvegarde, jamais retourné)">
+      <div class="hint">Le secret est chiffré côté serveur (Fernet) et n'est jamais renvoyé en lecture. Saisissez-le à chaque sauvegarde.</div>
+
+      <div class="row2">
+        <div>
+          <label for="f-issuer">Issuer URL</label>
+          <input id="f-issuer" type="url" placeholder="https://login.microsoftonline.com/{tenant}/v2.0">
+        </div>
+        <div>
+          <label for="f-scopes">Scopes</label>
+          <input id="f-scopes" type="text" value="openid profile email" placeholder="openid profile email">
+        </div>
+      </div>
+
+      <label for="f-authorize">Authorize URL</label>
+      <input id="f-authorize" type="url" placeholder="https://…/oauth2/v2.0/authorize">
+      <label for="f-token">Token URL</label>
+      <input id="f-token" type="url" placeholder="https://…/oauth2/v2.0/token">
+      <label for="f-userinfo">Userinfo URL</label>
+      <input id="f-userinfo" type="url" placeholder="https://graph.microsoft.com/oidc/userinfo">
+
+      <label for="f-domains">Domaines e-mail autorisés (JIT gate) *</label>
+      <textarea id="f-domains" placeholder="corp.io&#10;revpulse.io&#10;sub.corp.io"></textarea>
+      <div class="hint">Un domaine par ligne. Seuls ces domaines peuvent créer un compte via SSO (JIT provisioning). Nettoyage auto (lowercase, sans @).</div>
+
+      <div class="toggle">
+        <input id="f-enabled" type="checkbox" checked>
+        <label for="f-enabled" style="margin:0">Activer le SSO pour ce tenant</label>
+      </div>
+
+      <div class="actions">
+        <button class="btn-primary" id="btn-save">💾 Enregistrer la configuration</button>
+        <button class="btn-danger" id="btn-delete">🗑 Supprimer</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script src="../assets/app.js"></script>
+<script>
+(function(){
+  const API = window.location.origin + '/api';
+  let TOK = localStorage.getItem('revpulse_jwt');
+  let TID = null;
+  const LANG = (localStorage.getItem('revpulse_lang') || navigator.language || 'fr').slice(0,2);
+  // Override RP.api Accept-Language if RP present
+  function al(){ return localStorage.getItem('revpulse_lang') || navigator.language || 'fr'; }
+
+  try { const s = JSON.parse(localStorage.getItem('revpulse_session')||'{}'); TID = s.activeTenantId; } catch(e){}
+
+  async function api(method, path, body){
+    const opts = {method, headers:{'Authorization':'Bearer '+TOK,'Content-Type':'application/json','Accept-Language':al()}};
+    if(body) opts.body = JSON.stringify(body);
+    const r = await fetch(API+path, opts);
+    const txt = await r.text();
+    let d = txt ? JSON.parse(txt) : null;
+    if(!r.ok){ throw new Error((d && (d.detail || d.message)) || ('HTTP '+r.status)); }
+    return d;
+  }
+
+  function setAlert(type, msg){
+    const el = document.getElementById('alert');
+    el.innerHTML = msg ? '<div class="alert '+type+'">'+msg+'</div>' : '';
+  }
+
+  async function ensureSession(){
+    if(!TOK || !TID){
+      const d = await fetch(API+'/auth/demo',{method:'POST'}).then(r=>r.json()).catch(()=>null);
+      if(d && d.token){
+        TOK = d.token; localStorage.setItem('revpulse_jwt',TOK);
+        TID = d.user?.tenants?.[0]?.id || 'tnt-demo';
+        localStorage.setItem('revpulse_session', JSON.stringify({userId:d.user.id, activeTenantId:TID}));
+      } else {
+        throw new Error('Session expirée — reconnectez-vous depuis l\'app.');
+      }
+    }
+    document.getElementById('tid-display').textContent = 'tenant: ' + TID;
+  }
+
+  async function loadConfig(){
+    try {
+      const cfg = await api('GET', '/tenants/'+TID+'/sso');
+      // Config exists → fill form
+      document.getElementById('f-client-id').value = cfg.client_id || '';
+      // Secret never returned — leave blank (user re-enters on save)
+      document.getElementById('f-client-secret').value = '';
+      document.getElementById('f-issuer').value = cfg.issuer_url || '';
+      document.getElementById('f-authorize').value = cfg.authorize_url || '';
+      document.getElementById('f-token').value = cfg.token_url || '';
+      document.getElementById('f-userinfo').value = cfg.userinfo_url || '';
+      document.getElementById('f-scopes').value = cfg.scopes || 'openid profile email';
+      document.getElementById('f-domains').value = (cfg.domains || []).join('\n');
+      document.getElementById('f-enabled').checked = cfg.enabled !== false;
+      updateBadges(cfg.has_secret, cfg.enabled);
+      setAlert('', '');
+      document.getElementById('form-area').style.display = 'block';
+      if(RP && RP.toast) RP.toast('Configuration chargée.', 'info');
+    } catch(e){
+      const msg = e.message || '';
+      if(msg.includes('404') || msg.toLowerCase().includes('aucune config') || msg.toLowerCase().includes('no sso')){
+        // No config yet — show empty form for creation
+        document.getElementById('form-area').style.display = 'block';
+        updateBadges(false, false);
+        setAlert('warn', 'Aucune configuration SSO pour ce tenant. Remplissez le formulaire ci-dessous pour activer le SSO.');
+      } else if(msg.includes('403') || msg.toLowerCase().includes('permission') || msg.toLowerCase().includes('owner') || msg.toLowerCase().includes('accès refusé')){
+        setAlert('forbidden', '⛔ Seuls les propriétaires (Owner) peuvent configurer le SSO. Votre rôle n\'a pas la permission <code>workspace.manage</code>.');
+        document.getElementById('form-area').style.display = 'none';
+      } else {
+        setAlert('err', 'Erreur de chargement : ' + msg);
+        document.getElementById('form-area').style.display = 'none';
+      }
+    }
+  }
+
+  function updateBadges(hasSecret, enabled){
+    const sb = document.getElementById('secret-badge');
+    sb.className = 'badge ' + (hasSecret ? 'ok' : 'no');
+    sb.textContent = hasSecret ? '✓ Secret stocké (chiffré)' : 'Aucun secret stocké';
+    const st = document.getElementById('status-badge');
+    st.className = 'badge ' + (enabled ? 'ok' : 'no');
+    st.textContent = enabled ? '● Activé' : '○ Désactivé';
+  }
+
+  function parseDomains(text){
+    return text.split(/[\n,]/).map(d => d.trim().toLowerCase().replace(/^@/, '')).filter(Boolean);
+  }
+
+  async function save(){
+    const btn = document.getElementById('btn-save'); btn.disabled = true; const orig = btn.textContent; btn.textContent = '…';
+    try {
+      const body = {
+        client_id: document.getElementById('f-client-id').value.trim(),
+        client_secret: document.getElementById('f-client-secret').value,
+        issuer_url: document.getElementById('f-issuer').value.trim(),
+        authorize_url: document.getElementById('f-authorize').value.trim(),
+        token_url: document.getElementById('f-token').value.trim(),
+        userinfo_url: document.getElementById('f-userinfo').value.trim(),
+        scopes: document.getElementById('f-scopes').value.trim() || 'openid profile email',
+        domains: parseDomains(document.getElementById('f-domains').value),
+        enabled: document.getElementById('f-enabled').checked,
+      };
+      if(!body.client_id || !body.client_secret){
+        throw new Error('Client ID et Client Secret sont obligatoires.');
+      }
+      if(body.domains.length === 0){
+        throw new Error('Au moins 1 domaine requis (JIT gate SSO).');
+      }
+      const cfg = await api('PUT', '/tenants/'+TID+'/sso', body);
+      updateBadges(cfg.has_secret, cfg.enabled);
+      // Clear secret field after save (never keep in DOM)
+      document.getElementById('f-client-secret').value = '';
+      setAlert('ok', '✓ Configuration SSO enregistrée. Le secret est chiffré côté serveur.');
+      if(RP && RP.toast) RP.toast('SSO enregistré.', 'success');
+    } catch(e){
+      setAlert('err', 'Erreur : ' + (e.message || 'échec sauvegarde'));
+      if(RP && RP.toast) RP.toast(e.message, 'error');
+    } finally {
+      btn.disabled = false; btn.textContent = orig;
+    }
+  }
+
+  async function del(){
+    if(!confirm('Supprimer la configuration SSO ? Les utilisateurs SSO existants ne pourront plus se connecter via SSO.')) return;
+    const btn = document.getElementById('btn-delete'); btn.disabled = true;
+    try {
+      await api('DELETE', '/tenants/'+TID+'/sso');
+      updateBadges(false, false);
+      document.getElementById('form-area').style.display = 'none';
+      setAlert('warn', 'Configuration SSO supprimée. tenant.sso_enabled = false.');
+      if(RP && RP.toast) RP.toast('SSO supprimé.', 'info');
+      // Reload after a beat to show the empty-create form
+      setTimeout(loadConfig, 600);
+    } catch(e){
+      setAlert('err', 'Erreur : ' + (e.message || 'échec suppression'));
+      if(RP && RP.toast) RP.toast(e.message, 'error');
+    } finally {
+      btn.disabled = false;
+    }
+  }
+
+  document.getElementById('btn-save').addEventListener('click', save);
+  document.getElementById('btn-delete').addEventListener('click', del);
+
+  (async function init(){
+    try { await ensureSession(); await loadConfig(); }
+    catch(e){ setAlert('err', e.message); }
+  })();
+})();
+</script>
+</body>
+</html>
