@@ -2376,7 +2376,7 @@ function ensureDemoSeed(){
   db.users=db.users||[]; db.tenants=db.tenants||[]; db.profiles=db.profiles||{}; db.members=db.members||{};
   const DEMO_EMAIL='demo@revpulse.io';
   let u=db.users.find(x=>x.email===DEMO_EMAIL);
-  if(!u){u={id:'usr-demo',name:'Alex Démo',email:DEMO_EMAIL,pwd:btoa('demo1234'),createdAt:Date.now()};db.users.push(u)}
+  if(!u){u={id:'usr-demo',name:'Alex Démo',email:DEMO_EMAIL,createdAt:Date.now()};db.users.push(u)}
   const uid1=u.id;
   let t=db.tenants.find(x=>x.id==='tnt-demo');
   if(!t){t={id:'tnt-demo',ownerId:uid1,name:'RevPulse Demo',plan:'Pro',role:'Owner',createdAt:Date.now()};db.tenants.push(t)}
@@ -2405,8 +2405,10 @@ function resetDemo(){
 function doLogin(){
   const email=$('#li-email').value.trim().toLowerCase(),pwd=$('#li-pwd').value;
   if(!email||!pwd){authErr('err-login','Renseignez e-mail et mot de passe.');return}
-  let db=loadDB(); let u=db.users.find(x=>x.email===email&&x.pwd===btoa(pwd));
-  if(!u&&email==='demo@revpulse.io'){ensureDemoSeed();db=loadDB();u=db.users.find(x=>x.email===email&&x.pwd===btoa(pwd))}
+  // P67 : mode preview file:// — auth par email seulement (pas de stockage/compare mot de passe).
+  // En production (HTTP), cette fonction est OVERRIDÉE par l'adaptateur API (apiFetch /api/auth/login + JWT).
+  let db=loadDB(); let u=db.users.find(x=>x.email===email);
+  if(!u&&email==='demo@revpulse.io'){ensureDemoSeed();db=loadDB();u=db.users.find(x=>x.email===email)}
   if(!u){authErr('err-login','Identifiants invalides. Démo : demo@revpulse.io / demo1234');return}
   saveSess({userId:u.id}); enterTenantFlow();
 }
@@ -2415,7 +2417,8 @@ function doSignup(){
   if(!name||!email||pwd.length<6){authErr('err-signup','Tous les champs requis · mot de passe ≥ 6 caractères.');return}
   const db=loadDB();
   if(db.users.some(x=>x.email===email)){authErr('err-signup','Un compte existe déjà avec cet e-mail.');return}
-  const uid1=rid('usr'); db.users.push({id:uid1,name,email,pwd:btoa(pwd),createdAt:Date.now()}); saveDB(db);
+  // P67 : mode preview file:// — pas de stockage mot de passe (override API en production HTTP).
+  const uid1=rid('usr'); db.users.push({id:uid1,name,email,createdAt:Date.now()}); saveDB(db);
   saveSess({userId:uid1}); showOnboard(null);
 }
 function demoLogin(){ensureDemoSeed();$('#li-email').value='demo@revpulse.io';$('#li-pwd').value='demo1234';doLogin()}
