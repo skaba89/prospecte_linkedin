@@ -172,9 +172,10 @@ async def stripe_webhook(request: Request, db: Session = Depends(get_db)):
     raw = await request.body()
     sig = request.headers.get("stripe-signature", "")
     payload = raw.decode("utf-8", errors="replace")
-    # P44 : en prod, signature OBLIGATOIRE (anti-abus — sans vérif, anyone peut POST un fake event upgrade).
-    if cfg.is_production and not cfg.stripe_webhook_secret:
-        raise HTTPException(401, "Webhook Stripe non configuré en prod (STRIPE_WEBHOOK_SECRET requis).") from None
+    # P63 : en prod, les 2 secrets Stripe sont requis (config fail-fast + defense-in-depth ici).
+    # Sans signature vérifiée, anyone peut POST un fake event upgrade (P0-S3 — anti free-plan-bypass).
+    if cfg.is_production and not (cfg.stripe_webhook_secret and cfg.stripe_secret_key):
+        raise HTTPException(401, "Stripe mal configuré en prod (STRIPE_SECRET_KEY + STRIPE_WEBHOOK_SECRET requis).") from None
     # Vérif signature si secret configuré + stripe lib dispo
     if cfg.stripe_webhook_secret and cfg.stripe_secret_key:
         try:
@@ -186,7 +187,7 @@ async def stripe_webhook(request: Request, db: Session = Depends(get_db)):
         except Exception as e:
             raise HTTPException(400, f"Signature Stripe invalide : {e}") from None
     else:
-        # Mode mock (dev/CI/test) — parse JSON directement. JAMAIS en prod (bloqué au-dessus).
+        # Mode mock (dev/CI/test only — JAMAIS atteint en prod grâce au check ci-dessus P63).
         try:
             event_dict = json.loads(payload)
         except Exception:

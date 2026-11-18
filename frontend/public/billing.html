@@ -246,11 +246,7 @@ async function checkout(plan){
     return;
   }
   if(r.simulated){
-    RP.toast(`Mode mock — checkout simulé pour ${plan}. Paiement réel nécessite Stripe.`,'warning');
-    // En mock, simuler le webhook pour finaliser l'upgrade (demo/CI)
-    const ev = {type:'checkout.session.completed', data:{object:{metadata:{tenant_id:TID, target_plan:plan}, customer:'cus_mock', subscription:'sub_mock'}}};
-    await fetch(API.replace('/api','')+'/api/billing/webhook', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(ev)});
-    RP.toast(`Webhook mock traité → plan ${plan} activé.`,'success');
+    RP.toast(`Mode mock — checkout simulé pour ${plan}. Paiement réel nécessite Stripe configuré (clé serveur).`,'warning');
     await loadBilling(); await loadPlans();
     return;
   }
