@@ -27,7 +27,7 @@ Sécurité (P34) :
 import io
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
+from fastapi import APIRouter, Body, Depends, File, HTTPException, UploadFile, status
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
@@ -725,12 +725,14 @@ def send_application(
     application_id: str,
     db: Session = Depends(get_db),
     user: models.User = Depends(get_current_user),
+    payload: dict | None = Body(None),
 ):
-    """Envoie une candidature via email (P38-V2) — CONSENTEMENT EXPLICITE (POST explicite, pas d'auto).
+    """Envoie une candidature via email (P38-V3) — CONSENTEMENT EXPLICITE (POST explicite, pas d'auto).
     Anti-spam : une candidature à la fois, rate-limit 50/jour.
-    - not_configured (app Gmail non configurée) → 200, sent_at=None (enregistré, pas envoyé).
-    - not_connected (app configurée, user n'a pas connecté Gmail) → 422 (doit faire OAuth).
-    - unauthorized (token expiré + refresh échec) → 401 (reconnecter Gmail).
+    P38-V3 : payload optionnel {cv_pdf_b64, cv_filename} → pièce jointe CV PDF (multipart MIME Gmail / Graph).
+    - not_configured (aucun provider configuré) → 200, sent_at=None (enregistré, pas envoyé).
+    - not_connected (provider configuré, user n'a connecté aucun) → 422 (doit faire OAuth).
+    - unauthorized (token expiré + refresh échec) → 401 (reconnecter).
     - sent → 200, sent_at + timeline mis à jour."""
     profile = _get_or_404_profile(db, user.id)
     app = db.query(models.JobApplication).filter_by(id=application_id, career_profile_id=profile.id).first()
@@ -738,7 +740,9 @@ def send_application(
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Candidature introuvable.")
     if app.application_method != "email":
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "application_method doit être 'email' pour envoi.")
-    result = email_sender.send_application_email(app, profile, db)
+    cv_pdf_b64 = (payload or {}).get("cv_pdf_b64")
+    cv_filename = (payload or {}).get("cv_filename") or "CV.pdf"
+    result = email_sender.send_application_email(app, profile, db, cv_pdf_b64, cv_filename)
     if result.status == "error":
         raise HTTPException(status.HTTP_400_BAD_REQUEST, result.error or "Erreur envoi email.")
     if result.status == "not_connected":
@@ -764,10 +768,10 @@ def send_application(
     return app
 
 
-# ─── P38-V2 — OAuth2 Gmail (authorization code flow) ─────────────────────────
-def _email_oauth_state(db: Session, user_id: str) -> str:
-    """JWT signé {uid, nonce, exp} + nonce single-use (OAuthState) — anti-CSRF + anti-rejeu (P10.3).
-    Scoped user_id (Career est user-scoped, pas tenant)."""
+# ─── P38-V3 — OAuth2 Gmail + Outlook (authorization code flow + revoke serveur) ──
+def _email_oauth_state(db: Session, user_id: str, provider: str = "gmail_oauth") -> str:
+    """JWT signé {uid, provider, nonce, exp} + nonce single-use (OAuthState) — anti-CSRF + anti-rejeu (P10.3).
+    P38-V3 : provider encodé dans le state (dispatch callback Gmail vs Outlook). Scoped user_id (Career user-scoped)."""
     import secrets as _secrets
     from datetime import timedelta
 
@@ -777,19 +781,20 @@ def _email_oauth_state(db: Session, user_id: str) -> str:
     exp = datetime.utcnow() + timedelta(minutes=10)
     db.add(models.OAuthState(tenant_id=f"career:{user_id}", nonce=nonce, expires_at=exp, used=False))
     db.commit()
-    return security.jwt.encode({"uid": user_id, "nonce": nonce, "exp": exp},
+    return security.jwt.encode({"uid": user_id, "provider": provider, "nonce": nonce, "exp": exp},
                                settings.jwt_secret, algorithm=settings.jwt_algo)
 
 
-def _verify_email_oauth_state(state: str, db: Session) -> str:
-    """Valide signature + nonce (existant, non utilisé, non expiré) → marque utilisé. Retourne user_id."""
+def _verify_email_oauth_state(state: str, db: Session) -> tuple[str, str]:
+    """Valide signature + nonce (existant, non utilisé, non expiré) → marque utilisé.
+    P38-V3 : retourne (user_id, provider) — provider pour dispatch callback Gmail vs Outlook."""
     from .. import security
     from ..config import settings
     try:
         payload = security.jwt.decode(state, settings.jwt_secret, algorithms=[settings.jwt_algo])
     except security.JWTError:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "State OAuth invalide (CSRF ?)") from None
-    uid, nonce = payload.get("uid"), payload.get("nonce")
+    uid, nonce, provider = payload.get("uid"), payload.get("nonce"), payload.get("provider", "gmail_oauth")
     if not uid or not nonce:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "State OAuth incomplet")
     row = db.query(models.OAuthState).filter_by(nonce=nonce).first()
@@ -801,39 +806,68 @@ def _verify_email_oauth_state(state: str, db: Session) -> str:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "State OAuth expiré")
     row.used = True
     db.commit()
-    return uid
+    return uid, provider
 
 
 @router.get("/email/connect/{provider}")
 def email_connect(provider: str, db: Session = Depends(get_db), user: models.User = Depends(get_current_user)):
-    """Démarre l'OAuth Gmail : renvoie l'URL de consentement Google (state signé + nonce single-use).
-    Provider supporté : gmail_oauth. Outlook v3 (Microsoft Graph)."""
+    """Démarre l'OAuth : renvoie l'URL de consentement (state signé + nonce single-use + provider encodé).
+    P38-V3 : providers supportés = gmail_oauth + outlook_oauth (Microsoft Graph)."""
     if provider not in email_sender.SUPPORTED_PROVIDERS:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, f"Provider inconnu : {provider}")
     if provider == "gmail_oauth":
         if not email_sender.is_gmail_configured():
             raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE,
                                 "App Gmail non configurée (GMAIL_CLIENT_ID/SECRET absents).")
-        state = _email_oauth_state(db, user.id)
+        state = _email_oauth_state(db, user.id, "gmail_oauth")
         return {"provider": "gmail_oauth", "auth_url": email_sender.get_gmail_oauth_url(state)}
-    # v3 : outlook_oauth (Microsoft Graph).
-    raise HTTPException(status.HTTP_501_NOT_IMPLEMENTED, "Provider non implémenté en v2 (Outlook v3).")
+    if provider == "outlook_oauth":
+        if not email_sender.is_outlook_configured():
+            raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE,
+                                "App Outlook non configurée (OUTLOOK_CLIENT_ID/SECRET absents).")
+        state = _email_oauth_state(db, user.id, "outlook_oauth")
+        return {"provider": "outlook_oauth", "auth_url": email_sender.get_outlook_oauth_url(state)}
+    raise HTTPException(status.HTTP_400_BAD_REQUEST, f"Provider non supporté : {provider}")
 
 
 @router.get("/email/oauth/callback")
 def email_oauth_callback(code: str, state: str, db: Session = Depends(get_db)):
-    """Callback OAuth Gmail : vérifie state (anti-CSRF) + exchange code → tokens (chiffrés en DB).
-    Endpoint public (pas get_current_user — Google redirige ici après consent, le user_id est dans le state JWT).
+    """Callback OAuth : vérifie state (anti-CSRF) + dispatch provider (Gmail vs Outlook) → exchange code → tokens.
+    Endpoint public (pas get_current_user — Google/MS redirige ici après consent, user_id dans le state JWT).
+    P38-V3 : provider encodé dans le state → dispatch handle_gmail_oauth_callback / handle_outlook_oauth_callback.
     Retourne {status, provider, email} ou erreur."""
-    user_id = _verify_email_oauth_state(state, db)
-    result = email_sender.handle_gmail_oauth_callback(code, state, db, user_id)
+    user_id, provider = _verify_email_oauth_state(state, db)
+    if provider == "outlook_oauth":
+        result = email_sender.handle_outlook_oauth_callback(code, state, db, user_id)
+    else:
+        result = email_sender.handle_gmail_oauth_callback(code, state, db, user_id)
     if result["status"] == "error":
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, result.get("error", "Échec connexion Gmail."))
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, result.get("error", "Échec connexion."))
     log_audit(db, tenant_id="career", actor_user_id=user_id, actor_name="",
               action="career.email.connect", target_type="user_email_integration",
               target_id=result.get("email", ""), detail={"provider": result.get("provider")})
     db.commit()
     return result
+
+
+@router.post("/email/revoke")
+def email_revoke(provider: str, db: Session = Depends(get_db), user: models.User = Depends(get_current_user)):
+    """P38-V3 : déconnecte + révoque le refresh_token côté serveur (best-effort) pour le provider.
+    Gmail : revoke endpoint Google (invalidation immédiate). Outlook : best-effort local (MS pas d'endpoint perso).
+    Retourne {revoked: bool, provider, server_side: bool}."""
+    if provider not in email_sender.SUPPORTED_PROVIDERS:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, f"Provider inconnu : {provider}")
+    deleted = email_sender.disconnect_integration(db, user.id, provider)
+    if not deleted:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, f"Aucune intégration {provider} connectée.")
+    log_audit(db, tenant_id="career", actor_user_id=user.id, actor_name=user.name,
+              action="career.email.revoke", target_type="user_email_integration",
+              target_id=provider, detail={"provider": provider, "server_side": provider == "gmail_oauth"})
+    db.commit()
+    return {"revoked": True, "provider": provider,
+            "server_side": provider == "gmail_oauth",
+            "note": "Refresh_token révoqué côté serveur (Google)." if provider == "gmail_oauth"
+                    else "Suppression locale (MS pas d'endpoint revoke perso — token expire naturellement)."}
 
 
 @router.get("/email/status")

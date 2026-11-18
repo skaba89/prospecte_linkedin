@@ -1884,6 +1884,14 @@ print("=== 227. GET /api/career/email/connect/unknown → 400 (provider inconnu)
 s, _ = call("GET", "/api/career/email/connect/unknown_provider", tok, None)
 ck(s, 400, "email connect provider inconnu → 400")
 
+print("=== 227b. GET /api/career/email/connect/outlook_oauth → 503 (Outlook non configuré en test) ===")
+s, outlook_resp = call("GET", "/api/career/email/connect/outlook_oauth", tok, None)
+ck(s, 503, f"email connect outlook 503 (OUTLOOK creds absents en test) : {s}")
+
+print("=== 227c. POST /api/career/email/revoke?provider=gmail_oauth → 404 (aucune intégration connectée) ===")
+s, _ = call("POST", "/api/career/email/revoke?provider=gmail_oauth", tok, None)
+ck(s, 404, f"email revoke 404 (aucune intégration gmail connectée) : {s}")
+
 print("=== 228. POST /api/tenants/tnt-demo/crm/contacts/{id}/enrich → 503 (Hunter non configuré) ===")
 # Créer une company + contact rattaché (le contact doit avoir un domaine pour atteindre le check Hunter)
 s, cmp_enrich = call("POST", "/api/tenants/tnt-demo/crm/companies", tok,

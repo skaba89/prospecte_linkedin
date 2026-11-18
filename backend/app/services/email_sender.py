@@ -96,6 +96,12 @@ def is_gmail_configured() -> bool:
     return bool(settings.gmail_client_id and settings.gmail_client_secret)
 
 
+def is_outlook_configured() -> bool:
+    """P38-V3 : True si Outlook OAuth2 (Microsoft Graph) est configuré
+    (OUTLOOK_CLIENT_ID + SECRET en config)."""
+    return bool(settings.outlook_client_id and settings.outlook_client_secret)
+
+
 def is_provider_configured(provider: str) -> bool:
     """Vérifie si un provider email est configuré au niveau app (OAuth credentials)."""
     if provider not in SUPPORTED_PROVIDERS:
@@ -103,8 +109,7 @@ def is_provider_configured(provider: str) -> bool:
     if provider == "gmail_oauth":
         return is_gmail_configured()
     if provider == "outlook_oauth":
-        # v3 : Microsoft Graph (outlook_client_id/secret). v2 : non implémenté.
-        return False
+        return is_outlook_configured()
     return False
 
 
@@ -244,7 +249,11 @@ def _get_valid_access_token(integration, db) -> str | None:
         refresh_token = crypto.decrypt(integration.refresh_token_encrypted)
     except Exception:
         return None
-    tokens = _refresh_access_token(refresh_token)
+    # P38-V3 : dispatch refresh par provider (Gmail vs Outlook Microsoft Graph).
+    if integration.provider == "outlook_oauth":
+        tokens = _refresh_outlook_token(refresh_token)
+    else:
+        tokens = _refresh_access_token(refresh_token)
     if not tokens or "access_token" not in tokens:
         return None
     new_access = tokens["access_token"]
@@ -255,25 +264,52 @@ def _get_valid_access_token(integration, db) -> str | None:
     return new_access
 
 
-def _build_rfc5322_message(sender: str, to: str, subject: str, body: str) -> str:
+def _build_rfc5322_message(sender: str, to: str, subject: str, body: str,
+                           attachments: list | None = None) -> str:
     """Construit un message RFC 5322 (headers From/To/Subject + body) → base64url (Gmail API format).
-    Pas de MIME multipart (body texte plain) — gardé simple pour MVP. v3 : multipart pour pièces jointes (CV PDF)."""
-    # Encodage UTF-8 pour accents (subject + body). Encoded-word pour subject si non-ASCII.
+    P38-V3 : multipart MIME si attachments (CV PDF). Sinon MIMEText plain (MVP original)."""
     from email.header import Header
+    from email.mime.application import MIMEApplication
+    from email.mime.multipart import MIMEMultipart
     from email.mime.text import MIMEText
-    msg = MIMEText(body, "plain", "utf-8")
-    msg["From"] = sender
-    msg["To"] = to
-    msg["Subject"] = Header(subject, "utf-8")
+    if attachments:
+        # Multipart : body text + 1 pièce jointe par attachment (CV PDF).
+        msg = MIMEMultipart()
+        msg["From"] = sender
+        msg["To"] = to
+        msg["Subject"] = Header(subject, "utf-8")
+        msg.attach(MIMEText(body, "plain", "utf-8"))
+        for att in attachments:
+            part = MIMEApplication(_b64decode(att["content_bytes_b64"]),
+                                   Name=att["name"])
+            part["Content-Disposition"] = f'attachment; filename="{att["name"]}"'
+            part.add_header("Content-Type", att.get("contentType", "application/pdf"))
+            msg.attach(part)
+    else:
+        msg = MIMEText(body, "plain", "utf-8")
+        msg["From"] = sender
+        msg["To"] = to
+        msg["Subject"] = Header(subject, "utf-8")
     raw = msg.as_string()
     # Gmail API attend base64url (sans padding)
     return base64.urlsafe_b64encode(raw.encode("utf-8")).decode("ascii")
 
 
-def _send_via_gmail(access_token: str, sender: str, to: str, subject: str, body: str) -> dict:
+def _b64decode(b64_str: str) -> bytes:
+    """Décode base64 (standard ou urlsafe, avec ou sans padding) → bytes."""
+    import binascii
+    pad = "=" * (-len(b64_str) % 4)
+    try:
+        return base64.urlsafe_b64decode(b64_str + pad)
+    except (binascii.Error, ValueError):
+        return base64.b64decode(b64_str + pad)
+
+
+def _send_via_gmail(access_token: str, sender: str, to: str, subject: str, body: str,
+                    attachments: list | None = None) -> dict:
     """Envoie un email via Gmail API (POST gmail.googleapis.com/gmail/v1/users/me/messages/send).
-    Retourne {status: sent|error, message_id?, error?}."""
-    raw_message = _build_rfc5322_message(sender, to, subject, body)
+    P38-V3 : attachments (CV PDF) via multipart MIME. Retourne {status: sent|error, message_id?, error?}."""
+    raw_message = _build_rfc5322_message(sender, to, subject, body, attachments)
     payload = json.dumps({"raw": raw_message}).encode("utf-8")
     url = f"{settings.gmail_api_base}/messages/send"
     req = urllib.request.Request(
@@ -294,6 +330,169 @@ def _send_via_gmail(access_token: str, sender: str, to: str, subject: str, body:
         return {"status": "error", "error": f"Gmail API injoignable — {type(e).__name__}: {e}"}
 
 
+# ─── P38-V3 — Outlook OAuth2 (Microsoft Graph) ─────────────────────────────
+OUTLOOK_SCOPE = "https://graph.microsoft.com/Mail.Send https://graph.microsoft.com/User.Read offline_access"
+
+
+def get_outlook_oauth_url(state: str) -> str:
+    """P38-V3 : construit l'URL de consentement Microsoft (authorization code flow).
+    GET {authority}/authorize?response_type=code&client_id=...&redirect_uri=...&scope=...&state=...
+    Scope Mail.Send + User.Read + offline_access (refresh_token)."""
+    params = {
+        "response_type": "code",
+        "client_id": settings.outlook_client_id,
+        "redirect_uri": settings.outlook_redirect_uri,
+        "scope": OUTLOOK_SCOPE,
+        "state": state,
+        "response_mode": "query",
+    }
+    return f"{settings.outlook_authority}/authorize?{urllib.parse.urlencode(params)}"
+
+
+def _exchange_outlook_code(code: str) -> dict | None:
+    """P38-V3 : exchange authorization code → tokens (POST {authority}/token).
+    Retourne {access_token, refresh_token, expires_in, scope} ou None si échec."""
+    data = urllib.parse.urlencode({
+        "client_id": settings.outlook_client_id,
+        "client_secret": settings.outlook_client_secret,
+        "code": code,
+        "redirect_uri": settings.outlook_redirect_uri,
+        "grant_type": "authorization_code",
+        "scope": OUTLOOK_SCOPE,
+    }).encode("utf-8")
+    req = urllib.request.Request(
+        f"{settings.outlook_authority}/token", data=data, method="POST",
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=_HTTP_TIMEOUT) as resp:
+            return json.loads(resp.read().decode("utf-8"))
+    except urllib.error.HTTPError as e:
+        log.warning("Outlook token exchange HTTP %s.", e.code)
+        return None
+    except Exception as e:
+        log.warning("Outlook token exchange échec : %s", type(e).__name__)
+        return None
+
+
+def _get_outlook_user_email(access_token: str) -> str | None:
+    """P38-V3 : récupère l'email de l'utilisateur via Microsoft Graph GET /me."""
+    req = urllib.request.Request(
+        f"{settings.outlook_api_base}/me",
+        headers={"Authorization": f"Bearer {access_token}", "Accept": "application/json"},
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=_HTTP_TIMEOUT) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+        # /me retourne userPrincipalName OU mail
+        return data.get("mail") or data.get("userPrincipalName")
+    except Exception as e:
+        log.warning("Outlook /me échec : %s", type(e).__name__)
+        return None
+
+
+def handle_outlook_oauth_callback(code: str, state: str, db, user_id: str) -> dict:
+    """P38-V3 : traite le callback Outlook (exchange code + persist tokens chiffrés).
+    Retourne {status: connected|error, provider, email?, error?}."""
+    tokens = _exchange_outlook_code(code)
+    if not tokens or "access_token" not in tokens:
+        return {"status": "error", "provider": "outlook_oauth",
+                "error": "Exchange code Outlook échec (code invalide/expiré)."}
+    access_token = tokens["access_token"]
+    refresh_token = tokens.get("refresh_token")  # offline_access → présent au premier consent
+    expires_in = int(tokens.get("expires_in", 3600))
+    user_email = _get_outlook_user_email(access_token) or "outlook-user@unknown"
+    # Upsert UserEmailIntegration (unique user_id + provider)
+    from .. import models as M
+    integration = db.query(M.UserEmailIntegration).filter(
+        M.UserEmailIntegration.user_id == user_id,
+        M.UserEmailIntegration.provider == "outlook_oauth",
+    ).first()
+    now = datetime.utcnow()
+    if integration:
+        integration.access_token_encrypted = crypto.encrypt(access_token)
+        integration.refresh_token_encrypted = crypto.encrypt(refresh_token) if refresh_token else integration.refresh_token_encrypted
+        integration.access_token_expires_at = now + timedelta(seconds=expires_in)
+        integration.email = user_email
+        integration.scopes = tokens.get("scope", OUTLOOK_SCOPE)
+    else:
+        integration = M.UserEmailIntegration(
+            user_id=user_id, provider="outlook_oauth", email=user_email,
+            access_token_encrypted=crypto.encrypt(access_token),
+            refresh_token_encrypted=crypto.encrypt(refresh_token) if refresh_token else None,
+            access_token_expires_at=now + timedelta(seconds=expires_in),
+            scopes=tokens.get("scope", OUTLOOK_SCOPE),
+        )
+        db.add(integration)
+    db.commit()
+    log.info("Outlook connecté pour user=%s (email=%s).", user_id, user_email)
+    return {"status": "connected", "provider": "outlook_oauth", "email": user_email}
+
+
+def _refresh_outlook_token(refresh_token: str) -> dict | None:
+    """P38-V3 : refresh access_token via refresh_token (POST {authority}/token).
+    Retourne {access_token, expires_in} ou None si échec."""
+    data = urllib.parse.urlencode({
+        "client_id": settings.outlook_client_id,
+        "client_secret": settings.outlook_client_secret,
+        "refresh_token": refresh_token,
+        "grant_type": "refresh_token",
+        "scope": OUTLOOK_SCOPE,
+    }).encode("utf-8")
+    req = urllib.request.Request(
+        f"{settings.outlook_authority}/token", data=data, method="POST",
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=_HTTP_TIMEOUT) as resp:
+            return json.loads(resp.read().decode("utf-8"))
+    except urllib.error.HTTPError as e:
+        log.warning("Outlook refresh échec HTTP %s.", e.code)
+        return None
+    except Exception as e:
+        log.warning("Outlook refresh échec : %s", type(e).__name__)
+        return None
+
+
+def _send_via_outlook(access_token: str, sender: str, to: str, subject: str, body: str,
+                      attachments: list | None = None) -> dict:
+    """P38-V3 : envoie un email via Microsoft Graph POST /me/sendMail.
+    attachments : [{name, content_bytes_b64}] (CV PDF). sender ignoré (implied par access_token).
+    Retourne {status: sent|error, message_id?, error?}."""
+    msg = {
+        "subject": subject,
+        "body": {"contentType": "Text", "content": body},
+        "toRecipients": [{"emailAddress": {"address": to}}],
+        "from": {"emailAddress": {"address": sender}} if sender and sender != "me" else None,
+    }
+    if attachments:
+        msg["attachments"] = [
+            {"@odata.type": "#microsoft.graph.fileAttachment",
+             "name": a["name"], "contentType": a.get("contentType", "application/pdf"),
+             "contentBytes": a["content_bytes_b64"]}
+            for a in attachments
+        ]
+    payload = json.dumps({"message": msg, "saveToSentItems": True}).encode("utf-8")
+    req = urllib.request.Request(
+        f"{settings.outlook_api_base}/me/sendMail", data=payload, method="POST",
+        headers={"Authorization": f"Bearer {access_token}", "Content-Type": "application/json"},
+    )
+    try:
+        # /me/sendMail retourne 202 Accepted (no body).
+        with urllib.request.urlopen(req, timeout=_HTTP_TIMEOUT) as resp:
+            if resp.status == 202:
+                return {"status": "sent", "message_id": f"outlook-{int(datetime.utcnow().timestamp())}"}
+            return {"status": "sent", "message_id": f"outlook-{resp.status}"}
+    except urllib.error.HTTPError as e:
+        if e.code == 401:
+            return {"status": "unauthorized", "error": "Outlook Graph 401 — access_token invalide."}
+        body_err = e.read().decode("utf-8", errors="replace")[:300]
+        return {"status": "error", "error": f"Outlook Graph HTTP {e.code} — {body_err}"}
+    except Exception as e:
+        return {"status": "error", "error": f"Outlook Graph injoignable — {type(e).__name__}: {e}"}
+
+
+# ─── Intégrations (persistance + revoke) ───────────────────────────────────
 def get_user_integration(db, user_id: str, provider: str = "gmail_oauth"):
     """Retourne l'intégration email de l'utilisateur pour le provider (None si non connecté)."""
     from .. import models as M
@@ -313,8 +512,40 @@ def list_user_integrations(db, user_id: str) -> list[dict]:
              "connected_at": r.created_at.isoformat() if r.created_at else None} for r in rows]
 
 
+def _revoke_provider_token(integration, provider: str) -> bool:
+    """P38-V3 : révoque le refresh_token côté serveur (best-effort, avant suppression DB).
+    Gmail : POST oauth2.googleapis.com/revoke?token=refresh_token (invalide immédiatement).
+    Outlook : pas d'endpoint revoke simple pour comptes perso MS (token expire ~1h access /
+    refresh ~90j) — best-effort = suppression locale (enterprise : admin Azure AD revoke)."""
+    if not integration.refresh_token_encrypted:
+        return False
+    try:
+        refresh_token = crypto.decrypt(integration.refresh_token_encrypted)
+    except Exception:
+        return False
+    if provider == "gmail_oauth":
+        data = urllib.parse.urlencode({"token": refresh_token}).encode("utf-8")
+        req = urllib.request.Request(
+            "https://oauth2.googleapis.com/revoke", data=data, method="POST",
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=_HTTP_TIMEOUT) as resp:
+                log.info("Gmail refresh_token révoqué côté serveur (HTTP %s).", resp.status)
+                return True
+        except Exception as e:
+            log.warning("Gmail revoke best-effort échoué : %s", type(e).__name__)
+            return False
+    elif provider == "outlook_oauth":
+        # MS pas d'endpoint revoke perso — best-effort local (token expire naturellement).
+        log.info("Outlook revoke best-effort (local delete — MS pas d'endpoint revoke perso).")
+        return False
+    return False
+
+
 def disconnect_integration(db, user_id: str, provider: str) -> bool:
-    """Supprime l'intégration email (révocation user-side). Retourne True si supprimée."""
+    """Supprime l'intégration email. P38-V3 : revoke côté serveur (best-effort) AVANT suppression DB.
+    Retourne True si l'intégration existait + fut supprimée."""
     from .. import models as M
     integration = db.query(M.UserEmailIntegration).filter(
         M.UserEmailIntegration.user_id == user_id,
@@ -322,22 +553,25 @@ def disconnect_integration(db, user_id: str, provider: str) -> bool:
     ).first()
     if not integration:
         return False
+    # P38-V3 : revoke serveur best-effort (même si échec, on supprime local — user-side isolé).
+    _revoke_provider_token(integration, provider)
     db.delete(integration)
     db.commit()
-    # v3 : appeler Google revoke endpoint (https://oauth2.googleapis.com/revoke?token=refresh_token)
-    # pour invalider côté serveur. v2 : suppression DB suffit (user-side).
     return True
 
 
-def send_application_email(application, profile, db) -> SendResult:
-    """Envoie une candidature via l'intégration email OAuth2 de l'utilisateur (P38-V2).
+def send_application_email(application, profile, db, cv_pdf_b64: str | None = None,
+                           cv_filename: str = "CV.pdf") -> SendResult:
+    """Envoie une candidature via l'intégration email OAuth2 de l'utilisateur (P38-V3).
 
-    - App Gmail non configurée (GMAIL_CLIENT_ID/SECRET absents) → status "not_configured".
-    - User n'a pas connecté son Gmail → status "not_connected" (doit faire OAuth).
-    - Gmail connecté → refresh access_token si expiré → Gmail API send → status "sent" + message_id.
-    - 401 (refresh échec) → status "unauthorized" (user doit reconnecter).
+    - Aucun provider configuré (GMAIL/OUTLOOK creds absents) → status "not_configured".
+    - User n'a connecté aucun provider → status "not_connected" (doit faire OAuth).
+    - Provider connecté → refresh access_token si expiré → send via Gmail/Outlook → status "sent".
+    - P38-V3 : cv_pdf_b64 (base64 PDF) attaché en pièce jointe (multipart MIME Gmail / Graph attachments).
+    - 401 (refresh échec) → status "unauthorized" (user doit reconnecter) + revoke stale.
     - API error/timeout → status "error".
 
+    Dispatch provider : si user a connecté Gmail → Gmail ; sinon Outlook ; sinon not_connected.
     Anti-spam : une candidature à la fois, consentement explicite (POST /applications/{id}/send).
     Rate-limit : max DAILY_SEND_LIMIT par jour par candidat."""
     # Anti-abus : rate-limit.
@@ -351,36 +585,57 @@ def send_application_email(application, profile, db) -> SendResult:
     if not application.recipient_email:
         return SendResult(status="error", error="recipient_email requis pour envoi email.")
 
-    # v1 stub : app Gmail non configurée.
-    if not is_gmail_configured():
-        log.info("Envoi candidature app=%s — app Gmail non configurée (not_configured).", application.id)
-        return SendResult(status="not_configured", provider="none",
-                          error="App Gmail non configurée (GMAIL_CLIENT_ID/SECRET absents). Configurez OAuth2 Gmail.",
-                          detail={"recipient": application.recipient_email, "provider_v2": SUPPORTED_PROVIDERS})
-
-    # v2 : récupérer l'intégration Gmail du user (via profile → user).
+    # P38-V3 : dispatch provider — Gmail en priorité, sinon Outlook.
     user_id = profile.user_id
-    integration = get_user_integration(db, user_id, "gmail_oauth")
-    if not integration:
-        return SendResult(status="not_connected", provider="gmail_oauth",
-                          error="Gmail non connecté. Connectez votre compte via /api/career/email/connect/gmail_oauth.",
-                          detail={"recipient": application.recipient_email})
+    provider = None
+    integration = None
+    if is_gmail_configured():
+        integration = get_user_integration(db, user_id, "gmail_oauth")
+        if integration:
+            provider = "gmail_oauth"
+    if not provider and is_outlook_configured():
+        integration = get_user_integration(db, user_id, "outlook_oauth")
+        if integration:
+            provider = "outlook_oauth"
 
-    # Access token valide (refresh si expiré).
+    # Aucun provider configuré au niveau app.
+    if not is_gmail_configured() and not is_outlook_configured():
+        log.info("Envoi candidature app=%s — aucun provider configuré (not_configured).", application.id)
+        return SendResult(status="not_configured", provider="none",
+                          error="Aucun provider email configuré (GMAIL/OUTLOOK creds absents). Configurez OAuth2.",
+                          detail={"recipient": application.recipient_email, "providers": SUPPORTED_PROVIDERS})
+
+    # App configurée mais user n'a connecté aucun provider.
+    if not provider or not integration:
+        configured = [p for p in SUPPORTED_PROVIDERS if is_provider_configured(p)]
+        return SendResult(status="not_connected", provider=configured[0] if configured else "none",
+                          error=f"Aucun provider connecté. Connectez via /api/career/email/connect/{configured[0] if configured else 'gmail_oauth'}.",
+                          detail={"recipient": application.recipient_email, "configured": configured})
+
+    # Access token valide (refresh si expiré — dispatch par provider dans _get_valid_access_token).
     access_token = _get_valid_access_token(integration, db)
     if not access_token:
         # Refresh échec → user doit reconnecter (révoque l'intégration stale).
-        disconnect_integration(db, user_id, "gmail_oauth")
-        return SendResult(status="unauthorized", provider="gmail_oauth",
-                          error="Token Gmail expiré + refresh échec. Reconnectez votre Gmail.")
+        disconnect_integration(db, user_id, provider)
+        return SendResult(status="unauthorized", provider=provider,
+                          error=f"Token {provider} expiré + refresh échec. Reconnectez votre compte.")
 
-    # Construire le sujet + corps depuis la candidature.
+    # Construire le sujet + corps + attachments depuis la candidature.
     sender = integration.email or "me"
     subject = f"Candidature — {application.job_title} chez {application.company}"
     body = application.cover_letter or f"Madame, Monsieur,\n\nJe vous prie de trouver ci-joint ma candidature pour le poste de {application.job_title} chez {application.company}.\n\nCordialement."
+    attachments = []
+    if cv_pdf_b64:
+        attachments.append({"name": cv_filename, "content_bytes_b64": cv_pdf_b64,
+                            "contentType": "application/pdf"})
 
-    # Envoi via Gmail API.
-    result = _send_via_gmail(access_token, sender, application.recipient_email, subject, body)
+    # Envoi via le provider connecté (dispatch Gmail vs Outlook Graph).
+    if provider == "outlook_oauth":
+        result = _send_via_outlook(access_token, sender, application.recipient_email,
+                                   subject, body, attachments)
+    else:
+        result = _send_via_gmail(access_token, sender, application.recipient_email,
+                                 subject, body, attachments)
     if result["status"] == "sent":
         sent_at = datetime.utcnow()
         # Mettre à jour la candidature (sent_at + status + application_method=email).
@@ -388,15 +643,16 @@ def send_application_email(application, profile, db) -> SendResult:
         application.application_method = "email"
         application.status = "submitted"
         db.commit()
-        log.info("Candidature app=%s envoyée via Gmail (message_id=%s).",
-                 application.id, result.get("message_id"))
-        return SendResult(status="sent", provider="gmail_oauth",
+        log.info("Candidature app=%s envoyée via %s (message_id=%s, attachments=%d).",
+                 application.id, provider, result.get("message_id"), len(attachments))
+        return SendResult(status="sent", provider=provider,
                           message_id=result.get("message_id"), sent_at=sent_at,
-                          detail={"recipient": application.recipient_email, "sender": sender})
+                          detail={"recipient": application.recipient_email, "sender": sender,
+                                  "attachments": len(attachments), "cv_filename": cv_filename if attachments else None})
     if result["status"] == "unauthorized":
-        disconnect_integration(db, user_id, "gmail_oauth")
-        return SendResult(status="unauthorized", provider="gmail_oauth",
-                          error=result.get("error", "Gmail 401."))
-    return SendResult(status="error", provider="gmail_oauth",
-                      error=result.get("error", "Échec envoi Gmail."),
+        disconnect_integration(db, user_id, provider)
+        return SendResult(status="unauthorized", provider=provider,
+                          error=result.get("error", f"{provider} 401."))
+    return SendResult(status="error", provider=provider,
+                      error=result.get("error", f"Échec envoi {provider}."),
                       detail={"recipient": application.recipient_email})
