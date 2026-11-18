@@ -320,6 +320,33 @@ class AuditAlertsOut(BaseModel):
     alerts: list[AuditAlertItem]
 
 
+# ─── P55 : Webhook alerts compliance (notify endpoint + config) ───
+class AuditWebhookConfig(BaseModel):
+    """Config webhook alerts d'un tenant (P55) — PUT /audit/alerts/webhook."""
+    webhook_url: str | None = None  # URL Slack/email/custom (nullable = désactivé)
+    min_severity: str = "high"  # high|medium|low — seules les alerts >= min_severity sont notifiées
+
+
+class AlertNotifyItem(BaseModel):
+    """Résultat de notification d'une alerte (P55) : statut POST webhook + payload résumé."""
+    kind: str
+    severity: str
+    label: str
+    count: int
+    status: int  # code HTTP du POST (0 si pas de webhook configuré / erreur réseau)
+    delivered: bool  # True si POST 2xx
+
+
+class NotifyResult(BaseModel):
+    """Résultat d'un POST /audit/alerts/notify (P55) : alerts évaluées + notifiées."""
+    window_hours: int
+    min_severity: str
+    webhook_url: str | None
+    evaluated: int  # total alerts détectées
+    notified: int  # alerts >= min_severity avec webhook configuré
+    results: list[AlertNotifyItem]
+
+
 # ---- P21 : Audit & compliance UI (stats + filtres + export) ----
 class AuditCountItem(BaseModel):
     """Item de comptage agrégé (P21) : label (action ou actor_name) + nombre d'occurrences.
