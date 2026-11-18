@@ -106,6 +106,28 @@ def me(user: models.User = Depends(get_current_user)):
     return user
 
 
+@router.patch("/me", response_model=schemas.UserOut)
+def update_me(body: schemas.ProfileUpdate, user: models.User = Depends(get_current_user),
+              db: Session = Depends(get_db)):
+    """PATCH /auth/me : rectification des données personnelles par l'utilisateur lui-même (RGPD Art. 16).
+    Self-service — l'user corrige son name + locale (PII qu'il contrôle). Email NON modifiable ici
+    (changement d'email = flow verify-email séparé pour éviter le takeover via email swap). Audit
+    auth.profile.update (via la 1ère membership active du user pour le tenant_id)."""
+    changed = []
+    if body.name and body.name != user.name:
+        user.name = body.name
+        changed.append("name")
+    if body.locale and body.locale != user.locale:
+        user.locale = body.locale
+        changed.append("locale")
+    if not changed:
+        return user
+    db.commit()
+    _log_twofa_event(db, user, "auth.profile.update")
+    db.commit()
+    return user
+
+
 # ─── P62 — 2FA/TOTP (RFC 6238) ───
 
 def _totp(secret: str) -> pyotp.TOTP:
