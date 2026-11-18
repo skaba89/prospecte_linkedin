@@ -173,6 +173,11 @@ jobs:
         env:
           REVPULSE_DATABASE_URL: sqlite:///./revpulse_p29_test.db
           REVPULSE_ENV: test
+      - name: P38-V3 Outlook OAuth + CV PDF multipart + revoke Google (mock HTTP)
+        run: python tests/test_p38_v3_outlook_attachments.py
+        env:
+          REVPULSE_DATABASE_URL: sqlite:///./revpulse_p38_v3_test.db
+          REVPULSE_ENV: test
       - name: Run P3 tests (pagination + request-ID + health)
         run: python tests/test_p3.py
         env:

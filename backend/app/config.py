@@ -100,6 +100,17 @@ class Settings(BaseSettings):
     gmail_token_url: str = "https://oauth2.googleapis.com/token"
     gmail_api_base: str = "https://gmail.googleapis.com/gmail/v1/users/me"
 
+    # Outlook OAuth2 — P38-V3 envoi candidatures via Microsoft Graph. Authorization code flow
+    # (3-legged) : user connecte son compte Microsoft → callback exchange code → refresh_token
+    # chiffré (Fernet) en DB. Si client_id + client_secret non renseignés → status not_configured.
+    # Azure AD app registration : https://portal.azure.com/ (API permissions: Mail.Send + User.Read +
+    # offline_access). Scope = https://graph.microsoft.com/Mail.Send offline_access.
+    outlook_client_id: str = ""
+    outlook_client_secret: str = ""
+    outlook_redirect_uri: str = "http://localhost:5173/api/career/email/oauth/callback"
+    outlook_authority: str = "https://login.microsoftonline.com/common/oauth2/v2.0"
+    outlook_api_base: str = "https://graph.microsoft.com/v1.0"
+
     # Hunter.io — P29-V2 enrichment prospects Business. Email Finder API (free tier 25 searches/mois).
     # GET https://api.hunter.io/v2/email-finder?domain=X&first_name=Y&last_name=Z&api_key=KEY
     # → {email, score (confiance 0-100), position, company}. Si api_key non renseigné → status "not_configured"
