@@ -1740,10 +1740,11 @@ s, connectors = call("GET", "/api/career/jobs/connectors", tok)
 ck(s, 200, "jobs connectors 200")
 ck(len(connectors), 12, f"{len(connectors)} connecteurs (12 — LinkedIn Jobs/Free-Work/Malt/...)")
 ck(any(c["name"] == "linkedin_jobs" for c in connectors), True, "contient linkedin_jobs")
-ck(any(c["name"] == "france_travail" for c in connectors), True, "contient france_travail (RSS public)")
-# RSS connectors configured=True (france_travail + career_sites), API connectors not_configured.
+ck(any(c["name"] == "france_travail" for c in connectors), True, "contient france_travail (oauth2 v2 réel)")
+# P35-V2 : career_sites = RSS public (configured=True). france_travail = oauth2 réel (not_configured
+# sans credentials REVPULSE_FRANCE_TRAVAIL_CLIENT_ID/SECRET). 10 autres API = not_configured.
 rss = [c for c in connectors if c["configured"]]
-ck(len(rss), 2, f"{len(rss)} connecteurs RSS configurés (france_travail + career_sites)")
+ck(len(rss), 1, f"{len(rss)} connecteur RSS configuré (career_sites seulement — france_travail v2 oauth2)")
 
 print("=== 207. POST /api/career/jobs/search → 200 (0 postings v1 stubs — anti-faux-succès) ===")
 s, search_resp = call("POST", "/api/career/jobs/search", tok,
@@ -1754,7 +1755,7 @@ ck(len(search_resp.get("connector_statuses", [])), 12, f"12 connecteurs interrog
 # Aucun connecteur ne prétend avoir des postings (anti-faux-succès).
 statuses = {c["name"]: c["status"] for c in search_resp.get("connector_statuses", [])}
 ck(statuses.get("linkedin_jobs"), "not_configured", f"linkedin_jobs not_configured (credential absent) : {statuses.get('linkedin_jobs')}")
-ck(statuses.get("france_travail"), "ok", f"france_travail (RSS) status=ok : {statuses.get('france_travail')}")
+ck(statuses.get("france_travail"), "not_configured", f"france_travail (v2 oauth2) status=not_configured sans credentials : {statuses.get('france_travail')}")
 
 print("=== 208. POST /api/career/saved-searches → 201 (create PO Paris CDI) ===")
 s, saved = call("POST", "/api/career/saved-searches", tok,
