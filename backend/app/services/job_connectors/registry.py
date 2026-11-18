@@ -26,7 +26,8 @@ documente sa méthode d'accès (auth_method). v2 : implémentation concrète par
 from __future__ import annotations
 
 from .base import ConnectorResult, JobConnector, SearchCriteria
-from .france_travail import _is_configured as _ft_configured, search_france_travail
+from .france_travail import _is_configured as _ft_configured
+from .france_travail import search_france_travail
 
 
 class _StubConnector(JobConnector):

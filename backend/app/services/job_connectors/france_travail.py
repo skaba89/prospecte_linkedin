@@ -37,7 +37,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from ...config import settings
@@ -140,7 +140,7 @@ def _parse_date_creation(epoch_ms: int | None) -> datetime | None:
     if not epoch_ms:
         return None
     try:
-        return datetime.fromtimestamp(epoch_ms / 1000, tz=timezone.utc).replace(tzinfo=None)
+        return datetime.fromtimestamp(epoch_ms / 1000, tz=UTC).replace(tzinfo=None)
     except (ValueError, OSError):
         return None
 
@@ -233,7 +233,6 @@ def search_france_travail(criteria: SearchCriteria) -> ConnectorResult:
             headers={"Authorization": f"Bearer {token}", "Accept": "application/json"},
         )
         with urllib.request.urlopen(req, timeout=_HTTP_TIMEOUT) as resp:
-            status_code = resp.status
             payload = json.loads(resp.read().decode("utf-8"))
     except urllib.error.HTTPError as e:
         if e.code == 401:
@@ -241,7 +240,7 @@ def search_france_travail(criteria: SearchCriteria) -> ConnectorResult:
             _TOKEN_CACHE["access_token"] = ""
             _TOKEN_CACHE["expires_at"] = 0.0
             return ConnectorResult(connector_name=name, status="unauthorized",
-                                   error=f"France Travail API 401 — token invalide.")
+                                   error="France Travail API 401 — token invalide.")
         return ConnectorResult(connector_name=name, status="error",
                                error=f"France Travail API HTTP {e.code} — {e.reason}")
     except Exception as e:
