@@ -72,6 +72,14 @@ def gdpr_export(
     job_apps = []
     if career:
         job_apps = db.query(models.JobApplication).filter_by(career_profile_id=career.id).all()
+    # P65 (P0-G2) — Art. 20 portabilité COMPLÈTE : OAuth Gmail/Outlook + CVs + ConsentRecords +
+    # Notifications. Avant P65, ces surfaces PII manquaient de l'export (refus de portabilité).
+    oauth_integrations = db.query(models.UserEmailIntegration).filter_by(user_id=user_id).all()
+    cvs = []
+    if career:
+        cvs = db.query(models.CV).filter_by(career_profile_id=career.id).all()
+    consents = db.query(models.ConsentRecord).filter_by(tenant_id=tid, user_id=user_id).all()
+    notifications = db.query(models.Notification).filter_by(tenant_id=tid, user_id=user_id).all()
 
     return {
         "tenant_id": tid,
@@ -105,8 +113,30 @@ def gdpr_export(
                               "adapted_cv_id": a.adapted_cv_id,
                               "created_at": a.created_at.isoformat() if a.created_at else None}
                              for a in job_apps],
+        # P65 (P0-G2) — surfaces PII ajoutées pour portabilité complète (Art. 20).
+        "email_integrations": [{"id": uei.id, "provider": uei.provider, "email": uei.email,
+                                "scopes": uei.scopes,
+                                "access_token_expires_at": uei.access_token_expires_at.isoformat() if uei.access_token_expires_at else None}
+                               for uei in oauth_integrations],  # tokens chiffrés NON exportés (sensibles)
+        "cvs": [{"id": cv.id, "title": cv.title, "raw_text": cv.raw_text,
+                 "parsed_data": cv.parsed_data,
+                 "source_filename": cv.source_filename,
+                 "created_at": cv.created_at.isoformat() if cv.created_at else None}
+                for cv in cvs],
+        "consents": [{"id": c.id, "purpose": c.purpose,
+                      "granted_at": c.granted_at.isoformat() if c.granted_at else None,
+                      "withdrawn_at": c.withdrawn_at.isoformat() if c.withdrawn_at else None,
+                      "privacy_policy_version": c.privacy_policy_version}
+                     for c in consents],
+        "notifications": [{"id": n.id, "type": n.type, "channel": n.channel,
+                           "recipient_email": n.recipient_email, "subject": n.subject,
+                           "body_text": n.body_text, "status": n.status,
+                           "created_at": n.created_at.isoformat() if n.created_at else None}
+                          for n in notifications],
         "counts": {"contacts": len(contacts), "audit_entries": len(audit_entries),
-                   "job_applications": len(job_apps)},
+                   "job_applications": len(job_apps),
+                   "email_integrations": len(oauth_integrations), "cvs": len(cvs),
+                   "consents": len(consents), "notifications": len(notifications)},
     }
 
 
@@ -143,6 +173,10 @@ def gdpr_erase(
 
     now = datetime.utcnow()
     anonymized_tag = "Anonymized (GDPR)"
+    # P65 (P0-G3) — capturer les PII originales AVANT scrub pour cascade (AuditLog.detail contient
+    # l'email en clair dans des entries d'autres acteurs — notifications.py/crm.py loggent "email": email).
+    original_email = user.email
+    original_name = user.name
 
     # 1. User : scrub name + email (unique préservé via _erased_email) + gdpr_erased_at = now
     user.name = anonymized_tag
@@ -168,13 +202,56 @@ def gdpr_erase(
     for a in audit_entries:
         a.actor_name = anonymized_tag
 
+    # P65 (P0-G3) — Cascade effacement : surfaces PII qui survivaient à l'erase avant P65.
+
+    # 4b. AuditLog.detail scrub : les entries (de TOUS les acteurs du tenant) dont le detail JSON contient
+    # l'email original du user en clair (ex: notifications.py detail={"email": email}, crm.py). Sans ce scrub,
+    # le user "anonymisé" reste traçable par son email dans l'audit trail → Art. 17 violé.
+    def _scrub_detail(detail):
+        """Remplace récursivement les occurrences de l'email/nom original dans un objet JSON."""
+        if isinstance(detail, str):
+            return detail.replace(original_email, _erased_email(user_id)).replace(original_name, anonymized_tag)
+        if isinstance(detail, list):
+            return [_scrub_detail(x) for x in detail]
+        if isinstance(detail, dict):
+            return {k: _scrub_detail(v) for k, v in detail.items()}
+        return detail
+
+    tenant_audit = db.query(models.AuditLog).filter_by(tenant_id=tid).all()
+    detail_scrubbed = 0
+    for a in tenant_audit:
+        if a.detail and (original_email in str(a.detail) or original_name in str(a.detail)):
+            a.detail = _scrub_detail(a.detail)
+            detail_scrubbed += 1
+
+    # 4c. UserEmailIntegration (OAuth Gmail/Outlook) : HARD DELETE — révoque l'accès (refresh_token +
+    # access_token supprimés). Avant P65, les tokens restaient valides en DB + côté Google/Microsoft →
+    # traitement continué post-effacement (Art. 17 + Art. 5(1)(b) violés).
+    oauth_integrations = db.query(models.UserEmailIntegration).filter_by(user_id=user_id).all()
+    for uei in oauth_integrations:
+        db.delete(uei)
+
+    # 4d. CV (CareerProfile → CV) : scrub raw_text + parsed_data (PII dense du candidat : experiences,
+    # education, skills). Avant P65, CV.raw_text survivait → Art. 17 violé.
+    cvs_scrubbed = 0
+    if career_profile := db.query(models.CareerProfile).filter_by(user_id=user_id).first():
+        cvs = db.query(models.CV).filter_by(career_profile_id=career_profile.id).all()
+        for cv in cvs:
+            cv.raw_text = ""
+            cv.parsed_data = None
+            cvs_scrubbed += 1
+
     db.commit()
 
     # 5. Log l'action GDPR elle-même (preuve de conformité — qui a exécuté le droit, quand, sur qui)
     log_audit(db, tenant_id=tid, actor_user_id=_perm.user_id, actor_name=_perm.name,
               action="gdpr.erase", target_type="user", target_id=user_id,
               detail={"anonymized_user_id": user_id, "contacts_anonymized": len(contacts),
-                      "audit_entries_scrubbed": len(audit_entries), "member_id": member.id})
+                      "audit_entries_scrubbed": len(audit_entries),
+                      "audit_detail_scrubbed": detail_scrubbed,
+                      "oauth_integrations_deleted": len(oauth_integrations),
+                      "cvs_scrubbed": cvs_scrubbed,
+                      "member_id": member.id})
     db.commit()
 
     return {
@@ -184,8 +261,11 @@ def gdpr_erase(
         "member_id": member.id,
         "contacts_anonymized": len(contacts),
         "audit_entries_scrubbed": len(audit_entries),
-        "note": "User/Member/Contacts anonymisés + AuditLog.actor_name scrubbed. "
-                "Enregistrements conservés (FK integrity + rétention SOC2 7 ans — GDPR Art. 17.3.b/e).",
+        "audit_detail_scrubbed": detail_scrubbed,
+        "oauth_integrations_deleted": len(oauth_integrations),
+        "cvs_scrubbed": cvs_scrubbed,
+        "note": "User/Member/Contacts/AuditLog.detail/OAuth-tokens/CVs anonymisés ou supprimés. "
+                "Enregistrements structurels conservés (FK integrity + rétention SOC2 7 ans — GDPR Art. 17.3.b/e).",
     }
 
 
@@ -268,11 +348,29 @@ def gdpr_consent_withdraw(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,
                             detail=f"Aucun consent actif pour purpose='{purpose}'")
     rec.withdrawn_at = datetime.utcnow()
+    db.flush()
+    # P65 (P0-G1) — GDPR Art. 7.3 : le retrait consent marketing ARRÊTE le traitement associé.
+    # Pause des SequenceEnrollment actifs créés par ce user dans CE tenant (drip campaigns en cours).
+    # Avant P65, withdrawn_at était posé mais les séquences continuaient → fausse conformité CNIL.
+    paused_sequences = 0
+    if purpose == "marketing":
+        active_enrollments = (
+            db.query(models.SequenceEnrollment)
+            .join(models.EmailSequence, models.SequenceEnrollment.sequence_id == models.EmailSequence.id)
+            .filter(models.SequenceEnrollment.enrolled_by_user_id == membership.user_id,
+                    models.EmailSequence.tenant_id == tid,
+                    models.SequenceEnrollment.status == "active")
+            .all()
+        )
+        for enr in active_enrollments:
+            enr.status = "paused"
+        paused_sequences = len(active_enrollments)
     db.commit()
     log_audit(db, tenant_id=tid, actor_user_id=membership.user_id, actor_name=membership.name,
               action="gdpr.consent.withdraw", target_type="consent", target_id=rec.id,
-              detail={"purpose": purpose})
+              detail={"purpose": purpose, "sequences_paused": paused_sequences})
     db.commit()
     return {"id": rec.id, "purpose": rec.purpose,
             "withdrawn_at": rec.withdrawn_at.isoformat(), "active": False,
-            "note": "Consent retiré (Art. 7.3) — historique conservé (preuve DPO)"}
+            "sequences_paused": paused_sequences,
+            "note": "Consent retiré (Art. 7.3) — traitement ARRÊTÉ (séquences pausées) + historique conservé (preuve DPO)"}

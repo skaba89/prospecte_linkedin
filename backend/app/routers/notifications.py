@@ -27,6 +27,7 @@ from ..deps import get_tenant, require_permission
 from ..mailer import send_email
 from ..pagination import Page, page_dep, set_total
 from ..services import templates
+from ..services.consent import has_active_consent
 from ..services.webhooks import emit_event
 
 router = APIRouter(prefix="/api", tags=["notifications"])
@@ -102,6 +103,44 @@ def send_email_to_contact(
             status="skipped",
             email_sent=False,
             detail="Email en suppression list (RGPD) — envoi bloqué.",
+        )
+
+    # P65 (P0-G1) — GDPR Art. 7.3 : consent marketing effectif. Si l'owner du contact a retiré son
+    # consent marketing, l'envoi est BLOQUÉ (retrait arrête le traitement). Avant P65, withdrawn_at était
+    # posé mais jamais lu → fausse conformité CNIL. has_active_consent = False si retrait enregistré.
+    if contact.owner_id and not has_active_consent(db, tid, contact.owner_id, "marketing"):
+        notif = models.Notification(
+            tenant_id=tid,
+            user_id=actor_user_id,
+            type="email",
+            channel="email",
+            recipient_email=email,
+            recipient_contact_id=ctid,
+            subject=f"[SKIPPED-CONSENT] {template_id}",
+            body_text="Consent marketing retiré (Art. 7.3) — envoi bloqué.",
+            template_id=template_id,
+            status="failed",
+            error_detail="Owner du contact a retiré son consent marketing (Art. 7.3) — envoi bloqué.",
+        )
+        db.add(notif)
+        db.commit()
+        db.refresh(notif)
+        log_audit(
+            db,
+            tenant_id=tid,
+            actor_user_id=actor_user_id,
+            actor_name=actor_name,
+            action="crm.email_contact",
+            target_type="contact",
+            target_id=ctid,
+            detail={"template": template_id, "status": "skipped_consent", "owner_id": contact.owner_id},
+        )
+        db.commit()
+        return schemas.EmailSendResult(
+            notification_id=notif.id,
+            status="skipped",
+            email_sent=False,
+            detail="Consent marketing retiré (Art. 7.3) — envoi bloqué.",
         )
 
     # Placeholder (sync LinkedIn sans email réel) → skip (pas un destinataire valide).
