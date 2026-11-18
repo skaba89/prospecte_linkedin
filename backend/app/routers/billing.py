@@ -11,6 +11,7 @@ from .. import models, schemas
 from ..config import settings
 from ..database import get_db
 from ..deps import get_tenant, require_permission
+from ..audit import log_audit
 from ..services import billing_service
 
 router = APIRouter(prefix="/api/tenants/{tid}/billing", tags=["billing"])
@@ -75,9 +76,14 @@ def change_plan(tid: str, body: schemas.PlanUpdate, db: Session = Depends(get_db
     if count > new_seats:
         raise HTTPException(status.HTTP_409_CONFLICT,
                             f"Impossible de descendre : {count} membres > {new_seats} sièges du plan {body.plan}.")
+    old_plan = tenant.plan
     tenant.plan = body.plan
     sub = billing_service.get_or_create_subscription(db, tid)
     sub.plan = body.plan
+    # P48 : audit log immuable (changement de plan = sensitive billing change — SOC2/GDPR).
+    log_audit(db, tenant_id=tid, actor_user_id=_perm.user_id, actor_name=_perm.name,
+              action="billing.plan.change", target_type="tenant", target_id=tid,
+              detail={"before": {"plan": old_plan}, "after": {"plan": body.plan, "seats": new_seats}})
     db.commit()
     return {"plan": body.plan, "seats": new_seats, "price_eur": billing_service.PLANS[body.plan]["price_eur"]}
 
@@ -102,7 +108,12 @@ def update_currency(tid: str, body: schemas.CurrencyUpdate, db: Session = Depend
                     _perm=Depends(require_permission("billing.manage"))):
     """Change la devise de facturation du tenant (EUR|USD|GNF|XOF). Affecte l'affichage des prix."""
     try:
+        old_currency = tenant.currency
         tenant.currency = billing_service.validate_currency(body.currency)
+        # P48 : audit log immuable (changement de devise = sensitive billing change).
+        log_audit(db, tenant_id=tid, actor_user_id=_perm.user_id, actor_name=_perm.name,
+                  action="billing.currency.change", target_type="tenant", target_id=tid,
+                  detail={"before": {"currency": old_currency}, "after": {"currency": tenant.currency}})
         db.commit()
         return {"currency": tenant.currency, "symbol": billing_service.CURRENCIES[tenant.currency]["symbol"]}
     except ValueError as e:

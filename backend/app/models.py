@@ -218,6 +218,9 @@ class AuditLog(Base):
     target_id = Column(String, default="", nullable=False)
     detail = Column(JSONType, nullable=True)
     request_id = Column(String, default="", nullable=False)
+    # P48 : IP + User-Agent capturés via context vars (RequestLoggingMiddleware) → SOC2/GDPR traçabilité accès.
+    ip = Column(String, default="", nullable=False)
+    user_agent = Column(String, default="", nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow, index=True)
 
 

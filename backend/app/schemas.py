@@ -289,6 +289,9 @@ class AuditLogOut(BaseModel):
     target_id: str = ""
     detail: dict[str, Any] | list | None = None
     request_id: str = ""
+    # P48 : IP + User-Agent capturés via context vars (RequestLoggingMiddleware) → SOC2/GDPR.
+    ip: str = ""
+    user_agent: str = ""
     created_at: datetime | None = None
 
 
