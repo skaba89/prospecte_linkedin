@@ -8,8 +8,9 @@ Ajoute les colonnes `ip` + `user_agent` à `audit_logs` pour la traçabilité SO
 Capturées via context vars (RequestLoggingMiddleware) → pick automatique par audit.log_audit()
 sans modifier les 17 routers déjà instrumentés. Rétro-compatible (default "" nullable=False).
 """
-from alembic import op
 import sqlalchemy as sa
+
+from alembic import op
 
 revision = "0030_p48_audit_log_ip"
 down_revision = "0029_p45_sso_i18n"

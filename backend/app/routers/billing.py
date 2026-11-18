@@ -8,10 +8,10 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
 from .. import models, schemas
+from ..audit import log_audit
 from ..config import settings
 from ..database import get_db
 from ..deps import get_tenant, require_permission
-from ..audit import log_audit
 from ..services import billing_service
 
 router = APIRouter(prefix="/api/tenants/{tid}/billing", tags=["billing"])
