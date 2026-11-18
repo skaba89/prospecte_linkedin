@@ -36,6 +36,18 @@ def create_access_token(subject: str) -> str:
     )
 
 
+def create_2fa_temp_token(subject: str) -> str:
+    """P62 — JWT éphémère (5 min) pour le login 2FA. Claim `2fa: true` distingue ce temp token du
+    token de session complet (le /auth/login/2fa le valide + exige le code TOTP avant d'émettre le
+    vrai token via create_access_token). Court TTL → limite la fenêtre d'attaque si intercepté."""
+    expire = datetime.now(UTC) + timedelta(minutes=5)
+    return jwt.encode(
+        {"sub": subject, "exp": expire, "2fa": True, "jti": secrets.token_urlsafe(16)},
+        settings.jwt_secret,
+        algorithm=settings.jwt_algo,
+    )
+
+
 def decode_token(token: str) -> dict | None:
     try:
         return jwt.decode(token, settings.jwt_secret, algorithms=[settings.jwt_algo])

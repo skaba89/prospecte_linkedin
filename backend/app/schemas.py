@@ -31,6 +31,26 @@ class Token(BaseModel):
     user: UserOut
 
 
+# ─── P62 — 2FA/TOTP (RFC 6238) ───
+class TwoFASetup(BaseModel):
+    """POST /auth/2fa/setup response : secret base32 (à afficher pour saisie manuelle) + otpauth URI
+    (pour QR code — le frontend génère le QR côté client, le secret n'est jamais retourné en clair après verify)."""
+    secret: str  # base32 (pyotp.random_base32) — retourné UNE fois au setup (l'utilisateur le note)
+    otpauth_uri: str  # otpauth://totp/RevPulse:email?secret=...&issuer=RevPulse (pour QR code)
+    enabled: bool  # False au setup (anti-lockout : nécessite verify avant activation)
+
+
+class TwoFAVerify(BaseModel):
+    """POST /auth/2fa/verify body : code TOTP 6 digits (validé via pyotp.TOTP(secret).verify(code))."""
+    code: str  # 6 digits
+
+
+class TwoFALogin(BaseModel):
+    """POST /auth/login/2fa body : temp_token (5 min, émis par /login si 2FA enabled) + code TOTP."""
+    temp_token: str
+    code: str
+
+
 # ---- Tenants ----
 class TenantCreate(BaseModel):
     name: str = Field(min_length=1, max_length=80)

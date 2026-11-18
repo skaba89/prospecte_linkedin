@@ -74,6 +74,10 @@ class User(Base):
     # P60 — GDPR Art. 17 right-to-be-forgotten : null = actif ; timestamp = anonymisé (name/email scrubbed,
     # mais ligne User conservée pour FK integrity + audit retention SOC2 7 ans). Preuve de conformité.
     gdpr_erased_at = Column(DateTime, nullable=True)
+    # P62 — 2FA/TOTP (RFC 6238) : totp_secret chiffré Fernet (jamais en clair en DB). totp_enabled=False
+    # tant que l'utilisateur n'a pas validé un code après setup (anti-lockout : setup sans verify = no-op).
+    totp_secret_encrypted = Column(Text, nullable=True)  # Fernet — base32 secret pyotp
+    totp_enabled = Column(Boolean, default=False, nullable=False)
 
 
 class Tenant(Base):
