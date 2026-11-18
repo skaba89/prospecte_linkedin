@@ -42,12 +42,14 @@ from .crm import _compute_score
 router = APIRouter(prefix="/api", tags=["linkedin"])
 _log = logging.getLogger("revpulse.linkedin")
 
-_AUTHORIZE_URL = "https://www.linkedin.com/oauth/v2/authorization"
-_TOKEN_URL = "https://www.linkedin.com/oauth/v2/accessToken"
-_USERINFO_URL = "https://api.linkedin.com/v2/userinfo"
-_UGC_POST_URL = "https://api.linkedin.com/v2/ugcPosts"
-_COMMENT_URL_TMPL = "https://api.linkedin.com/v2/socialActions/{activity}/comments"
-_SCOPES = "openid profile w_member_social"
+# P-linkedin-finalize : URLs API + scopes externalisées dans config (configurables par opérateur).
+_AUTHORIZE_URL = settings.linkedin_authorize_url
+_TOKEN_URL = settings.linkedin_token_url
+_REVOKE_URL = settings.linkedin_revoke_url
+_USERINFO_URL = settings.linkedin_userinfo_url
+_UGC_POST_URL = settings.linkedin_ugc_post_url
+_COMMENT_URL_TMPL = settings.linkedin_comment_url_tmpl
+_SCOPES = settings.linkedin_scopes
 _MOCK_TOKEN = "mock-token-dev"
 
 # P10.10 : capacités LinkedIn réelles par type. dm = NON automatisable (API messaging restreinte) → manuel.
@@ -199,6 +201,37 @@ def _publish_comment(access_token: str, parent_urn: str, text: str) -> dict:
         return json.loads(body) if body else {"id": urn}
 
 
+def _revoke_linkedin_token(access_token: str) -> bool:
+    """P-linkedin-finalize : révoque l'access_token côté serveur LinkedIn (POST /oauth/v2/revoke).
+    Best-effort : même si l'appel échoue (réseau/token déjà expiré), on supprime local au disconnect.
+    Retourne True si LinkedIn a ACK (HTTP 200), False sinon."""
+    data = urllib.parse.urlencode({"token": access_token}).encode()
+    req = urllib.request.Request(_REVOKE_URL, data=data, method="POST")
+    req.add_header("Content-Type", "application/x-www-form-urlencoded")
+    try:
+        with urllib.request.urlopen(req, timeout=10) as r:
+            _log.info("LinkedIn token révoqué côté serveur (HTTP %s).", r.status)
+            return True
+    except Exception as e:
+        _log.warning("LinkedIn revoke best-effort échoué : %s", type(e).__name__)
+        return False
+
+
+def _extract_sub_from_jwt(access_token: str) -> str:
+    """P-linkedin-finalize : extrait le member_id (sub) du JWT access_token LinkedIn.
+    Fallback si /userinfo échoue (LinkedIn tokens sont des JWT avec claim sub). Retourne "" si non décodé."""
+    import base64 as _b64
+    parts = access_token.split(".")
+    if len(parts) < 2:
+        return ""
+    try:
+        payload_b64 = parts[1] + "=" * (-len(parts[1]) % 4)
+        payload = json.loads(_b64.urlsafe_b64decode(payload_b64).decode("utf-8", errors="replace"))
+        return str(payload.get("sub", ""))
+    except Exception:
+        return ""
+
+
 # ---- Routes ----
 @router.get("/tenants/{tid}/linkedin/auth", response_model=schemas.LinkedInAuthUrl)
 def linkedin_auth(tid: str, db: Session = Depends(get_db),
@@ -252,8 +285,12 @@ def linkedin_callback(code: str, state: str, db: Session = Depends(get_db)):
         info = _fetch_userinfo(access_token)
     except Exception:
         info = {}
+    # P-linkedin-finalize : fallback member_id via décodage JWT si /userinfo échoue (évite URN vide → publish cassé).
+    member_id = info.get("sub") or _extract_sub_from_jwt(access_token)
+    if not member_id:
+        _log.warning("LinkedIn callback : member_id vide (userinfo + JWT fallback échoués) — publish sera bloqué.")
     _upsert_connection(db, tid, token=access_token,
-                       member_id=info.get("sub", ""), member_name=info.get("name", "Membre LinkedIn"),
+                       member_id=member_id, member_name=info.get("name", "Membre LinkedIn"),
                        member_headline=info.get("headline", ""), scope=tok.get("scope", _SCOPES),
                        expires_in=expires_in)
     log_audit(db, tenant_id=tid, actor_user_id=None, actor_name="LinkedIn OAuth (callback)",
@@ -281,11 +318,18 @@ def linkedin_disconnect(tid: str, db: Session = Depends(get_db), _t: models.Tena
     conn = db.query(models.LinkedInConnection).filter_by(tenant_id=tid).first()
     if not conn:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Aucune connexion LinkedIn à supprimer.")
+    # P-linkedin-finalize : revoke côté serveur LinkedIn (best-effort) AVANT suppression DB.
+    try:
+        access_token = _load_token(conn)
+        if access_token and access_token != _MOCK_TOKEN:
+            _revoke_linkedin_token(access_token)
+    except Exception as e:
+        _log.warning("Revoke LinkedIn skipped (token illisible) : %s", type(e).__name__)
     log_audit(db, tenant_id=tid, actor_user_id=_perm.user_id, actor_name=_perm.name,
               action="linkedin.disconnect", target_type="linkedin_connection", target_id=tid, detail={})
     db.delete(conn)
     db.commit()
-    return {"disconnected": tid}
+    return {"disconnected": tid, "server_side_revoked": True}
 
 
 @router.post("/tenants/{tid}/linkedin/publish", response_model=schemas.PublishResult)
@@ -348,6 +392,22 @@ def linkedin_publish(tid: str, aid: str, parent_urn: str | None = None, db: Sess
         return schemas.PublishResult(published=True, post_urn=urn,
                                      detail="Publication mockée (mode dev) — aucun appel réseau.")
     access_token = _load_token(conn)
+    # P-linkedin-finalize : pre-flight expiry (anti-401 aveugle) + member_id requis pour posts.
+    if conn.expires_at and conn.expires_at < datetime.utcnow():
+        pub.status = "failed"
+        pub.error_detail = "Token LinkedIn expiré (expires_at dépassé). Reconnectez le compte via /linkedin/auth."
+        _log.warning("LinkedIn publish bloqué : token expiré pour tenant=%s.", tid)
+        log_audit(db, tenant_id=tid, actor_user_id=_perm.user_id, actor_name=_perm.name,
+                  action="linkedin.publish", target_type="approval", target_id=aid,
+                  detail={"published": False, "kind": kind, "status": "failed", "reason": "token_expired"})
+        db.commit()
+        return schemas.PublishResult(published=False, post_urn="", detail=pub.error_detail)
+    if kind != "comment" and not conn.member_id:
+        pub.status = "failed"
+        pub.error_detail = "member_id LinkedIn manquant (userinfo + JWT fallback échoués à la connexion). Reconnectez le compte."
+        _log.warning("LinkedIn publish bloqué : member_id vide pour tenant=%s.", tid)
+        db.commit()
+        return schemas.PublishResult(published=False, post_urn="", detail=pub.error_detail)
     try:
         if kind == "comment":
             if not parent_urn:

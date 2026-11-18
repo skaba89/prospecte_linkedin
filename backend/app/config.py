@@ -55,6 +55,15 @@ class Settings(BaseSettings):
     linkedin_client_secret: str = ""
     linkedin_redirect_uri: str = "http://localhost:8000/api/linkedin/callback"
     linkedin_mock: bool = False  # force le mock même si des creds sont présentes (tests)
+    # P-linkedin-finalize : URLs API + scopes externalisées (configurables par opérateur).
+    # Scopes minimaux : openid+profile (identity), w_member_social (publish posts/comments).
+    linkedin_authorize_url: str = "https://www.linkedin.com/oauth/v2/authorization"
+    linkedin_token_url: str = "https://www.linkedin.com/oauth/v2/accessToken"
+    linkedin_revoke_url: str = "https://www.linkedin.com/oauth/v2/revoke"
+    linkedin_userinfo_url: str = "https://api.linkedin.com/v2/userinfo"
+    linkedin_ugc_post_url: str = "https://api.linkedin.com/v2/ugcPosts"
+    linkedin_comment_url_tmpl: str = "https://api.linkedin.com/v2/socialActions/{activity}/comments"
+    linkedin_scopes: str = "openid profile w_member_social"
 
     # P10.2 : chiffrement Fernet des tokens OAuth (rotation via *_PREVIOUS). Requis en prod.
     token_encryption_key: str = ""

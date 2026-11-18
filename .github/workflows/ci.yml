@@ -62,6 +62,11 @@ jobs:
         run: python tests/test_crm.py
       - name: P12 LinkedIn sync static checks (client/sync/dedup/RBAC/retry)
         run: python tests/test_linkedin.py
+      - name: LinkedIn finalisation (revoke serveur + expiry pre-flight + JWT fallback + config, mock HTTP)
+        run: python tests/test_linkedin_finalize.py
+        env:
+          REVPULSE_DATABASE_URL: sqlite:///./revpulse_linkedin_finalize_test.db
+          REVPULSE_ENV: test
       - name: P13 Notifications & e-mails static checks (model/migration/mailer/templates/RBAC/RGPD)
         run: python tests/test_notifications.py
       - name: P14 Analytics & reporting static checks (overview/pipeline/emails/sources/export/RBAC)
