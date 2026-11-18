@@ -1885,7 +1885,15 @@ s, _ = call("GET", "/api/career/email/connect/unknown_provider", tok, None)
 ck(s, 400, "email connect provider inconnu → 400")
 
 print("=== 228. POST /api/tenants/tnt-demo/crm/contacts/{id}/enrich → 503 (Hunter non configuré) ===")
-s, enrich_resp = call("POST", f"/api/tenants/tnt-demo/crm/contacts/{ctid_seq}/enrich", tok, None)
+# Créer une company + contact rattaché (le contact doit avoir un domaine pour atteindre le check Hunter)
+s, cmp_enrich = call("POST", "/api/tenants/tnt-demo/crm/companies", tok,
+    {"name": "EnrichCorp", "domain": "enrichcorp.io", "website": "https://enrichcorp.io", "size": "11-50"})
+ck(s, 201, f"create company for enrich 201 : {s}")
+s, c_enrich = call("POST", "/api/tenants/tnt-demo/crm/contacts", tok,
+    {"first_name": "Enri", "last_name": "Chable", "email": "enri.chable.enrich@prospectmail.io",
+     "title": "CTO", "source": "manual", "company_id": cmp_enrich["id"]})
+ck(s, 201, f"create contact with company 201 : {s}")
+s, enrich_resp = call("POST", f"/api/tenants/tnt-demo/crm/contacts/{c_enrich['id']}/enrich", tok, None)
 ck(s, 503, f"contact enrich 503 (Hunter non configuré en test) : {s}")
 ck("HUNTER_API_KEY" in (enrich_resp.get("detail") or ""), True, "detail mentionne HUNTER_API_KEY absent")
 
