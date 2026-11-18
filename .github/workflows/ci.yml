@@ -258,6 +258,13 @@ jobs:
           REVPULSE_DATABASE_URL: sqlite:///./revpulse_p60_test.db
           REVPULSE_ENV: test
           REVPULSE_TOKEN_ENCRYPTION_KEY: ZmDfcTF7_60GrrY167zsiPd67pEvs0aGOv2o1OMe4YI=
+      - name: P61 GDPR UI dashboard (account.html) + consent management (Art. 7, TestClient)
+        run: python tests/test_p61_gdpr_ui_consent.py
+        env:
+          REVPULSE_DATABASE_URL: sqlite:///./revpulse_p61_test.db
+          REVPULSE_ENV: test
+          REVPULSE_TOKEN_ENCRYPTION_KEY: ZmDfcTF7_60GrrY167zsiPd67pEvs0aGOv2o1OMe4YI=
+          REVPULSE_FRONTEND_DIR: frontend/public
       - name: Run P3 tests (pagination + request-ID + health)
         run: python tests/test_p3.py
         env:

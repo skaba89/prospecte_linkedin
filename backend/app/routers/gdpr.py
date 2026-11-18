@@ -18,14 +18,26 @@ légales de conservation priment sur le droit à l'effacement pour les logs d'au
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from .. import models
 from ..audit import log_audit
 from ..database import get_db
-from ..deps import get_tenant, require_permission
+from ..deps import get_membership, get_tenant, require_permission
+from ..logging_config import request_ip_var, request_ua_var
 
 router = APIRouter(prefix="/api/tenants/{tid}/gdpr", tags=["gdpr"])
+
+# Purposes valides pour le consent (Art. 7 — consentement explicite par finalité).
+_CONSENT_PURPOSES = {"marketing", "analytics", "third_party_sharing"}
+_DEFAULT_PP_VERSION = "2026-11-18-v1"
+
+
+class ConsentGrant(BaseModel):
+    """Body POST /gdpr/consent : grant consent pour un purpose (Art. 7)."""
+    purpose: str
+    privacy_policy_version: str = _DEFAULT_PP_VERSION
 
 
 def _erased_email(seed: str) -> str:
@@ -175,3 +187,92 @@ def gdpr_erase(
         "note": "User/Member/Contacts anonymisés + AuditLog.actor_name scrubbed. "
                 "Enregistrements conservés (FK integrity + rétention SOC2 7 ans — GDPR Art. 17.3.b/e).",
     }
+
+
+# ─── GDPR Art. 7 — Consent management (self-service, tout membre actif gère SON propre consent) ───
+
+@router.get("/consent")
+def gdpr_consent_list(
+    tid: str,
+    db: Session = Depends(get_db),
+    membership: models.Member = Depends(get_membership),
+):
+    """GET /gdpr/consent : liste les consentements du membre courant (actifs + historique retiré).
+    Self-service (tout membre actif, y compris Viewer) — chacun gère SON consent. Art. 7 proof."""
+    records = db.query(models.ConsentRecord).filter_by(
+        tenant_id=tid, user_id=membership.user_id
+    ).order_by(models.ConsentRecord.granted_at.desc()).all()
+    return [{
+        "id": r.id, "purpose": r.purpose,
+        "granted_at": r.granted_at.isoformat() if r.granted_at else None,
+        "withdrawn_at": r.withdrawn_at.isoformat() if r.withdrawn_at else None,
+        "active": r.withdrawn_at is None,
+        "privacy_policy_version": r.privacy_policy_version,
+        "ip": r.ip, "user_agent": r.user_agent,
+    } for r in records]
+
+
+@router.post("/consent", status_code=status.HTTP_201_CREATED)
+def gdpr_consent_grant(
+    tid: str,
+    body: ConsentGrant,
+    db: Session = Depends(get_db),
+    membership: models.Member = Depends(get_membership),
+):
+    """POST /gdpr/consent : grant consent pour un purpose (Art. 7 — consentement explicite par finalité).
+    Idempotent : si un consent actif existe déjà pour ce purpose, le retourne sans recréer.
+    Capture IP + UA au moment du grant (preuve Art. 7.1). Self-service (tout membre actif)."""
+    if body.purpose not in _CONSENT_PURPOSES:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
+                            detail=f"purpose must be one of: {sorted(_CONSENT_PURPOSES)}")
+    # Idempotent : consent actif existe déjà ?
+    existing = db.query(models.ConsentRecord).filter_by(
+        tenant_id=tid, user_id=membership.user_id, purpose=body.purpose,
+        withdrawn_at=None).first()
+    if existing:
+        return {"id": existing.id, "purpose": existing.purpose,
+                "granted_at": existing.granted_at.isoformat(),
+                "privacy_policy_version": existing.privacy_policy_version,
+                "active": True, "note": "Consent déjà actif (idempotent)"}
+    rec = models.ConsentRecord(
+        tenant_id=tid, user_id=membership.user_id, purpose=body.purpose,
+        granted_at=datetime.utcnow(), privacy_policy_version=body.privacy_policy_version,
+        ip=request_ip_var.get(""), user_agent=request_ua_var.get(""))
+    db.add(rec)
+    db.commit()
+    # Log audit (preuve DPO : qui a consenti, pour quel purpose, quelle version PP)
+    log_audit(db, tenant_id=tid, actor_user_id=membership.user_id, actor_name=membership.name,
+              action="gdpr.consent.grant", target_type="consent", target_id=rec.id,
+              detail={"purpose": body.purpose, "privacy_policy_version": body.privacy_policy_version})
+    db.commit()
+    return {"id": rec.id, "purpose": rec.purpose, "granted_at": rec.granted_at.isoformat(),
+            "privacy_policy_version": rec.privacy_policy_version, "active": True}
+
+
+@router.delete("/consent")
+def gdpr_consent_withdraw(
+    tid: str,
+    purpose: str = Query(..., description="Purpose du consent à retirer (Art. 7.3 right to withdraw)"),
+    db: Session = Depends(get_db),
+    membership: models.Member = Depends(get_membership),
+):
+    """DELETE /gdpr/consent?purpose=X : retire le consent actif pour ce purpose (Art. 7.3).
+    Set withdrawn_at = now (historique immuable conservé — preuve DPO du retrait). Self-service."""
+    if purpose not in _CONSENT_PURPOSES:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
+                            detail=f"purpose must be one of: {sorted(_CONSENT_PURPOSES)}")
+    rec = db.query(models.ConsentRecord).filter_by(
+        tenant_id=tid, user_id=membership.user_id, purpose=purpose,
+        withdrawn_at=None).first()
+    if not rec:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,
+                            detail=f"Aucun consent actif pour purpose='{purpose}'")
+    rec.withdrawn_at = datetime.utcnow()
+    db.commit()
+    log_audit(db, tenant_id=tid, actor_user_id=membership.user_id, actor_name=membership.name,
+              action="gdpr.consent.withdraw", target_type="consent", target_id=rec.id,
+              detail={"purpose": purpose})
+    db.commit()
+    return {"id": rec.id, "purpose": rec.purpose,
+            "withdrawn_at": rec.withdrawn_at.isoformat(), "active": False,
+            "note": "Consent retiré (Art. 7.3) — historique conservé (preuve DPO)"}
