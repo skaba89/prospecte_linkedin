@@ -124,6 +124,7 @@ def health(db: Session = Depends(get_db)):
 for r in (
     auth.router,
     sso.router,                 # P45 : SSO Enterprise OIDC (initiate + callback + JIT provisioning)
+    sso.admin_router,           # P46 : Admin SSO CRUD (GET/PUT/DELETE /api/tenants/{tid}/sso, Owner-only)
     career.router,             # P34 : Career (espace candidat isolé du Business — user-scoped, pas tenant)
     tenants.router,
     members.router,

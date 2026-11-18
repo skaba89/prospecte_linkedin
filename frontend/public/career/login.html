@@ -44,6 +44,7 @@
     </form>
     <hr class="rp-divider">
     <button id="rp-demo-btn" class="rp-btn rp-btn-secondary" style="width:100%">Essai démo (1 clic)</button>
+    <button id="rp-sso-btn" class="rp-btn rp-btn-secondary" style="width:100%;margin-top:8px">🔐 Connexion SSO entreprise</button>
     <p class="rp-small rp-muted" style="text-align:center;margin-top:14px;margin-bottom:0">
       En vous connectant, vous acceptez que vos données Career restent isolées de l'espace Business.
     </p>
@@ -97,6 +98,18 @@
       window.location.href = "/career/dashboard.html";
     } catch (e) {
       RP.toast(e.message, "error"); btn.disabled = false; btn.textContent = "Essai démo (1 clic)";
+    }
+  });
+  // P46 : SSO enterprise — lookup par e-mail → redirect vers /api/auth/sso/{tenant}/initiate.
+  document.getElementById("rp-sso-btn").addEventListener("click", async function () {
+    var email = (document.querySelector('#rp-login-form input[name="email"]') || {}).value || "";
+    if (!email) { RP.toast("Saisissez votre e-mail entreprise d'abord.", "error"); return; }
+    var btn = this; btn.disabled = true; btn.textContent = "…";
+    try {
+      var data = await RP.api("/api/auth/sso/lookup", { method: "POST", body: { email: email } });
+      window.location.href = data.initiate_url;  // redirect vers IdP (OIDC authorize)
+    } catch (e) {
+      RP.toast(e.message, "error"); btn.disabled = false; btn.textContent = "🔐 Connexion SSO entreprise";
     }
   });
 })();
