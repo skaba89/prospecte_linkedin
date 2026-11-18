@@ -82,7 +82,7 @@ def _verify_state(state: str, db: Session) -> str:
     """Valide signature + nonce (existant, non utilisé, non expiré) → marque utilisé (anti-rejeu)."""
     try:
         payload = security.jwt.decode(state, settings.jwt_secret, algorithms=[settings.jwt_algo])
-    except security.JWTError:
+    except security.jwt.PyJWTError:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "State OAuth invalide (CSRF ?)") from None
     tid, nonce = payload.get("tid"), payload.get("nonce")
     if not tid or not nonce:

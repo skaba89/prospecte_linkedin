@@ -130,6 +130,14 @@ class Settings(BaseSettings):
     hunter_api_key: str = ""
     hunter_api_base: str = "https://api.hunter.io/v2"
 
+    # P45 — i18n : langue par défaut (fr/en/es). Détection via Accept-Language header → fallback default_language.
+    default_language: str = "fr"  # fr | en | es
+    supported_languages: str = "fr,en,es"
+
+    # P45 — SSO Enterprise OIDC : redirect URI commune (callback). Per-tenant IdP config en DB (EnterpriseSSO).
+    # Couvre Microsoft Entra ID, Google Workspace, Okta, Keycloak (tous supportent OIDC). SAML = v5 (python3-saml).
+    sso_redirect_uri: str = "http://localhost:8000/api/auth/sso/callback"
+
     # Logging structuré — JSON (prod) ou texte (dev/test). Niveau configurable.
     log_level: str = "INFO"
     log_format: str = "json"  # json | text
