@@ -32,6 +32,7 @@ from fastapi.responses import RedirectResponse
 from sqlalchemy.orm import Session
 
 from .. import models, schemas, security
+from ..audit import log_audit
 from ..config import settings
 from ..database import get_db
 from ..deps import get_tenant, require_permission
@@ -268,6 +269,11 @@ def upsert_sso_config(body: schemas.EnterpriseSSOConfig,
     if not domains_clean:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, t("sso.admin.domains_invalid", lang))
     sso = db.query(models.EnterpriseSSO).filter_by(tenant_id=_t.id).first()
+    # P48 : capture BEFORE pour audit diff (sans client_secret — jamais loggé).
+    before = None
+    if sso:
+        before = {"client_id": sso.client_id, "issuer_url": sso.issuer_url,
+                  "domains": json.loads(sso.domains or "[]"), "enabled": sso.enabled}
     if sso:
         sso.client_id = body.client_id
         sso.client_secret_encrypted = security.encrypt_token(body.client_secret)
@@ -290,6 +296,11 @@ def upsert_sso_config(body: schemas.EnterpriseSSOConfig,
         db.add(sso)
     # Cohérence : tenant.sso_enabled reflète la config SSO.
     _t.sso_enabled = body.enabled
+    # P48 : audit log immuable (config SSO = sensitive security change — SOC2/GDPR).
+    log_audit(db, tenant_id=_t.id, actor_user_id=_m.user_id, actor_name=_m.name,
+              action="sso.config.upsert", target_type="sso_config", target_id=_t.id,
+              detail={"before": before, "after": {"client_id": body.client_id,
+                      "issuer_url": body.issuer_url, "domains": domains_clean, "enabled": body.enabled}})
     db.commit()
     db.refresh(sso)
     _log.info("SSO config upserted : tenant=%s enabled=%s domains=%s", _t.id, body.enabled, domains_clean)
@@ -308,6 +319,11 @@ def delete_sso_config(request: Request,
     sso = db.query(models.EnterpriseSSO).filter_by(tenant_id=_t.id).first()
     if not sso:
         raise HTTPException(status.HTTP_404_NOT_FOUND, t("sso.admin.no_config", lang))
+    # P48 : audit log immuable (suppression config SSO = sensitive security change — capture la config supprimée).
+    log_audit(db, tenant_id=_t.id, actor_user_id=_m.user_id, actor_name=_m.name,
+              action="sso.config.delete", target_type="sso_config", target_id=_t.id,
+              detail={"deleted": {"client_id": sso.client_id, "issuer_url": sso.issuer_url,
+                      "domains": json.loads(sso.domains or "[]"), "enabled": sso.enabled}})
     db.delete(sso)
     _t.sso_enabled = False
     db.commit()

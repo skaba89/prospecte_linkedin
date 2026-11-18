@@ -22,6 +22,10 @@ from starlette.requests import Request
 request_id_var: ContextVar[str] = ContextVar("request_id", default="")
 user_id_var: ContextVar[str] = ContextVar("user_id", default="")
 tenant_id_var: ContextVar[str] = ContextVar("tenant_id", default="")
+# P48 : IP + User-Agent capturés par le middleware → pick automatique par audit.log_audit()
+# (sans toucher aux 17 routers déjà instrumentés). Requis SOC2/GDPR (traçabilité accès).
+request_ip_var: ContextVar[str] = ContextVar("request_ip", default="")
+request_ua_var: ContextVar[str] = ContextVar("request_ua", default="")
 
 log = logging.getLogger("revpulse")
 
@@ -80,6 +84,12 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         rid = request.headers.get("x-request-id") or uuid.uuid4().hex
         token = request_id_var.set(rid)
+        # P48 : capture IP (X-Forwarded-For si proxy, sinon client.host) + User-Agent pour audit log.
+        fwd = request.headers.get("x-forwarded-for", "")
+        ip = fwd.split(",")[0].strip() if fwd else (request.client.host if request.client else "")
+        ua = request.headers.get("user-agent", "")
+        token_ip = request_ip_var.set(ip)
+        token_ua = request_ua_var.set(ua)
         start = time.perf_counter()
         status_code = 0
         try:
@@ -93,3 +103,5 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
                      extra={"method": request.method, "path": request.url.path,
                             "status": status_code, "duration_ms": dur_ms})
             request_id_var.reset(token)
+            request_ip_var.reset(token_ip)
+            request_ua_var.reset(token_ua)
