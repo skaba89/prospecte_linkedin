@@ -37,7 +37,7 @@ from ..config import settings
 from ..database import get_db
 from ..deps import get_tenant, require_permission
 from ..i18n import get_lang, t
-from ..services.url_safety import validate_url_strict
+from ..services.url_safety import safe_urlopen, validate_url_no_dns
 
 router = APIRouter(prefix="/api/auth/sso", tags=["sso"])
 _log = logging.getLogger("revpulse.sso")
@@ -71,9 +71,10 @@ def _sso_verify_state(state: str, db: Session) -> str:
     return tid
 
 
-# ---- Appels OIDC (réel, urllib — pas de nouvelle dépendance) ----
+# ---- Appels OIDC (réel, safe_urlopen — SSRF-safe, re-valide chaque redirect hop) ----
 def _exchange_oidc_code(sso: models.EnterpriseSSO, code: str) -> dict:
-    """POST token_url (auth-code → access_token + id_token). client_secret décrypté Fernet."""
+    """POST token_url (auth-code → access_token + id_token). client_secret décrypté Fernet.
+    P64 : safe_urlopen au lieu de urllib.urlopen (re-valide chaque redirect hop — anti DNS rebinding SSRF)."""
     data = urllib.parse.urlencode({
         "grant_type": "authorization_code", "code": code,
         "redirect_uri": settings.sso_redirect_uri,
@@ -82,15 +83,16 @@ def _exchange_oidc_code(sso: models.EnterpriseSSO, code: str) -> dict:
     }).encode()
     req = urllib.request.Request(sso.token_url, data=data, method="POST")
     req.add_header("Content-Type", "application/x-www-form-urlencoded")
-    with urllib.request.urlopen(req, timeout=15) as r:
+    with safe_urlopen(req, timeout=15) as r:
         return json.loads(r.read().decode())
 
 
 def _fetch_oidc_userinfo(sso: models.EnterpriseSSO, access_token: str) -> dict:
-    """GET userinfo_url (Bearer) → {sub, email, name, ...}."""
+    """GET userinfo_url (Bearer) → {sub, email, name, ...}.
+    P64 : safe_urlopen au lieu de urllib.urlopen (re-valide chaque redirect hop — anti DNS rebinding SSRF)."""
     req = urllib.request.Request(sso.userinfo_url)
     req.add_header("Authorization", f"Bearer {access_token}")
-    with urllib.request.urlopen(req, timeout=15) as r:
+    with safe_urlopen(req, timeout=15) as r:
         return json.loads(r.read().decode())
 
 
@@ -272,10 +274,12 @@ def upsert_sso_config(body: schemas.EnterpriseSSOConfig,
     # P64 (P0-O1) — SSRF defense : valider authorize_url/token_url/userinfo_url (config-side SSRF).
     # Sans cette validation, un admin compromis pointe token_url vers attacker.tld → le serveur POST le
     # client_secret OIDC chez l'attaquant (exfil secret) + userinfo_url vers 169.254.169.254 (metadata cloud).
+    # validate_url_no_dns : bloque IP-literal metadata/loopback/private (toujours), pas de DNS (config-time).
+    # Request-time : _exchange_oidc_code/_fetch_oidc_userinfo utilisent safe_urlopen (re-valide chaque hop).
     for field_label, url_val in (("authorize_url", body.authorize_url),
                                   ("token_url", body.token_url),
                                   ("userinfo_url", body.userinfo_url)):
-        ok, err, _ = validate_url_strict(url_val)
+        ok, err, _ = validate_url_no_dns(url_val)
         if not ok:
             raise HTTPException(status.HTTP_400_BAD_REQUEST,
                                 f"SSRF — {field_label} invalide : {err} (bloque metadata/loopback/CGNAT)")

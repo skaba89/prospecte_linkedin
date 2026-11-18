@@ -160,6 +160,35 @@ def validate_url_strict(url: str) -> tuple[bool, str, list[str]]:
     return True, "", ips
 
 
+def validate_url_no_dns(url: str) -> tuple[bool, str, list[str]]:
+    """P64 — validation SSRF config-time SANS résolution DNS. Pour les URLs de configuration (SSO token_url,
+    audit webhook_url) où l'URL peut ne pas résoudre au moment du test (CI/dev) ou être un hostname légitime
+    non encore déployé. Bloque : schéma non-http(s), hostname manquant, IP littérale metadata/loopback/CGNAT/
+    private (toujours — strict). NE fait PAS de résolution DNS → ne rejette pas les hostnames non résolvables.
+
+    La protection DNS rebinding (hostname qui résout vers 169.254.169.254) est assurée au REQUEST-TIME via
+    safe_urlopen (re-validation de chaque hop + résolution à l'ouverture). Config-time + request-time =
+    défense en profondeur SSRF complète.
+
+    Retourne (ok, error_message, [hostname_or_ip])."""
+    if not url or not isinstance(url, str) or len(url) > 2048:
+        return False, "URL vide, non-chaîne ou trop longue (>2048)", []
+    parsed = urllib.parse.urlparse(url)
+    if parsed.scheme not in ("http", "https"):
+        return False, f"Schéma non autorisé : {parsed.scheme or 'absent'} (http/https uniquement)", []
+    if not parsed.hostname:
+        return False, "Hostname manquant", []
+    # IP littérale → vérification directe (bloque metadata/loopback/private/CGNAT — strict, toujours).
+    try:
+        ipaddress.ip_address(parsed.hostname)
+        if _is_blocked_ip_strict(parsed.hostname):
+            return False, f"IP littérale bloquée (metadata/CGNAT/loopback — strict) : {parsed.hostname}", []
+        return True, "", [parsed.hostname]
+    except ValueError:
+        pass  # hostname → pas de résolution DNS (request-time safe_urlopen s'en charge)
+    return True, "", [parsed.hostname]
+
+
 class _SSRFRedirectHandler(urllib.request.HTTPRedirectHandler):
     """Re-valide chaque cible de redirect contre la blocklist SSRF (DNS rebinding via redirect).
 
