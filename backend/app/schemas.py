@@ -29,6 +29,8 @@ class UserOut(BaseModel):
 class Token(BaseModel):
     token: str
     user: UserOut
+    # P68 (A5) — verify_token retourné par /register en dev/test (prod envoie par SMTP, champ absent).
+    verify_token: str | None = None
 
 
 # ─── P62 — 2FA/TOTP (RFC 6238) ───
@@ -70,6 +72,13 @@ class BackupCodesOut(BaseModel):
     L'utilisateur doit les stocker hors-ligne (anti-lockout : perte téléphone = récupération via backup)."""
     enabled: bool
     backup_codes: list[str]
+
+
+# ─── P68 — Auth P0 : email verification (A5) ───
+class EmailVerify(BaseModel):
+    """POST /auth/verify-email body : token stateless (JWT 24h, claim verify_email) émis par /register.
+    Décode le token + set user.email_verified=True. 400 si token invalide/expiré."""
+    token: str
 
 
 

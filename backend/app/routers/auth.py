@@ -33,12 +33,24 @@ def register(request: Request, body: schemas.UserCreate, db: Session = Depends(g
     email = body.email.lower()
     if db.query(models.User).filter_by(email=email).first():
         raise HTTPException(status.HTTP_409_CONFLICT, t("auth.account_exists", lang))
+    # P68 (A5) — email_verified=False jusqu'à validation du token email (24h). Anti takeover SSO (A4) :
+    # un user non vérifié ne peut pas être lié à un SSO (l'attaquant ne peut pas créer un compte local
+    # avec l'email de la victime puis lier son SSO pour prendre le compte).
     user = models.User(email=email, name=body.name, password_hash=security.hash_password(body.password),
-                       locale=lang)
+                       locale=lang, email_verified=False)
     db.add(user)
     db.commit()
     db.refresh(user)
-    return schemas.Token(token=security.create_access_token(user.id), user=user)
+    # P68 (A5) — émet un token de vérification email (stateless JWT 24h). En dev/test (smtp_enabled=false) :
+    # retourné dans la response (pour tests). En prod : envoyé par SMTP (non retourné).
+    verify_token = security.create_email_verify_token(user.id)
+    if settings.smtp_enabled:
+        from ..mailer import send_email
+        send_email(to=user.email, subject="Vérifiez votre e-mail RevPulse",
+                   body=f"Token de vérification (valide 24h) : {verify_token}\nOU cliquez : /api/auth/verify-email?token={verify_token}")
+        return schemas.Token(token=security.create_access_token(user.id), user=user)
+    # Dev/test : retourne le verify_token dans la response (champ optionnel du schema Token).
+    return schemas.Token(token=security.create_access_token(user.id), user=user, verify_token=verify_token)
 
 
 @router.post("/login", response_model=schemas.Token)
@@ -267,3 +279,30 @@ def login_2fa_backup(request: Request, body: schemas.TwoFALogin, db: Session = D
     user.backup_codes_hashed = _json.dumps(codes_hashed) if codes_hashed else None
     db.commit()
     return schemas.Token(token=security.create_access_token(user.id), user=user)
+
+
+# ─── P68 (A5) — email verification endpoint ───
+
+@router.post("/verify-email")
+@limiter.limit(settings.login_rate_limit)
+def verify_email(request: Request, body: schemas.EmailVerify, db: Session = Depends(get_db)):
+    """POST /auth/verify-email {token} : valide le token stateless (JWT 24h, claim verify_email) émis par
+    /register, set user.email_verified=True. 400 si token invalide/expiré. Idempotent (re-verify = OK).
+    Anti takeover SSO (A4) : un user non vérifié ne peut pas être lié à un SSO — ce endpoint lève la restriction."""
+    payload = security.decode_token(body.token)
+    if not payload or not payload.get("verify_email"):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Token de vérification invalide")
+    user = db.query(models.User).filter_by(id=payload["sub"]).first()
+    if not user:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "User introuvable")
+    if not user.email_verified:
+        user.email_verified = True
+        db.commit()
+        from ..audit import log_audit
+        m = db.query(models.Member).filter_by(user_id=user.id, status="active").first()
+        if m:
+            log_audit(db, tenant_id=m.tenant_id, actor_user_id=user.id, actor_name=user.name,
+                      action="auth.email.verify", target_type="user", target_id=user.id)
+            db.commit()
+        return {"verified": True, "user_id": user.id, "note": "E-mail vérifié — SSO linking désormais autorisé (A4)"}
+    return {"verified": True, "user_id": user.id, "note": "E-mail déjà vérifié (idempotent)"}

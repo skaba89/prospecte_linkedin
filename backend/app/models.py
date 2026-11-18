@@ -83,6 +83,10 @@ class User(Base):
     password_reset_expires_at = Column(DateTime, nullable=True)
     # P66 (A3) — 2FA backup codes : JSON array de hashes bcrypt des 10 codes 1-use (anti-lockout 2FA).
     backup_codes_hashed = Column(Text, nullable=True)
+    # P68 (A5) — email verification : False après register jusqu'à validation du token email (24h).
+    # server_default=true (migration 0037) : les users existants restent vérifiés (backward compat).
+    # A4 : le gate SSO _find_or_create_sso_user refuse de lier un SSO à un user non vérifié (anti takeover).
+    email_verified = Column(Boolean, default=True, nullable=False)
 
 
 class Tenant(Base):

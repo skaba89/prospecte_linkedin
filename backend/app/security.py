@@ -48,6 +48,19 @@ def create_2fa_temp_token(subject: str) -> str:
     )
 
 
+def create_email_verify_token(subject: str) -> str:
+    """P68 (A5) — JWT stateless (24h) pour la vérification d'email après register. Claim `verify_email: true`
+    distingue ce token du token de session. Le endpoint POST /auth/verify-email le décode + set
+    user.email_verified=True. Stateless (pas de stockage DB) — le token est auto-suffisant (signé jwt_secret).
+    Court TTL 24h → limite la fenêtre d'attaque si intercepté."""
+    expire = datetime.now(UTC) + timedelta(hours=24)
+    return jwt.encode(
+        {"sub": subject, "exp": expire, "verify_email": True, "jti": secrets.token_urlsafe(16)},
+        settings.jwt_secret,
+        algorithm=settings.jwt_algo,
+    )
+
+
 def decode_token(token: str) -> dict | None:
     try:
         return jwt.decode(token, settings.jwt_secret, algorithms=[settings.jwt_algo])

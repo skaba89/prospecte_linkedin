@@ -124,9 +124,15 @@ def _find_or_create_sso_user(db: Session, sso: models.EnterpriseSSO, sub: str, e
             user.name = name
         db.commit()
         return user
-    # Fallback : email exists déjà (user local qui active SSO) → lie le compte
+    # Fallback : email exists déjà (user local qui active SSO) → lie le compte.
+    # P68 (A4) — anti takeover : un user local non vérifié (email_verified=False) NE PEUT PAS être lié à un SSO.
+    # Sans ce gate, un attaquant crée un compte local avec l'email de la victime (non vérifié) puis lie son
+    # SSO → prend le compte. Le gate force la vérification email avant linking SSO.
     user = db.query(models.User).filter_by(email=email.lower()).first()
     if user:
+        if not user.email_verified:
+            raise HTTPException(status.HTTP_403_FORBIDDEN,
+                "Compte local non vérifié — vérifiez votre e-mail avant de lier le SSO (anti takeover P68 A4).")
         user.sso_id = sub
         user.identity_provider = provider
         user.sso_tenant_id = sso.tenant_id
