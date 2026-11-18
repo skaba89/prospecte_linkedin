@@ -51,6 +51,28 @@ class TwoFALogin(BaseModel):
     code: str
 
 
+# ─── P66 — Auth P0 : forgot/reset password (A2) ───
+class PasswordForgot(BaseModel):
+    """POST /auth/forgot-password body : email du compte à réinitialiser. Envoi (dev/test : retour)
+    d'un token signé 15 min via SMTP. Anti-énumération : retourne toujours 200 même si email inconnu."""
+    email: str
+
+
+class PasswordReset(BaseModel):
+    """POST /auth/reset-password body : token (reçu par email) + nouveau mot de passe. Valide token hash
+    + non-expiré, update password_hash, clear token (single-use)."""
+    token: str
+    new_password: str
+
+
+class BackupCodesOut(BaseModel):
+    """POST /auth/2fa/verify response (P66 A3) : 10 codes 1-use affichés UNE FOIS à l'activation 2FA.
+    L'utilisateur doit les stocker hors-ligne (anti-lockout : perte téléphone = récupération via backup)."""
+    enabled: bool
+    backup_codes: list[str]
+
+
+
 # ---- Tenants ----
 class TenantCreate(BaseModel):
     name: str = Field(min_length=1, max_length=80)
