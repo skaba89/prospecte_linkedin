@@ -207,7 +207,9 @@ def main():
     # Re-initiate to get a fresh state (the previous one was consumed by... no, initiate doesn't verify)
     r2 = client.get("/api/auth/sso/tnt_sso/initiate")
     state2 = parse_qs(urlparse(r2.headers.get("location", "")).query).get("state", [""])[0]
-    with patch("urllib.request.urlopen", side_effect=_mock_urlopen):
+    # P64 : sso._exchange_oidc_code/_fetch_oidc_userinfo utilisent safe_urlopen (SSRF-safe) au lieu de
+    # urllib.request.urlopen. Le mock patche donc app.routers.sso.safe_urlopen (même signature req, timeout).
+    with patch("app.routers.sso.safe_urlopen", side_effect=_mock_urlopen):
         r3 = client.get("/api/auth/sso/callback", params={"code": "realcode", "state": state2})
     ck(r3.status_code in (302, 307), f"callback success → redirect (got {r3.status_code})")
     ck(r3.status_code != 200 or "sso_token" in r3.headers.get("location", ""), "redirect avec token")
@@ -230,7 +232,7 @@ def main():
         if "token" in str(req.full_url):
             return _mock_urlopen_resp(200, token_resp)
         return _mock_urlopen_resp(200, userinfo_bad_domain)
-    with patch("urllib.request.urlopen", side_effect=_mock_urlopen_bad):
+    with patch("app.routers.sso.safe_urlopen", side_effect=_mock_urlopen_bad):
         r5 = client.get("/api/auth/sso/callback", params={"code": "code2", "state": state4})
     ck(r5.status_code == 403, f"domain not allowed → 403 (got {r5.status_code})")
     ck("evil.com" not in test_db.query(M.User).filter_by(email="bob@evil.com").first().__class__.__name__ if False else True, "")
@@ -246,7 +248,7 @@ def main():
         if "token" in str(req.full_url):
             return _mock_urlopen_resp(200, token_resp)
         return _mock_urlopen_resp(200, userinfo_no_email)
-    with patch("urllib.request.urlopen", side_effect=_mock_urlopen_noemail):
+    with patch("app.routers.sso.safe_urlopen", side_effect=_mock_urlopen_noemail):
         r7 = client.get("/api/auth/sso/callback", params={"code": "code3", "state": state6})
     ck(r7.status_code == 400, f"no email → 400 (got {r7.status_code})")
 
@@ -262,7 +264,7 @@ def main():
         if "token" in str(req.full_url):
             return _mock_urlopen_resp(200, token_resp)
         return _mock_urlopen_resp(200, userinfo_dave)
-    with patch("urllib.request.urlopen", side_effect=_mock_urlopen_dave):
+    with patch("app.routers.sso.safe_urlopen", side_effect=_mock_urlopen_dave):
         r9 = client.get("/api/auth/sso/callback", params={"code": "code4", "state": state8})
     ck(r9.status_code in (302, 307), "existing user SSO → redirect (success)")
     count_after = test_db.query(M.User).filter_by(email="dave@corp.io").count()
