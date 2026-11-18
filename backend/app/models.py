@@ -78,6 +78,11 @@ class User(Base):
     # tant que l'utilisateur n'a pas validé un code après setup (anti-lockout : setup sans verify = no-op).
     totp_secret_encrypted = Column(Text, nullable=True)  # Fernet — base32 secret pyotp
     totp_enabled = Column(Boolean, default=False, nullable=False)
+    # P66 (A2) — forgot/reset password : token hash (bcrypt, jamais en clair) + expiry 15 min (anti replay).
+    password_reset_token_hash = Column(String, nullable=True)
+    password_reset_expires_at = Column(DateTime, nullable=True)
+    # P66 (A3) — 2FA backup codes : JSON array de hashes bcrypt des 10 codes 1-use (anti-lockout 2FA).
+    backup_codes_hashed = Column(Text, nullable=True)
 
 
 class Tenant(Base):

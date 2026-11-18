@@ -117,7 +117,8 @@ def twofa_setup(user: models.User = Depends(get_current_user), db: Session = Dep
 @router.post("/2fa/verify")
 def twofa_verify(body: schemas.TwoFAVerify, user: models.User = Depends(get_current_user),
                  db: Session = Depends(get_db)):
-    """POST /auth/2fa/verify : valide un code TOTP 6 digits. Si OK, active 2FA (totp_enabled=True).
+    """POST /auth/2fa/verify : valide un code TOTP 6 digits. Si OK, active 2FA (totp_enabled=True) +
+    génère 10 backup codes 1-use (P66 A3 — anti-lockout : perte téléphone = récupération via backup code).
     Anti-lockout : exige un code valide AVANT activation (l'utilisateur a prouvé qu'il a l'app configurée).
     Log audit auth.2fa.enable (via la 1ère membership active du user pour le tenant_id)."""
     if not user.totp_secret_encrypted:
@@ -126,10 +127,22 @@ def twofa_verify(body: schemas.TwoFAVerify, user: models.User = Depends(get_curr
     if not _totp(secret).verify(body.code):
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Code TOTP invalide")
     user.totp_enabled = True
+    # P66 (A3) — génère 10 backup codes 1-use (format XXXX-XXXX-XXXX, hashs bcrypt stockés en DB).
+    # Retournés UNE FOIS ici (l'utilisateur doit les stocker hors-ligne — anti-lockout 2FA).
+    import json as _json
+    import secrets as _secrets
+
+    def _gen_code() -> str:
+        return "-".join(_secrets.token_hex(2).upper() for _ in range(3))  # ex. A1B2-C3D4-E5F6
+
+    backup_codes = [_gen_code() for _ in range(10)]
+    user.backup_codes_hashed = _json.dumps([security.hash_password(c) for c in backup_codes])
     db.commit()
     _log_twofa_event(db, user, "auth.2fa.enable")
     db.commit()
-    return {"enabled": True, "user_id": user.id, "note": "2FA activé — le login exigera désormais un code TOTP"}
+    return {"enabled": True, "user_id": user.id,
+            "backup_codes": backup_codes,
+            "note": "2FA activé + 10 backup codes générés (1-use, stockez-les hors-ligne — anti-lockout)"}
 
 
 @router.delete("/2fa")
@@ -145,10 +158,11 @@ def twofa_disable(code: str = Query(..., description="Code TOTP 6 digits (anti-d
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Code TOTP invalide — désactivation refusée")
     user.totp_enabled = False
     user.totp_secret_encrypted = None
+    user.backup_codes_hashed = None  # P66 : purge backup codes (2FA désactivé = codes obsolètes)
     db.commit()
     _log_twofa_event(db, user, "auth.2fa.disable")
     db.commit()
-    return {"enabled": False, "user_id": user.id, "note": "2FA désactivé (secret purgé)"}
+    return {"enabled": False, "user_id": user.id, "note": "2FA désactivé (secret + backup codes purgés)"}
 
 
 @router.post("/login/2fa", response_model=schemas.Token)
@@ -175,3 +189,81 @@ def _log_twofa_event(db: Session, user: models.User, action: str):
     if m:
         log_audit(db, tenant_id=m.tenant_id, actor_user_id=user.id, actor_name=user.name,
                   action=action, target_type="user", target_id=user.id)
+
+
+# ─── P66 — Auth P0 : forgot/reset password (A2) + 2FA backup codes login (A3) ───
+
+@router.post("/forgot-password")
+@limiter.limit(settings.login_rate_limit)
+def forgot_password(request: Request, body: schemas.PasswordForgot, db: Session = Depends(get_db)):
+    """POST /auth/forgot-password : génère un token de reset (15 min), stocke son hash bcrypt + expiry.
+    Anti-énumération : retourne toujours 200 (même si email inconnu — ne leak pas l'existence du compte).
+    En dev/test (smtp_enabled=false) : retourne le token en clair (pour tests). En prod : envoie par email
+    via SMTP (le token n'est JAMAIS retourné dans la response en prod)."""
+    import secrets as _secrets
+    from datetime import timedelta
+    user = db.query(models.User).filter_by(email=body.email.lower()).first()
+    reset_token = _secrets.token_urlsafe(32)
+    if user:
+        user.password_reset_token_hash = security.hash_password(reset_token)
+        user.password_reset_expires_at = datetime.now(UTC) + timedelta(minutes=15)
+        db.commit()
+        if settings.smtp_enabled:
+            # Prod : envoi par email (le token n'est pas retourné dans la response).
+            from ..mailer import send_email
+            send_email(to=user.email, subject="Réinitialisation mot de passe RevPulse",
+                       body=f"Token de reset (valide 15 min) : {reset_token}")
+    # Anti-énumération : même response que l'email existe ou non.
+    if not settings.is_production and user:
+        return {"sent": True, "reset_token": reset_token, "note": "dev/test — token retourné (prod enverrait par email)"}
+    return {"sent": True, "note": "Si l'email existe, un lien de reset a été envoyé (valide 15 min)."}
+
+
+@router.post("/reset-password")
+@limiter.limit(settings.login_rate_limit)
+def reset_password(request: Request, body: schemas.PasswordReset, db: Session = Depends(get_db)):
+    """POST /auth/reset-password {token, new_password} : valide le token (hash compare + non-expiré),
+    update password_hash, clear token (single-use). 400 si token invalide/expiré. Anti-replay."""
+    user = db.query(models.User).filter(
+        models.User.password_reset_token_hash.isnot(None)
+    ).first()
+    # Parcourir les users avec un token pending (peu nombreux) — compare hash bcrypt.
+    candidates = db.query(models.User).filter(models.User.password_reset_token_hash.isnot(None)).all()
+    user = next((u for u in candidates if security.verify_password(body.token, u.password_reset_token_hash)), None)
+    if not user:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Token invalide ou déjà utilisé")
+    if user.password_reset_expires_at and datetime.now(UTC) > user.password_reset_expires_at.replace(tzinfo=UTC):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Token expiré (15 min) — redemandez un reset")
+    user.password_hash = security.hash_password(body.new_password)
+    user.password_reset_token_hash = None
+    user.password_reset_expires_at = None
+    db.commit()
+    return {"reset": True, "user_id": user.id, "note": "Mot de passe réinitialisé — token consommé (single-use)"}
+
+
+@router.post("/login/2fa/backup", response_model=schemas.Token)
+@limiter.limit(settings.login_rate_limit)
+def login_2fa_backup(request: Request, body: schemas.TwoFALogin, db: Session = Depends(get_db)):
+    """POST /auth/login/2fa/backup {temp_token, code} : termine le login 2FA avec un BACKUP CODE (1-use)
+    au lieu d'un code TOTP. Pour la perte de téléphone (anti-lockout). Valide temp_token (claim 2fa=true) +
+    consume le backup code (hash compare + remove de la liste). Émet le token de session complet."""
+    import json as _json
+    payload = security.decode_token(body.temp_token)
+    if not payload or not payload.get("2fa"):
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "temp_token invalide ou expiré")
+    user = db.query(models.User).filter_by(id=payload["sub"]).first()
+    if not user or not user.totp_enabled or not user.backup_codes_hashed:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "2FA non activé ou aucun backup code")
+    codes_hashed = _json.loads(user.backup_codes_hashed)
+    matched_idx = -1
+    for i, h in enumerate(codes_hashed):
+        if security.verify_password(body.code, h):
+            matched_idx = i
+            break
+    if matched_idx < 0:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Backup code invalide")
+    # Consume : retire le code utilisé de la liste (1-use).
+    codes_hashed.pop(matched_idx)
+    user.backup_codes_hashed = _json.dumps(codes_hashed) if codes_hashed else None
+    db.commit()
+    return schemas.Token(token=security.create_access_token(user.id), user=user)
