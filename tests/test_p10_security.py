@@ -127,7 +127,8 @@ auth = read("backend/app/routers/auth.py")
 ck('is_production' in auth, True, "auth gate production (démo/logout)")
 ck('"/logout"' in auth, True, "route /logout (révocation P10.7)")
 ck("RevokedToken" in auth, True, "logout stocke revoked_tokens")
-ck("Compte démo indisponible en production" in auth, True, "/api/auth/demo 404 en prod (P10.4)")
+# P45 i18n : le message FR littéral est remplacé par t("auth.demo_unavailable", lang) — on vérifie la clé i18n + le gate is_production.
+ck('t("auth.demo_unavailable"' in auth and "is_production" in auth, True, "/api/auth/demo 404 en prod (P10.4, i18n)")
 seed = read("backend/app/seed.py")
 ck("is_production" in seed, True, "seed_all skip en prod (P10.4)")
 

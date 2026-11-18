@@ -65,6 +65,12 @@ class User(Base):
     name = Column(String, nullable=False)
     password_hash = Column(String, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow)
+    # P45 — SSO Enterprise + i18n : sso_id (sub IdP), identity_provider (oidc:issuer), locale (fr/en/es).
+    # password_hash reste NOT NULL pour les users locaux ; SSO users ont un hash placeholder (non utilisé).
+    sso_id = Column(String, nullable=True, index=True)  # sub du fournisseur d'identité (OIDC userinfo.sub)
+    identity_provider = Column(String, nullable=True)  # "oidc:{issuer}" ex. oidc:https://login.microsoftonline.com/...
+    locale = Column(String(8), default="fr", nullable=False)  # fr | en | es (préférence UI persistée)
+    sso_tenant_id = Column(String, ForeignKey("tenants.id", ondelete="SET NULL"), nullable=True)  # tenant SSO d'origine (JIT)
 
 
 class Tenant(Base):
@@ -75,6 +81,33 @@ class Tenant(Base):
     currency = Column(String(8), default="EUR", nullable=False)  # P30 : EUR|USD|GNF|XOF
     owner_id = Column(String, ForeignKey("users.id"), nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow)
+    # P45 — SSO Enterprise : flag + domaines autorisés (auto-provisioning JIT par domaine e-mail).
+    sso_enabled = Column(Boolean, default=False, nullable=False)  # SSO obligatoire pour ce tenant ?
+
+
+class EnterpriseSSO(Base):
+    """P45 — Configuration SSO OIDC par tenant (1 par tenant, unique tenant_id).
+    Couvre Microsoft Entra ID, Google Workspace, Okta, Keycloak (tous supportent OIDC).
+    client_secret chiffré Fernet (security.encrypt_token). domains = JSON list des domaines e-mail
+    autorisés pour le JIT provisioning (ex. ["revpulse.io", "corp.example.com"]).
+    Flow : GET /api/auth/sso/{tenant_id}/initiate → redirect IdP authorize → callback → exchange code
+    → userinfo → JIT user (si email domain in domains) → JWT RevPulse."""
+
+    __tablename__ = "enterprise_sso"
+    id = Column(String, primary_key=True, default=lambda: _uid("sso"))
+    tenant_id = Column(String, ForeignKey("tenants.id", ondelete="CASCADE"), unique=True, nullable=False, index=True)
+    provider_type = Column(String, default="oidc", nullable=False)  # oidc (SAML = v5)
+    client_id = Column(String, nullable=False)
+    client_secret_encrypted = Column(Text, nullable=False)  # Fernet (security.encrypt_token)
+    issuer_url = Column(String, nullable=False)  # ex. https://login.microsoftonline.com/{tenant}/v2.0
+    authorize_url = Column(String, nullable=False)  # {issuer}/authorize
+    token_url = Column(String, nullable=False)  # {issuer}/oauth2/v2.0/token
+    userinfo_url = Column(String, nullable=False)  # {issuer}/oidc/userinfo (ou google userinfo)
+    scopes = Column(String, default="openid profile email", nullable=False)
+    domains = Column(Text, nullable=False, default="[]")  # JSON list : ["revpulse.io", ...]
+    enabled = Column(Boolean, default=True, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 
 
 class Profile(Base):

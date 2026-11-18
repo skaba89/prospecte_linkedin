@@ -23,6 +23,8 @@
     opts = opts || {};
     var headers = { "Content-Type": "application/json" };
     var t = RP.tok(); if (t) headers["Authorization"] = "Bearer " + t;
+    // P45 i18n : envoie la langue préférée (localStorage override > navigator.language > fr).
+    headers["Accept-Language"] = (localStorage.getItem("revpulse_lang") || navigator.language || "fr");
     var fetchOpts = { method: opts.method || "GET", headers: headers };
     if (opts.body !== undefined && opts.body !== null) fetchOpts.body = JSON.stringify(opts.body);
     if (opts.form) { // multipart (file upload)

@@ -38,6 +38,7 @@ from .routers import (
     prospecting,
     sales_intelligence,
     sequences,
+    sso,
     tags,
     tenants,
     webhooks,
@@ -122,6 +123,7 @@ def health(db: Session = Depends(get_db)):
 # Routers métier
 for r in (
     auth.router,
+    sso.router,                 # P45 : SSO Enterprise OIDC (initiate + callback + JIT provisioning)
     career.router,             # P34 : Career (espace candidat isolé du Business — user-scoped, pas tenant)
     tenants.router,
     members.router,

@@ -31,6 +31,8 @@
     opts = opts || {};
     var h = { "Content-Type": "application/json" };
     var t = tok(); if (t) h["Authorization"] = "Bearer " + t;
+    // P45 i18n : envoie la langue préférée (localStorage override > navigator.language > fr).
+    h["Accept-Language"] = (localStorage.getItem("revpulse_lang") || navigator.language || "fr");
     var r = await fetch(path, { method: opts.method || "GET", headers: h,
       body: opts.body ? JSON.stringify(opts.body) : null });
     var txt = await r.text();
