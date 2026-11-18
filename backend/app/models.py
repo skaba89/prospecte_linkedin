@@ -687,6 +687,20 @@ class Subscription(Base):
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 
 
+class StripeEventLog(Base):
+    """P44 — idempotency webhook Stripe. 1 ligne par event_id Stripe traité (PK = stripe event id).
+    Anti-replay : handle_webhook_event vérifie la présence avant traitement → un même event renvoyé
+    par Stripe (retry) n'est JAMAIS retraité (double quota reset, double upgrade évités).
+    event_type + processed_at pour audit. Pas de tenant_id (un event peut concerner un tenant pas
+    encore en DB, ex. checkout d'un nouveau customer)."""
+
+    __tablename__ = "stripe_event_log"
+    id = Column(String, primary_key=True)  # = Stripe event_id (evt_...) — PK naturelle
+    event_type = Column(String, nullable=False)  # checkout.session.completed | invoice.paid | ...
+    processed_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    result = Column(String, nullable=True)  # "ok" | "duplicate" | "error:..." (audit court)
+
+
 class PromptVersion(Base):
     """Prompts versionnés (P24-B). tenant + name + version (unique, incrémental). content = template
     avec {{variables}} (rendu par str.format_map). variables = liste JSON des noms attendus. active =

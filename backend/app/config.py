@@ -86,8 +86,11 @@ class Settings(BaseSettings):
     # Stripe — P30 Commercialisation. Si stripe_secret_key non renseigné → mode mock (checkout
     # retourne une URL de test, webhook accepte les events sans vérif signature). Anti-fake : le
     # retour checkout porte simulated=True quand mock. En prod : renseigner secret + webhook_secret.
+    # P44 : stripe_publishable_key (Stripe.js frontend) + stripe_api_version (pin API version).
     stripe_secret_key: str = ""
     stripe_webhook_secret: str = ""
+    stripe_publishable_key: str = ""  # P44 : clé publique Stripe.js (frontend Elements / checkout redirect)
+    stripe_api_version: str = "2024-06-20"  # P44 : pin API version (anti-breaking-change Stripe)
     stripe_currency: str = "eur"  # currency code Stripe (lowercase ISO 4217)
 
     # France Travail — P35-V2 connecteur d'emploi réel. API Offres d'emploi v2 (OAuth2 client

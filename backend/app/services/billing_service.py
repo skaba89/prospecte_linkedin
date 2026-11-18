@@ -175,26 +175,35 @@ def create_checkout_session(db: Session, tenant_id: str, target_plan: str, succe
         db.commit()
         return {"checkout_url": None, "session_id": None, "simulated": True, "upgraded_directly": True,
                 "plan": "Free", "message": "Plan Free activé (sans paiement)."}
-    # Stripe réel si configuré
-    if settings.stripe_secret_key and not settings.is_production:
+    # Stripe réel si configuré (P44 : gate retiré — Stripe actif en prod quand secret présent).
+    if settings.stripe_secret_key:
         try:
             import stripe  # type: ignore
             stripe.api_key = settings.stripe_secret_key
+            stripe.api_version = settings.stripe_api_version  # P44 : pin API version (anti-breaking-change)
             # Prix en centimes (Stripe), convertir EUR → devise Stripe
             amount_cents = round(price_eur * CURRENCIES[currency]["rate_from_eur"] * 100)
-            session = stripe.checkout.Session.create(
-                mode="subscription",
-                customer_email=sub.stripe_customer_id or None,
-                line_items=[{"price_data": {
+            # P44 : fix bug customer_email=stripe_customer_id. Si customer_id existe → customer= (reutilise
+            # le customer Stripe). Sinon → customer_email= avec l'email du tenant owner (nouveau customer).
+            checkout_kwargs = {
+                "mode": "subscription",
+                "line_items": [{"price_data": {
                     "currency": stripe_currency,
                     "product_data": {"name": f"RevPulse {target_plan} (mensuel)"},
                     "unit_amount": amount_cents,
                     "recurring": {"interval": "month"},
                 }, "quantity": 1}],
-                success_url=success_url,
-                cancel_url=cancel_url,
-                metadata={"tenant_id": tenant_id, "target_plan": target_plan},
-            )
+                "success_url": success_url,
+                "cancel_url": cancel_url,
+                "metadata": {"tenant_id": tenant_id, "target_plan": target_plan},
+            }
+            if sub.stripe_customer_id:
+                checkout_kwargs["customer"] = sub.stripe_customer_id
+            elif tenant and tenant.owner_id:
+                owner = db.query(models.User).filter_by(id=tenant.owner_id).first()
+                if owner and owner.email:
+                    checkout_kwargs["customer_email"] = owner.email
+            session = stripe.checkout.Session.create(**checkout_kwargs)
             return {"checkout_url": session.url, "session_id": session.id, "simulated": False}
         except Exception as e:
             # Fallback mock si Stripe échoue (anti-blocage CI/test)
@@ -215,25 +224,62 @@ def _mock_checkout(tenant_id: str, target_plan: str, price_eur: float, currency:
             "price_display": format_price(price_eur, currency)}
 
 
+def _stripe_ts_to_dt(ts) -> datetime | None:
+    """P44 : convertit un timestamp unix Stripe (current_period_end, created) → datetime UTC. None si absent."""
+    if not ts:
+        return None
+    try:
+        return datetime.utcfromtimestamp(int(ts))
+    except (ValueError, TypeError, OSError):
+        return None
+
+
+def _log_stripe_event(db, event_id: str, event_type: str, result: str) -> None:
+    """P44 : enregistre l'event dans stripe_event_log (idempotency + audit). Best-effort (ignore si déjà présent)."""
+    if not event_id:
+        return
+    existing = db.query(models.StripeEventLog).filter_by(id=event_id).first()
+    if existing:
+        existing.result = result
+    else:
+        db.add(models.StripeEventLog(id=event_id, event_type=event_type, result=result))
+    db.commit()
+
+
 def handle_webhook_event(db: Session, event: dict) -> dict:
-    """Traite un event Stripe webhook (checkout.session.completed ou customer.subscription.updated).
-    - En mode mock (pas de stripe_webhook_secret) : accepte les events de test sans vérif signature.
-    - En mode réel : la vérif signature est faite par le router avant d'appeler cette fonction.
-    Met à jour Subscription.plan + status + stripe IDs + current_period_end.
-    """
+    """Traite un event Stripe webhook. P44 : idempotency (stripe_event_log) + events complets.
+    - checkout.session.completed : upgrade plan + reset quota + stripe IDs + current_period_end Stripe.
+    - customer.subscription.updated : sync status + current_period_end depuis Stripe.
+    - customer.subscription.deleted : status=canceled + plan=Free.
+    - invoice.paid : status=active (paiement réussi — confirme l'abonnement).
+    - invoice.payment_failed : status=past_due (paiement échoué — Stripe réessaiera).
+    Idempotency : si event_id déjà dans stripe_event_log → retourne {processed: False, duplicate: True}
+    (Stripe renvoie un event jusqu'à ACK 200 — anti-replay double traitement).
+    La vérif signature est faite par le router (main.py) AVANT cet appel en mode réel."""
+    event_id = event.get("id", "")  # evt_... (Stripe)
     event_type = event.get("type", "")
     data = event.get("data", {}).get("object", {})
-    result = {"processed": False, "type": event_type}
+    result = {"processed": False, "type": event_type, "event_id": event_id}
+
+    # P44 : idempotency — si event déjà traité, on ACK (200) sans retraiter.
+    if event_id and db.query(models.StripeEventLog).filter_by(id=event_id).first():
+        result.update({"processed": False, "duplicate": True})
+        _log_stripe_event(db, event_id, event_type, "duplicate")
+        return result
+
     if event_type == "checkout.session.completed":
         tenant_id = data.get("metadata", {}).get("tenant_id")
         target_plan = data.get("metadata", {}).get("target_plan")
         if not tenant_id or not target_plan:
+            _log_stripe_event(db, event_id, event_type, "error:metadata_missing")
             return {**result, "error": "metadata tenant_id/target_plan manquants"}
         sub = get_or_create_subscription(db, tenant_id)
         sub.plan = target_plan
         sub.status = "active"
         sub.stripe_customer_id = data.get("customer") or sub.stripe_customer_id
         sub.stripe_subscription_id = data.get("subscription") or sub.stripe_subscription_id
+        # P44 : current_period_end depuis Stripe (data.object.current_period_end sur la subscription).
+        # checkout.session n'a pas current_period_end directement → fallback +30j (sync via invoice.paid).
         sub.current_period_end = datetime.utcnow() + timedelta(days=30)
         sub.ia_calls_used = 0  # reset quota on upgrade
         sub.ia_calls_reset_at = datetime.utcnow() + timedelta(days=30)
@@ -242,6 +288,26 @@ def handle_webhook_event(db: Session, event: dict) -> dict:
             tenant.plan = target_plan
         db.commit()
         result.update({"processed": True, "tenant_id": tenant_id, "plan": target_plan})
+        _log_stripe_event(db, event_id, event_type, "ok")
+
+    elif event_type == "customer.subscription.updated":
+        cust = data.get("customer")
+        sub = db.query(models.Subscription).filter_by(stripe_customer_id=cust).first() if cust else None
+        if sub:
+            # P44 : sync status + current_period_end depuis Stripe (source de vérité).
+            stripe_status = data.get("status", "")  # active|past_due|canceled|trialing|incomplete
+            status_map = {"active": "active", "trialing": "trialing", "past_due": "past_due",
+                          "canceled": "canceled", "incomplete": "past_due", "unpaid": "past_due"}
+            sub.status = status_map.get(stripe_status, sub.status)
+            cpe = _stripe_ts_to_dt(data.get("current_period_end"))
+            if cpe:
+                sub.current_period_end = cpe
+            if data.get("id"):
+                sub.stripe_subscription_id = data["id"]
+            db.commit()
+            result.update({"processed": True, "tenant_id": sub.tenant_id, "status": sub.status})
+        _log_stripe_event(db, event_id, event_type, "ok" if sub else "error:no_sub")
+
     elif event_type == "customer.subscription.deleted":
         cust = data.get("customer")
         sub = db.query(models.Subscription).filter_by(stripe_customer_id=cust).first() if cust else None
@@ -253,4 +319,29 @@ def handle_webhook_event(db: Session, event: dict) -> dict:
                 tenant.plan = "Free"
             db.commit()
             result.update({"processed": True, "tenant_id": sub.tenant_id})
+        _log_stripe_event(db, event_id, event_type, "ok" if sub else "error:no_sub")
+
+    elif event_type == "invoice.paid":
+        # P44 : paiement réussi → confirme abonnement actif + sync current_period_end.
+        cust = data.get("customer")
+        sub = db.query(models.Subscription).filter_by(stripe_customer_id=cust).first() if cust else None
+        if sub:
+            sub.status = "active"
+            cpe = _stripe_ts_to_dt(data.get("period_end") or data.get("created"))
+            if cpe:
+                sub.current_period_end = cpe
+            db.commit()
+            result.update({"processed": True, "tenant_id": sub.tenant_id, "invoice_paid": True})
+        _log_stripe_event(db, event_id, event_type, "ok" if sub else "error:no_sub")
+
+    elif event_type == "invoice.payment_failed":
+        # P44 : paiement échoué → status past_due (Stripe réessaiera selon retry policy).
+        cust = data.get("customer")
+        sub = db.query(models.Subscription).filter_by(stripe_customer_id=cust).first() if cust else None
+        if sub:
+            sub.status = "past_due"
+            db.commit()
+            result.update({"processed": True, "tenant_id": sub.tenant_id, "payment_failed": True})
+        _log_stripe_event(db, event_id, event_type, "ok" if sub else "error:no_sub")
+
     return result

@@ -156,9 +156,10 @@ def metrics():
 
 @app.post("/api/billing/webhook")
 async def stripe_webhook(request: Request, db: Session = Depends(get_db)):
-    """Webhook Stripe global (P30). Vérif signature si STRIPE_WEBHOOK_SECRET configuré ;
-    sinon mode mock (accepte les events de test). Met à jour Subscription (plan/status/stripe IDs).
-    Stripe attend 200 pour acquitter — on retourne toujours 200 (erreurs loggées)."""
+    """Webhook Stripe global (P30 + P44). Vérif signature si STRIPE_WEBHOOK_SECRET configuré.
+    P44 : en prod, REJETE les events non signés (sécurité — anti free-plan-bypass). En dev/CI/test,
+    accepte les events mock sans signature. P44 : retourne 500 sur échec traitement (Stripe réessaiera)
+    sauf duplicate (200 — déjà traité, idempotent)."""
     import json
 
     from .config import settings as cfg
@@ -166,22 +167,31 @@ async def stripe_webhook(request: Request, db: Session = Depends(get_db)):
     raw = await request.body()
     sig = request.headers.get("stripe-signature", "")
     payload = raw.decode("utf-8", errors="replace")
+    # P44 : en prod, signature OBLIGATOIRE (anti-abus — sans vérif, anyone peut POST un fake event upgrade).
+    if cfg.is_production and not cfg.stripe_webhook_secret:
+        raise HTTPException(401, "Webhook Stripe non configuré en prod (STRIPE_WEBHOOK_SECRET requis).") from None
     # Vérif signature si secret configuré + stripe lib dispo
     if cfg.stripe_webhook_secret and cfg.stripe_secret_key:
         try:
             import stripe  # type: ignore
             stripe.api_key = cfg.stripe_secret_key
+            stripe.api_version = cfg.stripe_api_version
             event = stripe.Webhook.construct_event(payload, sig, cfg.stripe_webhook_secret)
             event_dict = event.to_dict() if hasattr(event, "to_dict") else dict(event)
         except Exception as e:
             raise HTTPException(400, f"Signature Stripe invalide : {e}") from None
     else:
-        # Mode mock (dev/CI/test) — parse JSON directement
+        # Mode mock (dev/CI/test) — parse JSON directement. JAMAIS en prod (bloqué au-dessus).
         try:
             event_dict = json.loads(payload)
         except Exception:
             raise HTTPException(400, "Payload JSON invalide (mode mock — pas de STRIPE_WEBHOOK_SECRET).") from None
-    return billing_service.handle_webhook_event(db, event_dict)
+    result = billing_service.handle_webhook_event(db, event_dict)
+    # P44 : Stripe réessaie si on retourne non-200. Duplicate → 200 (idempotent, déjà traité).
+    # Erreur de traitement → 500 (Stripe retryera). Success → 200.
+    if not result.get("processed") and not result.get("duplicate"):
+        raise HTTPException(500, f"Traitement webhook échoué : {result.get('error', 'unknown')}") from None
+    return result
 
 
 # Frontend statique : sert le dashboard (index.html) si le dossier existe.
