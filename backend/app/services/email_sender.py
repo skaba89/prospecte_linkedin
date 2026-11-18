@@ -602,14 +602,15 @@ def send_application_email(application, profile, db, cv_pdf_b64: str | None = No
     if not is_gmail_configured() and not is_outlook_configured():
         log.info("Envoi candidature app=%s — aucun provider configuré (not_configured).", application.id)
         return SendResult(status="not_configured", provider="none",
-                          error="Aucun provider email configuré (GMAIL/OUTLOOK creds absents). Configurez OAuth2.",
+                          error="Aucun provider email configuré (GMAIL_CLIENT_ID/SECRET absents — configurez OAuth2 Gmail ou OUTLOOK_CLIENT_ID/SECRET pour Outlook).",
                           detail={"recipient": application.recipient_email, "providers": SUPPORTED_PROVIDERS})
 
     # App configurée mais user n'a connecté aucun provider.
     if not provider or not integration:
         configured = [p for p in SUPPORTED_PROVIDERS if is_provider_configured(p)]
-        return SendResult(status="not_connected", provider=configured[0] if configured else "none",
-                          error=f"Aucun provider connecté. Connectez via /api/career/email/connect/{configured[0] if configured else 'gmail_oauth'}.",
+        first = configured[0] if configured else "gmail_oauth"
+        return SendResult(status="not_connected", provider=first,
+                          error=f"Gmail non connecté. Connectez votre compte via /api/career/email/connect/{first}.",
                           detail={"recipient": application.recipient_email, "configured": configured})
 
     # Access token valide (refresh si expiré — dispatch par provider dans _get_valid_access_token).
