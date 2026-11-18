@@ -85,8 +85,12 @@ expected = ["linkedin_jobs", "freework", "malt", "lehibou", "france_travail", "a
 for name in expected:
     ck(f'"{name}"' in reg_src, True, f"connecteur {name} enregistré")
 ck(reg_src.count("class "), 13, f"13 classes (1 base _StubConnector + 12 providers) — got {reg_src.count('class ')}")
-# France Travail + career_sites = RSS public (credential_env="" → configured=True)
-ck('credential_env = ""  # RSS public' in reg_src, True, "France Travail RSS public (configured=True)")
+# P35-V2 : france_travail = connecteur RÉEL oauth2 (API Offres d'emploi v2, délègue à france_travail.py).
+# career_sites = RSS public (credential_env="" → configured=True, stub v1).
+ck("from .france_travail import" in reg_src, True, "P35-V2 : france_travail connecteur réel importé (france_travail.py)")
+ck("class FranceTravailConnector(JobConnector)" in reg_src, True, "P35-V2 : FranceTravailConnector étend JobConnector (plus _StubConnector)")
+ck("search_france_travail" in reg_src, True, "P35-V2 : search() délègue à search_france_travail (OAuth + API v2)")
+ck('credential_env = ""  # RSS public' in reg_src, True, "career_sites RSS public (configured=True)")
 
 # ─── Source : job_search.py (orchestrateur) ──────────────────────────────────
 svc_src = (ROOT / "backend" / "app" / "services" / "job_search.py").read_text(encoding="utf-8")
@@ -150,18 +154,22 @@ if _RUNTIME_OK:
     s.commit()
 
     # ── 12 connectors registered ──
-    print("--- 12 connectors registered (10 not_configured + 2 RSS configured) ---")
+    print("--- 12 connectors registered (11 not_configured + 1 RSS configured) ---")
     ck(len(CONNECTOR_REGISTRY), 12, f"CONNECTOR_REGISTRY : {len(CONNECTOR_REGISTRY)} connecteurs (12)")
     info = list_connectors()
     ck(len(info), 12, f"list_connectors : {len(info)} infos")
-    # RSS connectors (france_travail + career_sites) = configured=True (credential_env="").
+    # P35-V2 : career_sites = RSS public (configured=True). france_travail = oauth2 réel (not_configured
+    # sans credentials REVPULSE_FRANCE_TRAVAIL_CLIENT_ID/SECRET). 10 autres API = not_configured.
     rss_configured = [c for c in info if c["configured"]]
-    ck(len(rss_configured), 2, f"{len(rss_configured)} connecteurs RSS configurés (france_travail + career_sites)")
-    rss_names = sorted(c["name"] for c in rss_configured)
-    ck(rss_names, ["career_sites", "france_travail"], f"RSS configurés : {rss_names}")
-    # API connectors (10) = not_configured (credential_env requis + absent en env test).
+    ck(len(rss_configured), 1, f"{len(rss_configured)} connecteur RSS configuré (career_sites seulement — france_travail v2 oauth2)")
+    ck(rss_configured[0]["name"], "career_sites", f"RSS configuré : {rss_configured[0]['name']}")
+    # france_travail v2 : auth_method oauth2 (plus rss), configured=False sans credentials.
+    ft = next(c for c in info if c["name"] == "france_travail")
+    ck(ft["auth_method"], "oauth2", f"france_travail auth_method=oauth2 (v2 réel, got {ft['auth_method']})")
+    ck(ft["configured"], False, "france_travail configured=False (v2 : credentials absents en test)")
+    # API connectors (11) = not_configured (10 API stubs + france_travail v2 oauth2 sans credentials).
     api_not_configured = [c for c in info if not c["configured"]]
-    ck(len(api_not_configured), 10, f"{len(api_not_configured)} connecteurs API non configurés (credentials absents)")
+    ck(len(api_not_configured), 11, f"{len(api_not_configured)} connecteurs non configurés (10 API stubs + france_travail v2)")
 
     # ── dedup_hash déterministe + normalisation ──
     print("--- dedup_hash : déterministe + normalisation (strip/lower/collapse) ---")

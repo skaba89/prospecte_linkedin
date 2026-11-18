@@ -81,6 +81,14 @@ class Settings(BaseSettings):
     stripe_webhook_secret: str = ""
     stripe_currency: str = "eur"  # currency code Stripe (lowercase ISO 4217)
 
+    # France Travail — P35-V2 connecteur d'emploi réel. API Offres d'emploi v2 (OAuth2 client
+    # credentials, gratuit). Si client_id + client_secret non renseignés → status "not_configured"
+    # (JAMAIS de faux postings). Registration : https://pole-emploi.io/ (developers portal).
+    france_travail_client_id: str = ""
+    france_travail_client_secret: str = ""
+    france_travail_base_url: str = "https://api.francetravail.io/partenaire/offresdemploi/v2/offres/search"
+    france_travail_token_url: str = "https://entreprise.francetravail.fr/connexion/oauth2/access_token?realm=/partenaire"
+
     # Logging structuré — JSON (prod) ou texte (dev/test). Niveau configurable.
     log_level: str = "INFO"
     log_format: str = "json"  # json | text

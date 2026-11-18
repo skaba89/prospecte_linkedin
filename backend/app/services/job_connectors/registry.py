@@ -26,6 +26,7 @@ documente sa méthode d'accès (auth_method). v2 : implémentation concrète par
 from __future__ import annotations
 
 from .base import ConnectorResult, JobConnector, SearchCriteria
+from .france_travail import _is_configured as _ft_configured, search_france_travail
 
 
 class _StubConnector(JobConnector):
@@ -73,11 +74,22 @@ class LeHibouConnector(_StubConnector):
     credential_env = "REVPULSE_LEHIBOU_API_KEY"  # freelances
 
 
-class FranceTravailConnector(_StubConnector):
+class FranceTravailConnector(JobConnector):
+    """P35-V2 — Connecteur France Travail RÉEL (API Offres d'emploi v2, OAuth2 client credentials).
+    Remplace le stub v1. Délègue à services/job_connectors/france_travail.py (OAuth + HTTP + mapping).
+    Si credentials absents (REVPULSE_FRANCE_TRAVAIL_CLIENT_ID/SECRET) → status not_configured (JAMAIS
+    de faux postings — mission P29/P35). AUCUN scraping — API officielle uniquement."""
     name = "france_travail"
-    auth_method = "rss"  # France Travail expose des flux RSS publics + API partner (v2)
-    base_url = "https://candidat.francetravail.fr/offres/recherche/rss"
-    credential_env = ""  # RSS public — pas de credential requis (configured=True)
+    auth_method = "oauth2"  # v2 : OAuth2 client credentials (gratuit, registration developers portal)
+    base_url = "https://api.francetravail.io/partenaire/offresdemploi/v2/offres/search"
+    credential_env = ""  # v2 : credentials en config settings (france_travail_client_id/secret)
+
+    @property
+    def configured(self) -> bool:
+        return _ft_configured()
+
+    def search(self, criteria: SearchCriteria) -> ConnectorResult:
+        return search_france_travail(criteria)
 
 
 class ApecConnector(_StubConnector):

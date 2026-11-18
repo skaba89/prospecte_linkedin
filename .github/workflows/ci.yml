@@ -159,6 +159,10 @@ jobs:
         env:
           REVPULSE_DATABASE_URL: sqlite:///./p30_test.db
           REVPULSE_ENV: test
+      - name: P35-V2 France Travail connecteur réel (OAuth + API v2 + mapping + fallbacks, mock HTTP)
+        run: python tests/test_p35_v2_connecteurs.py
+        env:
+          REVPULSE_ENV: test
       - name: Run P3 tests (pagination + request-ID + health)
         run: python tests/test_p3.py
         env:
