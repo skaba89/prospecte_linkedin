@@ -10,6 +10,9 @@ Endpoints (préfixe /api/tenants/{tid}/audit) :
   GET /export-pdf — export PDF signé (P53) : entrées filtrées + footer HMAC-SHA256 (non-répudiation).
   GET /alerts    — alertes compliance (P53) : IPs avec burst d'actions (>N/heure) + actions sans acteur.
   POST /purge    — purge de rétention (P53) : supprime les entries > tenant.retention_days + log meta.
+  GET /alerts/webhook  — config webhook alerts du tenant (P55).
+  PUT /alerts/webhook  — configure webhook URL + seuil min_severity (P55, loggé audit.alert_webhook.update).
+  POST /alerts/notify  — évalue alerts + POST celles >= min_severity vers webhook Slack-compatible (P55).
 
 RBAC : workspace.manage (Owner/admin) — seul le propriétaire de l'espace voit l'historique complet
 des actions (P3). La trace est immuable sauf POST /purge (rétention compliance, loggée elle-même).
@@ -21,7 +24,8 @@ import io
 import json
 from datetime import datetime, timedelta
 
-from fastapi import APIRouter, Depends, Query, Response
+import httpx
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
@@ -263,6 +267,56 @@ def export_audit_pdf(
     )
 
 
+def _compute_alerts(db: Session, tid: str, window_hours: int, burst_threshold: int) -> list[schemas.AuditAlertItem]:
+    """Helper P53/P55 : calcule les alertes compliance d'un tenant sur la fenêtre donnée.
+    Réutilisé par GET /alerts (lecture UI) + POST /alerts/notify (notification webhook).
+    - ip_burst : IP avec >burst_threshold actions dans window_hours (sévérité high >5x seuil, medium sinon).
+    - no_actor : actions sans actor_user_id (système/anonyme — sévérité low)."""
+    since = datetime.utcnow() - timedelta(hours=window_hours)
+    base = db.query(models.AuditLog).filter_by(tenant_id=tid).filter(models.AuditLog.created_at >= since)
+    ip_counts = (base.with_entities(models.AuditLog.ip, func.count(models.AuditLog.id).label("c"))
+                 .filter(models.AuditLog.ip != "")
+                 .group_by(models.AuditLog.ip).having(func.count(models.AuditLog.id) > burst_threshold)
+                 .order_by(func.count(models.AuditLog.id).desc()).limit(20).all())
+    no_actor = (base.filter(models.AuditLog.actor_user_id.is_(None))
+               .with_entities(models.AuditLog.action, func.count(models.AuditLog.id).label("c"))
+               .group_by(models.AuditLog.action).order_by(func.count(models.AuditLog.id).desc()).limit(10).all())
+    alerts = []
+    for ip_addr, c in ip_counts:
+        sev = "high" if c > burst_threshold * 5 else "medium"
+        alerts.append(schemas.AuditAlertItem(kind="ip_burst", severity=sev, label=ip_addr, count=c,
+                                             detail={"threshold": burst_threshold, "window_hours": window_hours}))
+    for act, c in no_actor:
+        alerts.append(schemas.AuditAlertItem(kind="no_actor", severity="low", label=act, count=c,
+                                             detail={"window_hours": window_hours}))
+    return alerts
+
+
+_SEV_ORDER = {"low": 1, "medium": 2, "high": 3}
+
+
+def _build_slack_payload(tenant_name: str, tid: str, alert: schemas.AuditAlertItem) -> dict:
+    """Helper P55 : construit le payload Slack-compatible pour une alerte (pure function testable).
+    Format Slack incoming webhook : {"text": "...", "attachments": [{...}]}. Compatible Slack/Teams/custom."""
+    emoji = {"high": "🚨", "medium": "⚠️", "low": "🔵"}.get(alert.severity, "⚠️")
+    kind_label = {"ip_burst": "Burst IP (brute-force suspect)", "no_actor": "Action sans acteur (système)"}.get(
+        alert.kind, alert.kind)
+    text = f"{emoji} RevPulse audit alert [{alert.severity.upper()}] — {tenant_name}"
+    attachment = {
+        "color": {"high": "#dc2626", "medium": "#f59e0b", "low": "#6b7280"}.get(alert.severity, "#6b7280"),
+        "fields": [
+            {"title": "Type", "value": kind_label, "short": True},
+            {"title": "Sévérité", "value": alert.severity.upper(), "short": True},
+            {"title": "Cible", "value": alert.label, "short": True},
+            {"title": "Occurrences", "value": str(alert.count), "short": True},
+            {"title": "Tenant", "value": f"{tid} ({tenant_name})", "short": False},
+        ],
+        "footer": "RevPulse audit compliance (P55)",
+        "ts": int(datetime.utcnow().timestamp()),
+    }
+    return {"text": text, "attachments": [attachment]}
+
+
 @router.get("/alerts", response_model=schemas.AuditAlertsOut)
 def audit_alerts(
     tid: str,
@@ -276,27 +330,7 @@ def audit_alerts(
     - ip_burst : IP avec >burst_threshold actions dans window_hours (potentiel brute-force / scan).
     - no_actor : actions sans actor_user_id (système/anonyme — vérifier légitimité).
     Sévérité : high (>5x seuil), medium (>seuil), low (actions système isolées). RBAC workspace.manage."""
-    since = datetime.utcnow() - timedelta(hours=window_hours)
-    base = db.query(models.AuditLog).filter_by(tenant_id=tid).filter(models.AuditLog.created_at >= since)
-
-    # Burst par IP (IP non vide)
-    ip_counts = (base.with_entities(models.AuditLog.ip, func.count(models.AuditLog.id).label("c"))
-                 .filter(models.AuditLog.ip != "")
-                 .group_by(models.AuditLog.ip).having(func.count(models.AuditLog.id) > burst_threshold)
-                 .order_by(func.count(models.AuditLog.id).desc()).limit(20).all())
-    # Actions sans acteur (système/anonyme)
-    no_actor = (base.filter(models.AuditLog.actor_user_id.is_(None))
-               .with_entities(models.AuditLog.action, func.count(models.AuditLog.id).label("c"))
-               .group_by(models.AuditLog.action).order_by(func.count(models.AuditLog.id).desc()).limit(10).all())
-
-    alerts = []
-    for ip_addr, c in ip_counts:
-        sev = "high" if c > burst_threshold * 5 else "medium"
-        alerts.append(schemas.AuditAlertItem(kind="ip_burst", severity=sev, label=ip_addr, count=c,
-                                             detail={"threshold": burst_threshold, "window_hours": window_hours}))
-    for act, c in no_actor:
-        alerts.append(schemas.AuditAlertItem(kind="no_actor", severity="low", label=act, count=c,
-                                             detail={"window_hours": window_hours}))
+    alerts = _compute_alerts(db, tid, window_hours, burst_threshold)
     return schemas.AuditAlertsOut(window_hours=window_hours, total_alerts=len(alerts), alerts=alerts)
 
 
@@ -326,3 +360,84 @@ def purge_audit(
     remaining = db.query(models.AuditLog).filter_by(tenant_id=tid).count()
     return schemas.PurgeResult(purged=purged, retention_days=_t.retention_days,
                                purged_before=cutoff, remaining=remaining)
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# P55 — Webhook alerts compliance : config + notify (notification push)
+# ════════════════════════════════════════════════════════════════════════════
+
+@router.get("/alerts/webhook", response_model=schemas.AuditWebhookConfig)
+def get_alert_webhook(
+    tid: str,
+    _t: models.Tenant = Depends(get_tenant),
+    _perm=Depends(require_permission("workspace.manage")),
+):
+    """GET /audit/alerts/webhook : config webhook alerts du tenant (P55). RBAC workspace.manage."""
+    return schemas.AuditWebhookConfig(webhook_url=_t.audit_alert_webhook_url,
+                                      min_severity=_t.audit_alert_min_severity)
+
+
+@router.put("/alerts/webhook", response_model=schemas.AuditWebhookConfig)
+def put_alert_webhook(
+    tid: str,
+    cfg: schemas.AuditWebhookConfig,
+    db: Session = Depends(get_db),
+    _t: models.Tenant = Depends(get_tenant),
+    _perm=Depends(require_permission("workspace.manage")),
+):
+    """PUT /audit/alerts/webhook : configure le webhook alerts + seuil min de notification (P55).
+    webhook_url nullable = désactivé. min_severity parmi high|medium|low. Logge la config change.
+    RBAC workspace.manage."""
+    if cfg.min_severity not in ("high", "medium", "low"):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
+                            detail="min_severity must be one of: high, medium, low")
+    _t.audit_alert_webhook_url = cfg.webhook_url or None
+    _t.audit_alert_min_severity = cfg.min_severity
+    db.commit()
+    from ..audit import log_audit
+    log_audit(db, tenant_id=tid, actor_user_id=_perm.user_id, actor_name=_perm.name,
+              action="audit.alert_webhook.update", target_type="tenant", target_id=tid,
+              detail={"webhook_url": "(set)" if cfg.webhook_url else "(cleared)",
+                      "min_severity": cfg.min_severity})
+    db.commit()
+    return schemas.AuditWebhookConfig(webhook_url=_t.audit_alert_webhook_url,
+                                      min_severity=_t.audit_alert_min_severity)
+
+
+@router.post("/alerts/notify", response_model=schemas.NotifyResult)
+def notify_alerts(
+    tid: str,
+    window_hours: int = Query(1, ge=1, le=168),
+    burst_threshold: int = Query(10, ge=2),
+    db: Session = Depends(get_db),
+    _t: models.Tenant = Depends(get_tenant),
+    _perm=Depends(require_permission("workspace.manage")),
+):
+    """POST /audit/alerts/notify : évalue les alerts + POST celles >= min_severity vers le webhook (P55).
+    Payload Slack-compatible (incoming webhook). Retourne NotifyResult avec le détail par alerte.
+    Si pas de webhook configuré → notified=0 (results avec status=0). RBAC workspace.manage."""
+    alerts = _compute_alerts(db, tid, window_hours, burst_threshold)
+    min_sev = _t.audit_alert_min_severity or "high"
+    min_rank = _SEV_ORDER.get(min_sev, 3)
+    webhook_url = _t.audit_alert_webhook_url
+    results = []
+    notified = 0
+    for a in alerts:
+        item = schemas.AlertNotifyItem(kind=a.kind, severity=a.severity, label=a.label, count=a.count,
+                                       status=0, delivered=False)
+        # Filtre par sévérité (alert.rank >= min_rank)
+        if _SEV_ORDER.get(a.severity, 0) >= min_rank and webhook_url:
+            payload = _build_slack_payload(_t.name, tid, a)
+            try:
+                resp = httpx.post(webhook_url, json=payload, timeout=10.0)
+                item.status = resp.status_code
+                item.delivered = 200 <= resp.status_code < 300
+                if item.delivered:
+                    notified += 1
+            except Exception:
+                item.status = 0
+                item.delivered = False
+        results.append(item)
+    return schemas.NotifyResult(window_hours=window_hours, min_severity=min_sev,
+                                webhook_url=webhook_url, evaluated=len(alerts),
+                                notified=notified, results=results)

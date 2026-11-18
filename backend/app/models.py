@@ -86,6 +86,11 @@ class Tenant(Base):
     # P53 — Audit log retention policy (compliance SOC2/GDPR). Default 2555 jours (7 ans SOC2).
     # POST /audit/purge supprime les entries > retention_days (avec log meta de la purge elle-même).
     retention_days = Column(Integer, default=2555, nullable=False)
+    # P55 — Webhook alerts compliance : URL Slack/email + seuil min de notification.
+    # POST /audit/alerts/notify évalue les alerts >= min_severity + POST vers l'URL (payload Slack-compatible).
+    # scripts/audit_cron.py (cron hebdo) boucle tenants → purge + notify automatique.
+    audit_alert_webhook_url = Column(String, nullable=True)  # https://hooks.slack.com/... ou webhook custom
+    audit_alert_min_severity = Column(String(8), default="high", nullable=False)  # high|medium|low
 
 
 class EnterpriseSSO(Base):
