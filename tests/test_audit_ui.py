@@ -73,9 +73,13 @@ ck("import csv" in rtr, True, "export CSV via module csv")
 ck('media_type="text/csv"' in rtr, True, "export Response media_type text/csv")
 ck("Content-Disposition" in rtr, True, "Content-Disposition attachment")
 ck('attachment; filename="audit_' in rtr, True, "filename audit_{tid}.csv")
-ck('require_permission("workspace.manage")' in rtr, True, "RBAC workspace.manage sur les 3 endpoints")
-# 3 endpoints enregistrés
-ck(rtr.count("@router.get"), 3, "3 endpoints GET (list + stats + export)")
+ck('require_permission("workspace.manage")' in rtr, True, "RBAC workspace.manage sur les endpoints")
+# P53 : 5 endpoints GET (list + stats + export CSV + export-pdf signé + alerts) + 1 POST (purge rétention)
+ck(rtr.count("@router.get"), 5, "5 endpoints GET (list + stats + export + export-pdf P53 + alerts P53)")
+ck(rtr.count("@router.post"), 1, "1 endpoint POST (purge rétention P53)")
+ck("export-pdf" in rtr, True, "endpoint export-pdf signé HMAC (P53)")
+ck("/alerts" in rtr, True, "endpoint alerts compliance (P53)")
+ck("/purge" in rtr, True, "endpoint purge rétention (P53)")
 
 # ─── Source : main.py (audit déjà enregistré depuis P3) ────────────────────────
 main = (ROOT / "backend" / "app" / "main.py").read_text(encoding="utf-8")
