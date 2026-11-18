@@ -83,6 +83,37 @@ MESSAGES: dict[str, dict[str, str]] = {
         "en": "SSO authentication successful.",
         "es": "Autenticación SSO exitosa.",
     },
+    # ─── P47 : Admin SSO CRUD (config tenant + lookup by email) ─────────
+    "sso.admin.no_config": {
+        "fr": "Aucune config SSO pour ce tenant.",
+        "en": "No SSO configuration for this tenant.",
+        "es": "Sin configuración SSO para este tenant.",
+    },
+    "sso.admin.domains_required": {
+        "fr": "Au moins 1 domaine requis (JIT gate SSO).",
+        "en": "At least 1 domain required (SSO JIT gate).",
+        "es": "Al menos 1 dominio requerido (puerta JIT SSO).",
+    },
+    "sso.admin.credentials_required": {
+        "fr": "client_id et client_secret requis.",
+        "en": "client_id and client_secret are required.",
+        "es": "client_id y client_secret son obligatorios.",
+    },
+    "sso.admin.domains_invalid": {
+        "fr": "Domaines invalides.",
+        "en": "Invalid domains.",
+        "es": "Dominios inválidos.",
+    },
+    "sso.admin.email_invalid": {
+        "fr": "E-mail invalide.",
+        "en": "Invalid email.",
+        "es": "Correo inválido.",
+    },
+    "sso.admin.no_sso_for_domain": {
+        "fr": "Aucun SSO configuré pour ce domaine e-mail.",
+        "en": "No SSO configured for this email domain.",
+        "es": "Ningún SSO configurado para este dominio de correo.",
+    },
 }
 
 
