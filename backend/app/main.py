@@ -31,6 +31,7 @@ from .routers import (
     content_studio,
     crm,
     dashboard,
+    gdpr,
     inbound_webhooks,
     linkedin,
     members,
@@ -137,6 +138,7 @@ for r in (
     ai.router,                      # P24-B : AI Gateway (generate + providers + prompts + history)
     agents.router,                  # P25 : 10 agents IA + Copilot (agents run + history + copilot chat)
     audit.router,
+    gdpr.router,                 # P60 : GDPR data export (Art. 20) + right-to-be-forgotten erase (Art. 17)
     crm.router,
     prospecting.router,            # P27 : Prospection avancée (multicanal + A/B testing + intent signals + enrichment)
     sales_intelligence.router,     # P28 : Warmup inbox + Sales Intelligence (funnel + cohorts + forecast)

@@ -71,6 +71,9 @@ class User(Base):
     identity_provider = Column(String, nullable=True)  # "oidc:{issuer}" ex. oidc:https://login.microsoftonline.com/...
     locale = Column(String(8), default="fr", nullable=False)  # fr | en | es (préférence UI persistée)
     sso_tenant_id = Column(String, ForeignKey("tenants.id", ondelete="SET NULL"), nullable=True)  # tenant SSO d'origine (JIT)
+    # P60 — GDPR Art. 17 right-to-be-forgotten : null = actif ; timestamp = anonymisé (name/email scrubbed,
+    # mais ligne User conservée pour FK integrity + audit retention SOC2 7 ans). Preuve de conformité.
+    gdpr_erased_at = Column(DateTime, nullable=True)
 
 
 class Tenant(Base):
