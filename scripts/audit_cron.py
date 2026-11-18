@@ -25,7 +25,12 @@ import httpx
 from app import models as M
 from app.audit import log_audit
 from app.database import SessionLocal
-from app.routers.audit import _SEV_ORDER, _build_slack_payload, _compute_alerts
+from app.routers.audit import (
+    _SEV_ORDER,
+    _build_slack_payload,
+    _compute_alerts,
+    _decrypt_webhook_url,
+)
 
 
 def purge_tenant(db, tenant) -> dict:
@@ -50,7 +55,7 @@ def notify_tenant(db, tenant, window_hours: int, burst_threshold: int) -> dict:
     """Évalue alerts + POST celles >= min_severity vers webhook. Retourne {evaluated, notified, failed}."""
     alerts = _compute_alerts(db, tenant.id, window_hours, burst_threshold)
     min_rank = _SEV_ORDER.get(tenant.audit_alert_min_severity or "high", 3)
-    webhook_url = tenant.audit_alert_webhook_url
+    webhook_url = _decrypt_webhook_url(tenant.audit_alert_webhook_url)
     notified = failed = 0
     if not webhook_url:
         return {"evaluated": len(alerts), "notified": 0, "failed": 0, "webhook": None}

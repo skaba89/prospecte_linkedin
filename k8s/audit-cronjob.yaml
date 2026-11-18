@@ -1,0 +1,99 @@
+# P57 — CronJob k8s : audit cron hebdo (purge rétention + notify webhook alerts, tous tenants).
+#
+# Schedule : "0 3 * * 0" = chaque dimanche 03:00 UTC (fenêtre creuse, charge minimale).
+# Command  : python scripts/audit_cron.py --window-hours 24 --burst-threshold 10
+# Image    : revpulse:latest (à remplacer par votre registry image tag en prod).
+#
+# Prérequis :
+#   - Secret "revpulse-secrets" avec REVPULSE_DATABASE_URL + REVPULSE_TOKEN_ENCRYPTION_KEY
+#     (la clé Fernet DOIT être la même que l'app — sinon decrypt webhook_url échoue).
+#   - Le Pod doit pouvoir joindre la DB + les webhooks Slack (egress).
+#
+# Apply : kubectl apply -f k8s/audit-cronjob.yaml
+# Vérif : kubectl get cronjob audit-cron
+#         kubectl logs job/audit-cron-<ts>  (après un trigger)
+# Trigger manuel : kubectl create job audit-cron-manual --from=cronjob/audit-cron
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: audit-cron
+  namespace: revpulse
+  labels:
+    app: revpulse
+    component: audit-cron
+    tier: compliance
+spec:
+  schedule: "0 3 * * 0"  # chaque dimanche 03:00 UTC
+  timeZone: UTC
+  concurrencyPolicy: Forbid  # pas de run parallèle (purge + notify non-idempotents)
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 5
+  jobTemplate:
+    spec:
+      backoffLimit: 2  # retry 2x si échec DB (webhook failures sont best-effort, non-fatales)
+      template:
+        metadata:
+          labels:
+            app: revpulse
+            component: audit-cron
+        spec:
+          restartPolicy: OnFailure
+          containers:
+            - name: audit-cron
+              image: revpulse:latest
+              imagePullPolicy: IfNotPresent
+              command: ["python", "scripts/audit_cron.py"]
+              args: ["--window-hours", "24", "--burst-threshold", "10"]
+              env:
+                - name: REVPULSE_ENV
+                  value: production
+                - name: REVPULSE_DATABASE_URL
+                  valueFrom:
+                    secretKeyRef:
+                      name: revpulse-secrets
+                      key: database-url
+                - name: REVPULSE_TOKEN_ENCRYPTION_KEY
+                  valueFrom:
+                    secretKeyRef:
+                      name: revpulse-secrets
+                      key: token-encryption-key
+                - name: REVPULSE_TOKEN_ENCRYPTION_KEY_PREVIOUS
+                  valueFrom:
+                    secretKeyRef:
+                      name: revpulse-secrets
+                      key: token-encryption-key-previous
+                      optional: true
+              resources:
+                requests:
+                  cpu: 100m
+                  memory: 128Mi
+                limits:
+                  cpu: 500m
+                  memory: 256Mi
+              securityContext:
+                runAsNonRoot: true
+                runAsUser: 1000
+                readOnlyRootFilesystem: true
+                allowPrivilegeEscalation: false
+                capabilities:
+                  drop: ["ALL"]
+              volumeMounts:
+                - name: tmp
+                  mountPath: /tmp  # writable tmp (readOnlyRootFilesystem)
+          volumes:
+            - name: tmp
+              emptyDir: {}
+---
+# Secret example (À NE PAS COMMITTER avec vraies valeurs — utiliser sealed-secrets/external-secrets en prod).
+# Recréer avec : kubectl create secret generic revpulse-secrets \
+#   --from-literal=database-url='postgresql+psycopg2://revpulse:PWD@db:5432/revpulse' \
+#   --from-literal=token-encryption-key='ZmDfcTF7_60GrrY167zsiPd67pEvs0aGOv2o1OMe4YI='
+apiVersion: v1
+kind: Secret
+metadata:
+  name: revpulse-secrets
+  namespace: revpulse
+type: Opaque
+stringData:
+  database-url: "REPLACE_VIA_SEALED_SECRET"  # postgresql+psycopg2://revpulse:PWD@db:5432/revpulse
+  token-encryption-key: "REPLACE_VIA_SEALED_SECRET"  # Fernet base64-urlsafe 32 bytes
