@@ -89,6 +89,17 @@ class Settings(BaseSettings):
     france_travail_base_url: str = "https://api.francetravail.io/partenaire/offresdemploi/v2/offres/search"
     france_travail_token_url: str = "https://entreprise.francetravail.fr/connexion/oauth2/access_token?realm=/partenaire"
 
+    # Gmail OAuth2 — P38-V2 envoi candidatures réel. Authorization code flow (3-legged) :
+    # user connecte son Gmail → callback exchange code → refresh_token chiffré (Fernet) en DB.
+    # Si client_id + client_secret non renseignés → status not_configured (v1 stub). Google Cloud Console :
+    # https://console.cloud.google.com/ (credentials OAuth2, scope gmail.send).
+    gmail_client_id: str = ""
+    gmail_client_secret: str = ""
+    gmail_redirect_uri: str = "http://localhost:5173/api/career/email/oauth/callback"
+    gmail_auth_url: str = "https://accounts.google.com/o/oauth2/v2/auth"
+    gmail_token_url: str = "https://oauth2.googleapis.com/token"
+    gmail_api_base: str = "https://gmail.googleapis.com/gmail/v1/users/me"
+
     # Logging structuré — JSON (prod) ou texte (dev/test). Niveau configurable.
     log_level: str = "INFO"
     log_format: str = "json"  # json | text

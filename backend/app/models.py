@@ -1150,3 +1150,30 @@ class CareerAgentRun(Base):
     summary = Column(JSONType, nullable=True)
     applications_prepared = Column(Integer, default=0, nullable=False)
     applications_sent = Column(Integer, default=0, nullable=False)
+
+
+class UserEmailIntegration(Base):
+    """Intégration email OAuth2 d'un utilisateur (P38-V2) — Gmail/Outlook connecté par l'utilisateur.
+    user_id FK CASCADE (isolation). provider = gmail_oauth|outlook_oauth. UniqueConstraint (user_id,
+    provider) : une intégration par provider par utilisateur.
+
+    refresh_token chiffré Fernet (services.crypto.encrypt) — long-lived (Gmail). access_token chiffré
+    (éphémère, ~1h) + expires_at. email = adresse Gmail connectée (récupérée au callback via tokeninfo).
+    scopes = scopes OAuth accordés (gmail.send ou https://mail.google.com/).
+
+    Sécurité (P24-A) : JAMAIS de refresh_token en clair en DB — Fernet. access_token chiffré aussi
+    (anti-fuite si dump DB). disconnect() supprime la ligne (révocation côté user). Révocation côté
+    Google : token revoke endpoint (v3)."""
+
+    __tablename__ = "user_email_integrations"
+    __table_args__ = (UniqueConstraint("user_id", "provider", name="uq_user_email_integration_provider"),)
+    id = Column(String, primary_key=True, default=lambda: _uid("uei"))
+    user_id = Column(String, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    provider = Column(String, nullable=False, index=True)  # gmail_oauth|outlook_oauth
+    email = Column(String, nullable=True)  # adresse Gmail connectée (tokeninfo)
+    refresh_token_encrypted = Column(Text, nullable=True)  # Fernet — long-lived
+    access_token_encrypted = Column(Text, nullable=True)  # Fernet — éphémère
+    access_token_expires_at = Column(DateTime, nullable=True)
+    scopes = Column(String, nullable=True)  # "gmail.send" ou "https://mail.google.com/"
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
