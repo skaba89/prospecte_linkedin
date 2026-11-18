@@ -220,6 +220,12 @@ jobs:
           REVPULSE_ENV: test
           REVPULSE_TOKEN_ENCRYPTION_KEY: ZmDfcTF7_60GrrY167zsiPd67pEvs0aGOv2o1OMe4YI=
           REVPULSE_FRONTEND_DIR: frontend/public
+      - name: P53 Audit log retention + export PDF signé + alerts compliance (TestClient)
+        run: python tests/test_p53_audit_compliance.py
+        env:
+          REVPULSE_DATABASE_URL: sqlite:///./revpulse_p53_test.db
+          REVPULSE_ENV: test
+          REVPULSE_TOKEN_ENCRYPTION_KEY: ZmDfcTF7_60GrrY167zsiPd67pEvs0aGOv2o1OMe4YI=
       - name: Run P3 tests (pagination + request-ID + health)
         run: python tests/test_p3.py
         env:

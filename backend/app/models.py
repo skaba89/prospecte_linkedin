@@ -83,6 +83,9 @@ class Tenant(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
     # P45 — SSO Enterprise : flag + domaines autorisés (auto-provisioning JIT par domaine e-mail).
     sso_enabled = Column(Boolean, default=False, nullable=False)  # SSO obligatoire pour ce tenant ?
+    # P53 — Audit log retention policy (compliance SOC2/GDPR). Default 2555 jours (7 ans SOC2).
+    # POST /audit/purge supprime les entries > retention_days (avec log meta de la purge elle-même).
+    retention_days = Column(Integer, default=2555, nullable=False)
 
 
 class EnterpriseSSO(Base):

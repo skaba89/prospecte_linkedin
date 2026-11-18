@@ -295,6 +295,31 @@ class AuditLogOut(BaseModel):
     created_at: datetime | None = None
 
 
+# ─── P53 : Audit log retention + export PDF signé + alertes compliance ───
+class PurgeResult(BaseModel):
+    """Résultat d'une purge de rétention : nombre d'entries supprimées + borne de purge."""
+    purged: int
+    retention_days: int
+    purged_before: datetime  # borne created_at < purged_before → supprimées
+    remaining: int  # entries restantes après purge
+
+
+class AuditAlertItem(BaseModel):
+    """Alerte compliance (P53) : anomalie détectée sur l'audit log d'un tenant."""
+    kind: str  # "ip_burst" (IP >N actions/heure) | "no_actor" (action sans acteur = système/anonyme)
+    severity: str  # "low" | "medium" | "high"
+    label: str  # IP ou "actions système"
+    count: int
+    detail: dict | None = None
+
+
+class AuditAlertsOut(BaseModel):
+    """Ensemble d'alertes compliance (P53) : anomalies sur la fenêtre analysée."""
+    window_hours: int
+    total_alerts: int
+    alerts: list[AuditAlertItem]
+
+
 # ---- P21 : Audit & compliance UI (stats + filtres + export) ----
 class AuditCountItem(BaseModel):
     """Item de comptage agrégé (P21) : label (action ou actor_name) + nombre d'occurrences.
