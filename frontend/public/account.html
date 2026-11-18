@@ -1,0 +1,257 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RevPulse · Mon compte & RGPD</title>
+<link rel="stylesheet" href="assets/app.css">
+<style>
+  :root{
+    --bg:#eef1f8; --bg2:#e6ebf5; --card:#ffffff; --card-2:#f7f9fc;
+    --ink:#0f1733; --ink-2:#3a4266; --muted:#7a83a3; --muted-2:#9aa2bd;
+    --line:#e7eaf3; --line-2:#eef1f8;
+    --brand:#635bff; --brand2:#a855f7; --green:#10b981; --amber:#f59e0b; --red:#ef4444;
+    --grad:linear-gradient(135deg,#635bff,#a855f7);
+    --shadow:0 1px 2px rgba(15,23,51,.04),0 8px 24px rgba(15,23,51,.06);
+    --radius:16px; --radius-sm:10px; --radius-xs:8px;
+  }
+  *{box-sizing:border-box;margin:0;padding:0;font-family:-apple-system,'Segoe UI',Roboto,Inter,sans-serif}
+  body{background:var(--bg);color:var(--ink);font-size:14px;line-height:1.5}
+  .wrap{display:flex;min-height:100vh}
+  .sidebar{width:248px;flex-shrink:0;background:linear-gradient(180deg,#0f1b3d,#0b1430);color:#fff;padding:18px 12px;position:sticky;top:0;height:100vh;overflow-y:auto}
+  .brand{display:flex;align-items:center;gap:12px;padding:8px 10px 18px}
+  .brand .logo{width:38px;height:38px;border-radius:10px;background:var(--grad);display:flex;align-items:center;justify-content:center;font-weight:800;font-size:18px;color:#fff}
+  .brand .bt{font-size:15px;font-weight:700}
+  .brand .bs{font-size:11px;color:#9aa2bd}
+  .nav-sec{font-size:10.5px;text-transform:uppercase;letter-spacing:.8px;color:#646c8c;padding:14px 12px 6px}
+  .nav-item{display:flex;align-items:center;gap:12px;padding:10px 12px;border-radius:10px;color:#c8cce0;text-decoration:none;font-size:13.5px;font-weight:500;margin-bottom:2px}
+  .nav-item:hover{background:rgba(255,255,255,.05);color:#fff}
+  .nav-item.active{background:var(--grad);color:#fff}
+  .main{flex:1;min-width:0;display:flex;flex-direction:column}
+  .topbar{position:sticky;top:0;z-index:20;background:rgba(238,241,248,.85);backdrop-filter:blur(10px);border-bottom:1px solid var(--line);padding:16px 28px;display:flex;align-items:center;gap:16px}
+  .topbar h1{font-size:18px;font-weight:700}
+  .topbar .sub{font-size:12px;color:var(--muted);margin-top:2px}
+  .content{padding:28px;max-width:1200px;margin:0 auto;width:100%}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);padding:22px;box-shadow:var(--shadow);margin-bottom:20px}
+  .card h2{font-size:15px;font-weight:700;margin-bottom:4px}
+  .card .hint{font-size:12px;color:var(--muted);margin-bottom:16px}
+  .gdpr-banner{background:linear-gradient(135deg,#eef2ff,#fae8ff);border:1px solid #c7d2fe;border-radius:var(--radius-sm);padding:14px 18px;font-size:12.5px;color:#4338ca;margin-bottom:18px;display:flex;align-items:center;gap:10px}
+  .btn{display:inline-flex;align-items:center;gap:8px;padding:9px 16px;border-radius:var(--radius-xs);font-size:13px;font-weight:600;border:1px solid transparent;cursor:pointer;text-decoration:none}
+  .btn.primary{background:var(--brand);color:#fff}
+  .btn.primary:hover{background:#5452e6}
+  .btn.danger{background:var(--red);color:#fff}
+  .btn.danger:hover{background:#dc2626}
+  .btn.sec{background:var(--card);color:var(--ink);border-color:var(--line)}
+  .btn.sec:hover{border-color:var(--brand)}
+  .btn.sm{padding:6px 12px;font-size:12px}
+  .row{display:flex;align-items:center;gap:12px;padding:12px 0;border-bottom:1px solid var(--line-2);flex-wrap:wrap}
+  .row:last-child{border-bottom:none}
+  .row .lbl{font-size:13px;font-weight:600;min-width:180px}
+  .row .val{font-size:13px;color:var(--ink-2);font-family:monospace}
+  .badge{display:inline-block;padding:3px 9px;border-radius:99px;font-size:11px;font-weight:700}
+  .badge.on{background:#dcfce7;color:#15803d}
+  .badge.off{background:#fee2e2;color:#b91c1c}
+  .badge.info{background:#e0e7ff;color:#3730a3}
+  .consent-row{display:flex;align-items:center;gap:12px;padding:12px 14px;border:1px solid var(--line);border-radius:var(--radius-xs);margin-bottom:8px;flex-wrap:wrap}
+  .consent-row .purpose{font-weight:600;font-size:13px;min-width:180px}
+  .consent-row .meta{font-size:11px;color:var(--muted);flex:1}
+  .empty{padding:18px;text-align:center;color:var(--muted);font-size:12px}
+  .receipt{background:#f0fdf4;border:1px solid #bbf7d0;border-radius:var(--radius-xs);padding:12px 14px;font-size:12px;color:#15803d;margin-top:10px;font-family:monospace;white-space:pre-wrap}
+  .erased-warn{background:#fef2f2;border:1px solid #fecaca;border-radius:var(--radius-xs);padding:12px 14px;font-size:12px;color:#b91c1c;margin-bottom:14px}
+  @media(max-width:768px){.sidebar{display:none}.content{padding:18px}.topbar{padding:14px 18px}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <aside class="sidebar">
+    <div class="brand">
+      <div class="logo">R</div>
+      <div><div class="bt">RevPulse</div><div class="bs">LinkedIn Command Center</div></div>
+    </div>
+    <div class="nav-sec">Espace</div>
+    <a class="nav-item" href="index.html">← Dashboard</a>
+    <a class="nav-item active" href="account.html">👤 Mon compte & RGPD</a>
+    <a class="nav-item" href="billing.html">💳 Facturation</a>
+    <div class="nav-sec">Acquisition</div>
+    <a class="nav-item" href="crm.html">CRM</a>
+    <a class="nav-item" href="sequences.html">Séquences</a>
+    <a class="nav-item" href="tasks.html">Tâches</a>
+    <div class="nav-sec">Intelligence</div>
+    <a class="nav-item" href="analytics.html">Analytics</a>
+    <a class="nav-item" href="audit.html">Audit</a>
+  </aside>
+
+  <div class="main">
+    <div class="topbar">
+      <div>
+        <h1>Mon compte & RGPD</h1>
+        <div class="sub">Vos données personnelles, vos droits GDPR (portabilité Art. 20, effacement Art. 17, consentement Art. 7)</div>
+      </div>
+    </div>
+
+    <div class="content">
+      <div id="erased-warn" class="erased-warn" style="display:none"></div>
+
+      <div class="gdpr-banner">
+        🔒 <span><b>RGPD / GDPR</b> — RevPulse traite vos données conformément au RGPD (UE) 2016/679.
+        Exercez vos droits ci-dessous : portabilité (Art. 20), effacement (Art. 17), consentement (Art. 7).
+        Toutes les actions sont tracées dans le journal d'audit (preuve DPO/CNIL).</span>
+      </div>
+
+      <!-- Profil courant -->
+      <div class="card">
+        <h2>Mon profil</h2>
+        <div class="hint">Identité chargée depuis <code>GET /api/me</code>. user_id utilisé pour les droits GDPR self-service.</div>
+        <div class="row"><span class="lbl">user_id</span><span class="val" id="me-id">—</span></div>
+        <div class="row"><span class="lbl">Email</span><span class="val" id="me-email">—</span></div>
+        <div class="row"><span class="lbl">Nom</span><span class="val" id="me-name">—</span></div>
+        <div class="row"><span class="lbl">Statut GDPR</span><span id="me-erased">—</span></div>
+      </div>
+
+      <!-- Droit à la portabilité (Art. 20) -->
+      <div class="card">
+        <h2>📥 Portabilité — Exporter mes données (Art. 20)</h2>
+        <div class="hint">Télécharge un bundle JSON de toutes vos données personnelles (profil, contacts détenus,
+          historique d'audit déclenché, profil career, candidatures). Machine-readable — vous pouvez réimporter ailleurs.</div>
+        <button class="btn primary" onclick="exportMyData()" title="GET /api/tenants/{tid}/gdpr/export?user_id=me — télécharge un JSON">📥 Exporter mes données (JSON)</button>
+        <div id="export-result" style="margin-top:10px"></div>
+      </div>
+
+      <!-- Consentement (Art. 7) -->
+      <div class="card">
+        <h2>✅ Consentement (Art. 7)</h2>
+        <div class="hint">Gérez vos consentements par finalité. Consentement explicite requis (Art. 7) + retrait à tout moment (Art. 7.3).
+          Chaque grant/withdraw est tracé (IP, UA, version privacy policy) — preuve DPO.</div>
+        <div id="consent-list"></div>
+      </div>
+
+      <!-- Droit à l'effacement (Art. 17) -->
+      <div class="card" style="border-color:#fecaca">
+        <h2 style="color:var(--red)">🗑 Effacement — Right to be forgotten (Art. 17)</h2>
+        <div class="hint">Anonymise vos données personnelles (nom, email, contacts PII, audit actor_name scrubbed).
+          Les enregistrements structurels sont conservés (FK integrity + rétention SOC2 7 ans — GDPR Art. 17.3.b/e).
+          <b>Action irréversible</b> — vos données seront anonymisées définitivement.</div>
+        <button class="btn danger" onclick="eraseMyData()" title="DELETE /api/tenants/{tid}/gdpr/erase?user_id=me — anonymise vos données (irréversible)">🗑 Demander l'effacement de mes données</button>
+        <div id="erase-result" style="margin-top:10px"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+const API = (location.hostname === 'localhost' || location.hostname === '127.0.0.1') ? 'http://localhost:8080/api' : '/api';
+let TOK = localStorage.getItem('revpulse_jwt');
+let TID = null;
+try { const s = JSON.parse(localStorage.getItem('revpulse_session') || '{}'); TID = s.activeTenantId; } catch(e){}
+let ME = null;  // current user_id (pour export/erase self)
+
+async function api(method, path, body){
+  const opts = {method, headers: {'Authorization': 'Bearer ' + TOK, 'Content-Type': 'application/json'}};
+  if(body !== undefined) opts.body = JSON.stringify(body);
+  try { const r = await fetch(API + path, opts); let d; try { d = await r.json() } catch(e){ d = null } return {status: r.status, data: d}; }
+  catch(e){ return {status: 0, data: null}; }
+}
+
+function esc(s){ return String(s||'').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+
+async function init(){
+  if(!TOK || !TID){
+    // demo login pour test local (cohérent avec audit.html)
+    const d = await (await fetch(API + '/auth/demo', {method:'POST'})).json();
+    TOK = d.token; localStorage.setItem('revpulse_jwt', TOK);
+    TID = d.tenant_id || d.tid; localStorage.setItem('revpulse_session', JSON.stringify({activeTenantId: TID}));
+  }
+  // GET /me pour user_id self
+  const {status, data} = await api('GET', '/me');
+  if(status !== 200 || !data){ document.querySelector('.content').innerHTML = '<div class="card"><div class="empty">Non authentifié — /me injoignable (' + status + ')</div></div>'; return; }
+  ME = data;
+  document.getElementById('me-id').textContent = ME.id;
+  document.getElementById('me-email').textContent = ME.email;
+  document.getElementById('me-name').textContent = ME.name;
+  // gdpr_erased_at (via GET /gdpr/export sur soi-même — Owner only pour export, sinon on cache le statut)
+  const ec = await api('GET', '/tenants/' + TID + '/gdpr/export?user_id=' + ME.id);
+  if(ec.status === 200 && ec.data){
+    const erasedAt = ec.data.user && ec.data.user.gdpr_erased_at;
+    if(erasedAt){
+      document.getElementById('me-erased').innerHTML = '<span class="badge off">Anonymisé</span> <span style="font-size:11px;color:var(--muted)">' + erasedAt + '</span>';
+      document.getElementById('erased-warn').style.display = 'block';
+      document.getElementById('erased-warn').innerHTML = '⚠️ <b>Vos données ont été anonymisées</b> (right-to-be-forgotten exercé le ' + erasedAt + '). L\'export/erase sont désactivés pour ce compte.';
+    } else {
+      document.getElementById('me-erased').innerHTML = '<span class="badge on">Actif</span>';
+    }
+  } else {
+    document.getElementById('me-erased').innerHTML = '<span class="badge info">N/A (Owner-only)</span>';
+  }
+  loadConsents();
+}
+
+async function loadConsents(){
+  const {status, data} = await api('GET', '/tenants/' + TID + '/gdpr/consent');
+  const el = document.getElementById('consent-list');
+  if(status !== 200 || !Array.isArray(data)){ el.innerHTML = '<div class="empty">Consent injoignable (' + status + ')</div>'; return; }
+  const PURPOSES = {
+    'marketing': {label: 'Emails marketing', desc: 'Recevoir newsletters, offres, conseils prospection'},
+    'analytics': {label: 'Analytics produit', desc: 'Suivi d\'usage agrégé pour améliorer le produit'},
+    'third_party_sharing': {label: 'Partage tiers', desc: 'Partage de données avec partenaires (recruiters)'}
+  };
+  const active = new Map(data.filter(r => r.active).map(r => [r.purpose, r]));
+  el.innerHTML = Object.entries(PURPOSES).map(([key, p]) => {
+    const a = active.get(key);
+    const meta = a ? 'Consenti le ' + new Date(a.granted_at).toLocaleString('fr-FR') + ' · PP v' + a.privacy_policy_version
+                   : 'Non consenti';
+    return `<div class="consent-row">
+      <div><div class="purpose">${p.label} <span class="badge ${a?'on':'off'}">${a?'Actif':'Inactif'}</span></div>
+      <div class="meta">${esc(p.desc)} · ${meta}</div></div>
+      ${a ? `<button class="btn sm sec" onclick="withdrawConsent('${key}')">Retirer (Art. 7.3)</button>`
+          : `<button class="btn sm primary" onclick="grantConsent('${key}')">Consentir</button>`}
+    </div>`;
+  }).join('');
+}
+
+async function grantConsent(purpose){
+  const {status, data} = await api('POST', '/tenants/' + TID + '/gdpr/consent', {purpose});
+  if(status !== 201 && status !== 200){ alert('Consent échoué (' + status + ')'); return; }
+  loadConsents();
+}
+
+async function withdrawConsent(purpose){
+  if(!confirm('Retirer votre consentement pour "' + purpose + '" ? (Art. 7.3 — vous pouvez re-consentir plus tard)')) return;
+  const {status, data} = await api('DELETE', '/tenants/' + TID + '/gdpr/consent?purpose=' + purpose);
+  if(status !== 200){ alert('Retrait échoué (' + status + ')'); return; }
+  loadConsents();
+}
+
+async function exportMyData(){
+  if(!ME){ alert('Profil non chargé'); return; }
+  const url = API + '/tenants/' + TID + '/gdpr/export?user_id=' + ME.id;
+  const r = await fetch(url, {headers: {'Authorization': 'Bearer ' + TOK}});
+  if(!r.ok){ const t = await r.text(); document.getElementById('export-result').innerHTML = '<div class="empty">Export échoué (' + r.status + ' — ' + esc(t.slice(0,120)) + ')</div>'; return; }
+  const blob = await r.blob();
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'gdpr_export_' + ME.id + '_' + new Date().toISOString().slice(0,10) + '.json';
+  a.click(); URL.revokeObjectURL(a.href);
+  document.getElementById('export-result').innerHTML = '<div class="receipt">✓ Export téléchargé — bundle JSON de vos données personnelles (Art. 20 portabilité).</div>';
+}
+
+async function eraseMyData(){
+  if(!ME){ alert('Profil non chargé'); return; }
+  if(!confirm('⚠️ IRRÉVERSIBLE — Anonymiser définitivement vos données (Art. 17 right-to-be-forgotten) ?\n\nVotre nom, email, contacts PII seront anonymisés. Les enregistrements structurels sont conservés (rétention SOC2 7 ans).')){
+    return;
+  }
+  const {status, data} = await api('DELETE', '/tenants/' + TID + '/gdpr/erase?user_id=' + ME.id);
+  const el = document.getElementById('erase-result');
+  if(status !== 200){ el.innerHTML = '<div class="empty">Effacement échoué (' + status + ' — ' + (data && data.detail ? esc(data.detail) : '') + ')</div>'; return; }
+  el.innerHTML = '<div class="receipt">✓ Effacement exécuté (Art. 17)\n' +
+    '• erased_at : ' + data.erased_at + '\n' +
+    '• contacts anonymisés : ' + data.contacts_anonymized + '\n' +
+    '• audit entries scrubbed : ' + data.audit_entries_scrubbed + '\n' +
+    '• exécuté par : ' + esc(data.executed_by.name) + ' (Owner)\n' +
+    'Note : ' + esc(data.note) + '</div>';
+  alert('Vos données ont été anonymisées. Veuillez vous reconnecter.');
+}
+
+init();
+</script>
+</body>
+</html>

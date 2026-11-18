@@ -1238,3 +1238,20 @@ class UserEmailIntegration(Base):
     scopes = Column(String, nullable=True)  # "gmail.send" ou "https://mail.google.com/"
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+
+class ConsentRecord(Base):
+    """P61 — GDPR Art. 7 : preuve de consentement explicite (qui, quel purpose, quand, quelle version
+    privacy policy, depuis quelle IP/UA). Retrait traçable (withdrawn_at — Art. 7.3 right to withdraw).
+    Purposes : marketing | analytics | third_party_sharing (extensible). Un record par grant ;
+    withdraw = set withdrawn_at (historique immuable — preuve DPO)."""
+    __tablename__ = "consent_records"
+    id = Column(String, primary_key=True, default=lambda: _uid("cns"))
+    tenant_id = Column(String, ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
+    user_id = Column(String, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    purpose = Column(String(40), nullable=False)  # marketing | analytics | third_party_sharing
+    granted_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    withdrawn_at = Column(DateTime, nullable=True)  # null = actif ; timestamp = retiré
+    privacy_policy_version = Column(String(30), nullable=False)  # ex. "2026-11-18-v1" (Art. 7.2)
+    ip = Column(String(64), nullable=True)  # IP au moment du grant (preuve Art. 7.1)
+    user_agent = Column(String(255), nullable=True)  # UA au moment du grant
