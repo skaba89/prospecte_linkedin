@@ -168,6 +168,11 @@ jobs:
         env:
           REVPULSE_DATABASE_URL: sqlite:///./revpulse_p38_test.db
           REVPULSE_ENV: test
+      - name: P29-V2 Prospect enrichment (Hunter.io Email Finder API + fallbacks, mock HTTP)
+        run: python tests/test_p29_v2_enrichment.py
+        env:
+          REVPULSE_DATABASE_URL: sqlite:///./revpulse_p29_test.db
+          REVPULSE_ENV: test
       - name: Run P3 tests (pagination + request-ID + health)
         run: python tests/test_p3.py
         env:
