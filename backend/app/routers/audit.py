@@ -35,6 +35,7 @@ from ..database import get_db
 from ..deps import get_tenant, require_permission
 from ..pagination import Page, page_dep, set_total
 from ..security import decrypt_token, encrypt_token
+from ..services.url_safety import validate_url_no_dns
 
 router = APIRouter(prefix="/api/tenants/{tid}/audit", tags=["audit"])
 
@@ -401,6 +402,15 @@ def put_alert_webhook(
     if cfg.min_severity not in ("high", "medium", "low"):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
                             detail="min_severity must be one of: high, medium, low")
+    # P64 (P0-O2) — SSRF defense : valider webhook_url avant persistence (config-side SSRF).
+    # Sans cette validation, un workspace.manage config webhook_url=http://169.254.169.254/... puis
+    # POST /audit/alerts/notify → le serveur POST un payload (tenant name + alertes) vers metadata/interne.
+    # validate_url_no_dns : bloque IP-literal metadata/loopback/private (toujours), pas de DNS (config-time).
+    if cfg.webhook_url:
+        ok, err, _ = validate_url_no_dns(cfg.webhook_url)
+        if not ok:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
+                                detail=f"SSRF — webhook_url invalide : {err} (bloque metadata/loopback/CGNAT)")
     _t.audit_alert_webhook_url = encrypt_token(cfg.webhook_url) if cfg.webhook_url else None
     _t.audit_alert_min_severity = cfg.min_severity
     db.commit()

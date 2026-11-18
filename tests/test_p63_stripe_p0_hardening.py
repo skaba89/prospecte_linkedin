@@ -79,10 +79,11 @@ def main():
         ck(False, "prod sans stripe_webhook_secret → ValueError")
     except ValueError:
         ck(True, "prod sans stripe_webhook_secret → ValueError (fail-fast P0-S3)")
-    # 3. prod avec les 2 secrets → OK
+    # 3. prod avec les 2 secrets → OK (cors_origins explicite requis depuis P64 CORS fail-fast)
     try:
         s = Settings(env="production", jwt_secret=JWT_OK, token_encryption_key=FERNET_OK,
-                     stripe_secret_key="sk_live_x", stripe_webhook_secret="whsec_x")
+                     stripe_secret_key="sk_live_x", stripe_webhook_secret="whsec_x",
+                     cors_origins="https://app.io")
         ck(s.is_production and s.stripe_secret_key == "sk_live_x", "prod avec 2 secrets → OK (no raise)")
     except ValueError:
         ck(False, "prod avec 2 secrets → OK (no raise)")
