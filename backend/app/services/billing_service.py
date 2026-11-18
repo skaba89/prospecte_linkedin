@@ -14,9 +14,11 @@ Devises : CURRENCIES = EUR|USD|GNF|XOF (symbole + code Stripe). Prix stockés en
 """
 from __future__ import annotations
 
+import time as _time
 from datetime import datetime, timedelta
 from typing import Any
 
+from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
 from .. import models
@@ -196,6 +198,9 @@ def create_checkout_session(db: Session, tenant_id: str, target_plan: str, succe
                 "success_url": success_url,
                 "cancel_url": cancel_url,
                 "metadata": {"tenant_id": tenant_id, "target_plan": target_plan},
+                # P63 (P0-S5) : idempotency_key — anti double-charge sur retry réseau/double-clic.
+                # Stable sur retry court (même seconde), unique par session. Stripe déduplique les appels avec même clé.
+                "idempotency_key": f"checkout:{tenant_id}:{target_plan}:{int(_time.time())}",
             }
             if sub.stripe_customer_id:
                 checkout_kwargs["customer"] = sub.stripe_customer_id
@@ -206,7 +211,11 @@ def create_checkout_session(db: Session, tenant_id: str, target_plan: str, succe
             session = stripe.checkout.Session.create(**checkout_kwargs)
             return {"checkout_url": session.url, "session_id": session.id, "simulated": False}
         except Exception as e:
-            # Fallback mock si Stripe échoue (anti-blocage CI/test)
+            # P63 (P0-S4) : en prod, JAMAIS de fallback mock — raise 502 pour alerter l'opérateur.
+            # Le fallback mock silencieux permettait des upgrades gratuits sur panne Stripe (P0-S4).
+            if settings.is_production:
+                raise HTTPException(502, f"Stripe checkout indisponible : {e}") from e
+            # En dev/CI/test, fallback mock pour ne pas bloquer les tests sans clé Stripe.
             return _mock_checkout(tenant_id, target_plan, price_eur, currency, error=str(e))
     # Mock (pas de clé Stripe — dev/CI/test)
     return _mock_checkout(tenant_id, target_plan, price_eur, currency)

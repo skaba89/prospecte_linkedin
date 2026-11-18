@@ -166,6 +166,14 @@ class Settings(BaseSettings):
                 raise ValueError(
                     "REVPULSE_TOKEN_ENCRYPTION_KEY invalide (Fernet key base64-urlsafe 32 bytes attendue)."
                 ) from exc
+        # P63 : en production, les secrets Stripe (secret_key + webhook_secret) sont OBLIGATOIRES —
+        # anti free-plan-bypass. Sans webhook_secret, la signature n'est pas vérifiée → anyone peut POST
+        # un fake event upgrade (P0-S3). Sans secret_key, le checkout tombe en mock → upgrades gratuits (P0-S4).
+        if self.is_production and (not self.stripe_secret_key or not self.stripe_webhook_secret):
+            raise ValueError(
+                "STRIPE_SECRET_KEY + STRIPE_WEBHOOK_SECRET requis en production "
+                "(anti free-plan-bypass : sans signature webhook vérifiée, les events Stripe sont forgables)."
+            )
         return self
 
 

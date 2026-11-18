@@ -68,7 +68,12 @@ def change_plan(tid: str, body: schemas.PlanUpdate, db: Session = Depends(get_db
                 tenant: models.Tenant = Depends(get_tenant),
                 _perm=Depends(require_permission("billing.manage"))):
     """Change de plan (legacy — sans Stripe). Pour upgrade payant → POST /billing/checkout.
-    Baisser de plan sous le quota courant (sièges) est interdit."""
+    Baisser de plan sous le quota courant (sièges) est interdit.
+    P63 : DÉSACTIVÉ en production — anti free-plan-bypass (P0-S1). Tout upgrade payant doit passer par
+    POST /billing/checkout (Stripe) + webhook signé. Conservé en dev/test pour les tests de quota."""
+    if settings.is_production:
+        raise HTTPException(status.HTTP_403_FORBIDDEN,
+            "Changement de plan direct désactivé en production — utilisez POST /billing/checkout (Stripe).")
     if body.plan not in billing_service.PLANS:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, f"Plan invalide : {body.plan}")
     new_seats = billing_service.PLANS[body.plan]["seats"]
