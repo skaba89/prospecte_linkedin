@@ -39,10 +39,13 @@ def upgrade() -> None:
     op.add_column("users", sa.Column("locale", sa.String(8), nullable=False, server_default="fr"))
     op.add_column("users", sa.Column("sso_tenant_id", sa.String(), nullable=True))
     op.create_index("ix_users_sso_id", "users", ["sso_id"])
-    op.create_foreign_key("fk_users_sso_tenant_id", "users", "tenants",
-                          ["sso_tenant_id"], ["id"], ondelete="SET NULL")
+    # FK users.sso_tenant_id → tenants.id : batch mode (SQLite ne supporte pas ALTER ADD CONSTRAINT,
+    # le batch recrée la table avec copy-and-move — fonctionne sur SQLite + PostgreSQL).
+    with op.batch_alter_table("users") as batch_op:
+        batch_op.create_foreign_key("fk_users_sso_tenant_id", "tenants",
+                                    ["sso_tenant_id"], ["id"], ondelete="SET NULL")
     # Colonne Tenant (SSO flag)
-    op.add_column("tenants", sa.Column("sso_enabled", sa.Boolean(), nullable=False, server_default=sa.text("0")))
+    op.add_column("tenants", sa.Column("sso_enabled", sa.Boolean(), nullable=False, server_default=sa.text("false")))
     # Table EnterpriseSSO
     op.create_table(
         "enterprise_sso",
@@ -57,7 +60,7 @@ def upgrade() -> None:
         sa.Column("userinfo_url", sa.String(), nullable=False),
         sa.Column("scopes", sa.String(), nullable=False, server_default="openid profile email"),
         sa.Column("domains", sa.Text(), nullable=False, server_default="[]"),
-        sa.Column("enabled", sa.Boolean(), nullable=False, server_default=sa.text("1")),
+        sa.Column("enabled", sa.Boolean(), nullable=False, server_default=sa.text("true")),
         sa.Column("created_at", sa.DateTime(), nullable=False, server_default=sa.text("CURRENT_TIMESTAMP")),
         sa.Column("updated_at", sa.DateTime(), nullable=False, server_default=sa.text("CURRENT_TIMESTAMP")),
         sa.PrimaryKeyConstraint("id"),
@@ -71,7 +74,8 @@ def downgrade() -> None:
     op.drop_index("ix_enterprise_sso_tenant_id", table_name="enterprise_sso")
     op.drop_table("enterprise_sso")
     op.drop_column("tenants", "sso_enabled")
-    op.drop_constraint("fk_users_sso_tenant_id", "users", type_="foreignkey")
+    with op.batch_alter_table("users") as batch_op:
+        batch_op.drop_constraint("fk_users_sso_tenant_id", type_="foreignkey")
     op.drop_index("ix_users_sso_id", table_name="users")
     op.drop_column("users", "sso_tenant_id")
     op.drop_column("users", "locale")

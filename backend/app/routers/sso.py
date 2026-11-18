@@ -31,7 +31,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import RedirectResponse
 from sqlalchemy.orm import Session
 
-from .. import models, schemas, security
+from .. import models, security
 from ..config import settings
 from ..database import get_db
 from ..i18n import get_lang, t

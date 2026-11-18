@@ -14,8 +14,6 @@ préférée par user (future surcharge Accept-Language).
 """
 from __future__ import annotations
 
-from typing import Optional
-
 from .config import settings
 
 SUPPORTED_LANGS = ("fr", "en", "es")
@@ -88,7 +86,7 @@ MESSAGES: dict[str, dict[str, str]] = {
 }
 
 
-def _normalize_lang(lang: Optional[str]) -> str:
+def _normalize_lang(lang: str | None) -> str:
     """Normalise un code langue ('fr-FR' → 'fr', 'en-US' → 'en'). Fallback DEFAULT_LANG."""
     if not lang:
         return DEFAULT_LANG
@@ -96,7 +94,7 @@ def _normalize_lang(lang: Optional[str]) -> str:
     return code if code in SUPPORTED_LANGS else DEFAULT_LANG
 
 
-def get_lang(accept_language: Optional[str] = None) -> str:
+def get_lang(accept_language: str | None = None) -> str:
     """Détecte la langue depuis le header Accept-Language (q-values) → fallback default_language.
     Format Accept-Language : 'fr-FR,fr;q=0.9,en;q=0.8' → 'fr'."""
     if not accept_language:
@@ -124,7 +122,7 @@ def get_lang(accept_language: Optional[str] = None) -> str:
     return _normalize_lang(getattr(settings, "default_language", DEFAULT_LANG))
 
 
-def t(key: str, lang: Optional[str] = None, **fmt) -> str:
+def t(key: str, lang: str | None = None, **fmt) -> str:
     """Traduit une clé vers la langue (défaut fr). Formatage par kwargs (**fmt).
     Si la clé n'existe pas → retourne la clé elle-même (jamais d'exception en prod)."""
     lang = _normalize_lang(lang) if lang else DEFAULT_LANG
