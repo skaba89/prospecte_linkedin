@@ -1868,7 +1868,7 @@ ck(app_sent.get("sent_at"), None, f"sent_at=None (v1 stub, OAuth non configuré)
 print("=== 224. GET /api/career/email/connect/gmail_oauth → 503 (app Gmail non configurée) ===")
 s, connect_resp = call("GET", "/api/career/email/connect/gmail_oauth", tok, None)
 ck(s, 503, f"email connect 503 (app Gmail non configurée en test) : {s}")
-ck("GMAIL_CLIENT_ID/SECRET" in (connect_resp.get("detail") or ""), "detail mentionne app Gmail non configurée")
+ck("GMAIL_CLIENT_ID/SECRET" in (connect_resp.get("detail") or ""), True, "detail mentionne app Gmail non configurée")
 
 print("=== 225. GET /api/career/email/status → 200 (0 intégration, app non configurée) ===")
 s, status_resp = call("GET", "/api/career/email/status", tok, None)
