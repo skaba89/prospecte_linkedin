@@ -2940,7 +2940,14 @@ function init(){
   $('#nav-ideas').textContent=D.ideas.length;
   $('#nav-miss').textContent=D.missions.length;
   $('#nav-app').textContent=D.applications.length;
-  renderOverview();renderCompetitors();renderPosts();renderComments();renderProspects();renderIdeas();renderMissions();renderCVStudio();renderApplications();renderBrief();renderVoiceDNA();renderRevenue();renderOrchestration();renderSequences();renderTeam();renderBenchmark();renderMarketplace();renderSSO();renderAnalytics();renderSettings();
+  // P77-fix/v2 : wrapper try/catch autour de chaque render. Un nouveau tenant n'a pas de DashboardModule
+  // rows → /dashboard/modules retourne {} (backend dashboard.py L17). Même avec la normalisation des 7
+  // arrays (apiLoadTenantData), certains renders accèdent à des propriétés imbriquées manquantes
+  // (ex: c.commenter_name dans cmtCard) → "Cannot read properties of undefined". Sans wrapper, un seul
+  // render qui crash bloquait tout le dashboard (init() throw → enterApp() jamais appelé → onboarding bloqué).
+  // Avec safe(), un render défaillant est juste loggé en warning + les autres renders + enterApp() proceed.
+  const safe=(fn,n)=>{try{fn()}catch(e){console.warn('[render:'+n+']',e.message)}};
+  safe(renderOverview,'overview');safe(renderCompetitors,'competitors');safe(renderPosts,'posts');safe(renderComments,'comments');safe(renderProspects,'prospects');safe(renderIdeas,'ideas');safe(renderMissions,'missions');safe(renderCVStudio,'cvstudio');safe(renderApplications,'applications');safe(renderBrief,'brief');safe(renderVoiceDNA,'voice');safe(renderRevenue,'revenue');safe(renderOrchestration,'orchestration');safe(renderSequences,'sequences');safe(renderTeam,'team');safe(renderBenchmark,'benchmark');safe(renderMarketplace,'marketplace');safe(renderSSO,'sso');safe(renderAnalytics,'analytics');safe(renderSettings,'settings');
   $$('.nav-item').forEach(n=>n.onclick=()=>go(n.dataset.view));
   document.addEventListener('keydown',e=>{if(e.key==='Escape')closeModal()});
 }
@@ -2988,7 +2995,12 @@ if(location.protocol.startsWith('http')){
   const apiRefreshApprovals=async tid=>{const aps=await apiFetch('/api/tenants/'+tid+'/approvals');if(D.team_workspace)D.team_workspace.pending_approvals=aps;return aps};
   const apiLoadTenantData=async tid=>{
     const [mods,mems,aps]=await Promise.all([apiFetch('/api/tenants/'+tid+'/dashboard/modules'),apiFetch('/api/tenants/'+tid+'/members'),apiFetch('/api/tenants/'+tid+'/approvals')]);
-    D=mods;_DB.members[tid]=mems.map(_mObj);if(D.team_workspace)D.team_workspace.pending_approvals=aps;init();
+    // P77-fix : un nouveau tenant n'a pas de DashboardModule rows → /dashboard/modules retourne {}
+    // (backend dashboard.py L17 : {module_key: payload for r in rows}). Sans normalisation, init()
+    // fait D.competitors.length → "Cannot read properties of undefined (reading 'length')" → onboarding bloqué.
+    D=mods||{};
+    ['competitors','posts','comments','prospects','ideas','missions','applications'].forEach(k=>{if(!Array.isArray(D[k]))D[k]=[]});
+    _DB.members[tid]=(mems||[]).map(_mObj);if(D.team_workspace)D.team_workspace.pending_approvals=aps;init();
   };
   const apiLoadTenantsAndEnter=async()=>{
     const ts=await apiFetch('/api/tenants');
@@ -3005,7 +3017,7 @@ if(location.protocol.startsWith('http')){
 
   switchTenant=async function(tid){try{const t=await apiFetch('/api/tenants/'+tid);_SESS.activeTenantId=tid;const dt=_DB.tenants.find(x=>x.id===tid);if(dt){dt.name=t.name;dt.plan=t.plan;dt.role=t.role}if(t.profile){_DB.profiles[tid]=t.profile;await apiLoadTenantData(tid);toggleWs();enterApp()}else{toggleWs();$('#auth-gate').classList.remove('hide');showOnboard(tid)}}catch(e){toast('Switch: '+(e.message||e))}};
   newWorkspacePrompt=async function(){const name=prompt("Nom de l'espace de travail :",'Mon entreprise');if(!name)return;let plan=prompt('Plan (Starter / Pro / Enterprise) :','Pro')||'Pro';if(!PLANS[plan])plan='Pro';try{const t=await apiFetch('/api/tenants',{method:'POST',body:{name,plan}});_DB.tenants.push(_tObj(t));_DB.members[t.id]=[];_SESS.activeTenantId=t.id;toggleWs();$('#auth-gate').classList.remove('hide');showOnboard(t.id)}catch(e){toast('Création: '+(e.message||e))}};
-  saveProfile=async function(p){let tid=_SESS.activeTenantId;try{if(!tid){const t=await apiFetch('/api/tenants',{method:'POST',body:{name:(p.company&&p.company!=='—')?p.company:'Mon espace',plan:'Pro'}});_DB.tenants.push(_tObj(t));_DB.members[t.id]=[];tid=t.id;_SESS.activeTenantId=tid}const prof=await apiFetch('/api/tenants/'+tid+'/profile',{method:'POST',body:p});_DB.profiles[tid]=prof;await apiLoadTenantData(tid);enterApp()}catch(e){authErr('err-native','Profil: '+(e.message||e))}};
+  saveProfile=async function(p){let tid=_SESS.activeTenantId;try{if(!tid){const t=await apiFetch('/api/tenants',{method:'POST',body:{name:(p.company&&p.company!=='—')?p.company:'Mon espace',plan:'Pro'}});_DB.tenants.push(_tObj(t));_DB.members[t.id]=[];tid=t.id;_SESS.activeTenantId=tid;saveSess(_SESS)}const prof=await apiFetch('/api/tenants/'+tid+'/profile',{method:'POST',body:p});_DB.profiles[tid]=prof;await apiLoadTenantData(tid);enterApp()}catch(e){authErr('err-native','Profil: '+(e.message||e))}};
 
   inviteMember=async function(){const email=$('#mm-email').value.trim().toLowerCase();if(!email||!email.includes('@')){const e=$('#err-member');e.textContent='Renseignez un e-mail valide.';e.classList.add('show');return}const role=$('#mm-role').value,tid=_SESS.activeTenantId;try{await apiFetch('/api/tenants/'+tid+'/members/invite',{method:'POST',body:{email,name:email.split('@')[0],role}});toast('Invitation envoyée à '+email);await apiRefreshMembers(tid);openMembers()}catch(e){const el=$('#err-member');el.textContent=e.message||'Erreur';el.classList.add('show')}};
   confirmAccept=async function(mid){const tid=_SESS.activeTenantId;try{await apiFetch('/api/tenants/'+tid+'/members/'+mid+'/accept',{method:'POST'});await apiRefreshMembers(tid);toast('Membre accepté');openMembers()}catch(e){toast(e.message||e)}};
