@@ -2957,6 +2957,12 @@ if(location.protocol.startsWith('http')){
       // 401 — JWT expiré/révoqué : on purge le token et renvoie l'écran de login.
       // Évite les boucles de rendu sur un token périmé et réduit la fenêtre d'exposition.
       if(r.status===401){apiSetTok(null);try{setScr('scr-auth')}catch(e){}}
+      // P75-fix : 403 "Accès refusé à cet espace" = activeTenantId stale (appartient à un autre user,
+      // ex: demo login après un register réel sans reset du localStorage). On purge le stale
+      // activeTenantId + renvoie l'écran de login pour recharger les tenants du user courant.
+      if(r.status===403 && d && /Accès refusé à cet espace/.test(d.detail||'')){
+        try{_SESS.activeTenantId=null;saveSess(_SESS);setScr('scr-auth')}catch(e){}
+      }
       throw new Error((d&&d.detail)||('HTTP '+r.status));
     }
     return d;
@@ -2986,7 +2992,7 @@ if(location.protocol.startsWith('http')){
     ts.forEach(t=>{if(t.profile)_DB.profiles[t.id]=t.profile;_DB.members[t.id]=[]});
     const first=ts.find(t=>t.profile)||ts[0];
     if(!first){setScr('scr-auth');return}
-    _SESS.activeTenantId=first.id;await apiLoadTenantData(first.id);enterApp();
+    _SESS.activeTenantId=first.id;saveSess(_SESS);await apiLoadTenantData(first.id);enterApp();
   };
 
   demoLogin=async function(){try{const r=await apiFetch('/api/auth/demo',{method:'POST'});apiSetTok(r.token);_USER=r.user;_DB.users=[_uObj(r.user)];_SESS.userId=r.user.id;await apiLoadTenantsAndEnter()}catch(e){authErr('err-login','Démo indisponible : '+(e.message||e))}};
