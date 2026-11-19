@@ -95,6 +95,12 @@ class Settings(BaseSettings):
     stripe_publishable_key: str = ""  # P44 : clé publique Stripe.js (frontend Elements / checkout redirect)
     stripe_api_version: str = "2024-06-20"  # P44 : pin API version (anti-breaking-change Stripe)
     stripe_currency: str = "eur"  # currency code Stripe (lowercase ISO 4217)
+    # P70-fix : stripe_enabled (défaut True) — opt-out explicite pour Docker local / dev sans compte Stripe.
+    # Quand False : le validator prod skip la exigence de keys (mock mode), les routes billing retournent
+    # du simulated=True, le webhook stripe_webhook() accepte les events sans vérif signature (mock).
+    # ⚠️ En prod RÉELLE : laisser True (défaut) — sinon free-plan-bypass possible (P0-S3/S4).
+    # Pour Docker local : REVPULSE_STRIPE_ENABLED=false dans .env (voir scripts/docker-up.sh).
+    stripe_enabled: bool = True
 
     # France Travail — P35-V2 connecteur d'emploi réel. API Offres d'emploi v2 (OAuth2 client
     # credentials, gratuit). Si client_id + client_secret non renseignés → status "not_configured"
@@ -172,10 +178,13 @@ class Settings(BaseSettings):
         # P63 : en production, les secrets Stripe (secret_key + webhook_secret) sont OBLIGATOIRES —
         # anti free-plan-bypass. Sans webhook_secret, la signature n'est pas vérifiée → anyone peut POST
         # un fake event upgrade (P0-S3). Sans secret_key, le checkout tombe en mock → upgrades gratuits (P0-S4).
-        if self.is_production and (not self.stripe_secret_key or not self.stripe_webhook_secret):
+        # P70-fix : skip si stripe_enabled=False (opt-out explicite pour Docker local / dev sans Stripe).
+        # ⚠️ En prod réelle, stripe_enabled=True (défaut) — ne PAS désactiver sauf conscience du risque.
+        if self.is_production and self.stripe_enabled and (not self.stripe_secret_key or not self.stripe_webhook_secret):
             raise ValueError(
                 "STRIPE_SECRET_KEY + STRIPE_WEBHOOK_SECRET requis en production "
-                "(anti free-plan-bypass : sans signature webhook vérifiée, les events Stripe sont forgables)."
+                "(anti free-plan-bypass : sans signature webhook vérifiée, les events Stripe sont forgables). "
+                "Pour Docker local sans Stripe : REVPULSE_STRIPE_ENABLED=false dans .env."
             )
         # P64 (P0-O3) : en production, CORS wildcard ("*") + allow_credentials=True est interdit (spec CORS).
         # Toute origine pourrait faire des requêtes authentifiées cross-origin (CSRF credentialed).

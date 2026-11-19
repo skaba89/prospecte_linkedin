@@ -46,6 +46,12 @@ services:
       REVPULSE_SMTP_PASSWORD: ${REVPULSE_SMTP_PASSWORD:-}
       REVPULSE_SMTP_FROM: ${REVPULSE_SMTP_FROM:-no-reply@revpulse.io}
       REVPULSE_SMTP_USE_TLS: ${REVPULSE_SMTP_USE_TLS:-true}
+      # Stripe — P70-fix : stripe_enabled=false pour Docker local (mock mode, pas de compte Stripe).
+      # ⚠️ En prod : laisser true (défaut) + renseigner STRIPE_SECRET_KEY + STRIPE_WEBHOOK_SECRET.
+      REVPULSE_STRIPE_ENABLED: ${REVPULSE_STRIPE_ENABLED:-true}
+      REVPULSE_STRIPE_SECRET_KEY: ${REVPULSE_STRIPE_SECRET_KEY:-}
+      REVPULSE_STRIPE_WEBHOOK_SECRET: ${REVPULSE_STRIPE_WEBHOOK_SECRET:-}
+      REVPULSE_STRIPE_PUBLISHABLE_KEY: ${REVPULSE_STRIPE_PUBLISHABLE_KEY:-}
     depends_on:
       db:
         condition: service_healthy

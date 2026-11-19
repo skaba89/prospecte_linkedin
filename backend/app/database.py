@@ -34,9 +34,8 @@ def init_db():
     pas un vrai problème de schéma.
     """
     try:
-        from alembic.config import Config
-
         from alembic import command
+        from alembic.config import Config
     except ImportError:
         Base.metadata.create_all(bind=engine)
         return

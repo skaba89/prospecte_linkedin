@@ -36,6 +36,9 @@ REVPULSE_DATABASE_URL=postgresql+psycopg2://revpulse:$PG_PWD@db:5432/revpulse
 REVPULSE_APP_BASE_URL=http://localhost:8080
 REVPULSE_CORS_ORIGINS=http://localhost:8080,http://localhost:8000
 REVPULSE_JWT_EXPIRY_HOURS=24
+# P70-fix : Stripe désactivé pour Docker local (pas de compte Stripe requis → mock mode).
+# ⚠️ En prod RÉELLE : passer à true + renseigner STRIPE_SECRET_KEY + STRIPE_WEBHOOK_SECRET.
+REVPULSE_STRIPE_ENABLED=false
 REVPULSE_DEMO_EMAIL=demo@revpulse.io
 REVPULSE_DEMO_PASSWORD=demo1234
 REVPULSE_RATE_LIMIT_ENABLED=true
