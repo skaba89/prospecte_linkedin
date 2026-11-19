@@ -52,6 +52,24 @@
   .err-msg{color:var(--err);font-size:12px;font-family:monospace;word-break:break-all;background:rgba(239,68,68,.08);padding:4px 6px;border-radius:4px;margin-top:4px}
   .back-link{font-size:12px;color:var(--muted);cursor:pointer;margin-bottom:12px;display:inline-block}
   .back-link:hover{color:var(--text)}
+  /* P72-fix : responsivité (était 0 media query → non-responsive sur mobile) */
+  @media (max-width:900px){
+    .topbar{flex-wrap:wrap;gap:8px;padding:12px 14px}
+    .wrap{padding:16px}
+    .head{flex-wrap:wrap;gap:8px}
+    .head h2{font-size:16px}
+  }
+  @media (max-width:640px){
+    .topbar h1{font-size:15px}
+    .topbar .sub{display:none}
+    .wrap{padding:12px}
+    .head{flex-direction:column;align-items:flex-start}
+    .card{padding:14px}
+    .events-grid{grid-template-columns:1fr}
+    .err-msg{font-size:11px;word-break:break-all}
+    .table-scroll{overflow-x:auto;-webkit-overflow-scrolling:touch}
+    table{min-width:520px}
+  }
 </style>
   <link rel="stylesheet" href="assets/app.css">
 </head>
