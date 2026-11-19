@@ -68,14 +68,14 @@ def main():
     # 1. prod sans stripe_secret_key → ValueError
     try:
         Settings(env="production", jwt_secret=JWT_OK, token_encryption_key=FERNET_OK,
-                 stripe_secret_key="", stripe_webhook_secret="whsec_x")
+                 stripe_enabled=True, stripe_secret_key="", stripe_webhook_secret="whsec_x")
         ck(False, "prod sans stripe_secret_key → ValueError")
     except ValueError:
         ck(True, "prod sans stripe_secret_key → ValueError (fail-fast P0-S3)")
     # 2. prod sans stripe_webhook_secret → ValueError
     try:
         Settings(env="production", jwt_secret=JWT_OK, token_encryption_key=FERNET_OK,
-                 stripe_secret_key="sk_live_x", stripe_webhook_secret="")
+                 stripe_enabled=True, stripe_secret_key="sk_live_x", stripe_webhook_secret="")
         ck(False, "prod sans stripe_webhook_secret → ValueError")
     except ValueError:
         ck(True, "prod sans stripe_webhook_secret → ValueError (fail-fast P0-S3)")
@@ -93,6 +93,16 @@ def main():
         ck(not s.is_production, "test env sans secrets → OK (fail-fast prod-only)")
     except ValueError:
         ck(False, "test env sans secrets → OK")
+    # 5. P70-fix : prod + stripe_enabled=False + pas de keys → OK (Docker local sans Stripe).
+    #    Le fail-fast Stripe est skipé (opt-out explicite) → le backend boote en mock mode.
+    try:
+        s = Settings(env="production", jwt_secret=JWT_OK, token_encryption_key=FERNET_OK,
+                     stripe_enabled=False, stripe_secret_key="", stripe_webhook_secret="",
+                     cors_origins="http://localhost:8080")
+        ck(s.is_production and not s.stripe_enabled,
+           "prod + stripe_enabled=False + no keys → OK (Docker local mock mode, P70-fix)")
+    except ValueError:
+        ck(False, "prod + stripe_enabled=False + no keys → OK (Docker local)")
 
     # ══════════════════════════════════════════════════════════════════════
     # B. idempotency_key (P0-S5)
@@ -225,12 +235,14 @@ def main():
     # ══════════════════════════════════════════════════════════════════════
     print("\n--- F. Webhook signature inconditionnelle prod (P0-S3) ---")
     cfg.env = "production"
+    cfg.stripe_enabled = True  # P70-fix : explicitement True pour tester le guard defense-in-depth
     cfg.stripe_webhook_secret = ""  # simulate misconfig (config fail-fast would block boot, but defense-in-depth here)
     try:
         r = client.post("/api/billing/webhook", headers=H, json={"type": "checkout.session.completed"})
         ck(r.status_code == 401, f"webhook prod sans secrets → 401 (defense-in-depth P0-S3) (got {r.status_code})")
     finally:
         cfg.env = "test"
+        cfg.stripe_enabled = True
         cfg.stripe_webhook_secret = ""
 
     print(f"\nRESULT: {passed} passed, {failed} failed")

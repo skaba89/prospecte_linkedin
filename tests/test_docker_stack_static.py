@@ -63,6 +63,11 @@ def main():
            "backend depends_on db: service_healthy")
         ck(cfg["services"]["frontend"].get("depends_on", {}).get("backend", {}).get("condition") == "service_healthy",
            "frontend depends_on backend: service_healthy")
+        # P70-fix : Stripe env vars passées au backend (stripe_enabled + secret_key + webhook_secret)
+        ck("REVPULSE_STRIPE_ENABLED" in str(backend_env),
+           "REVPULSE_STRIPE_ENABLED transmis au backend (P70-fix Docker local)")
+        ck("REVPULSE_STRIPE_SECRET_KEY" in str(backend_env) and "REVPULSE_STRIPE_WEBHOOK_SECRET" in str(backend_env),
+           "REVPULSE_STRIPE_SECRET_KEY + WEBHOOK_SECRET transmis au backend")
         # Port binding localhost
         ports_b = cfg["services"]["backend"].get("ports", [])
         ck(any("127.0.0.1:8000" in str(p) for p in ports_b), "backend port 127.0.0.1:8000 (localhost only)")
@@ -124,6 +129,10 @@ def main():
            "REVPULSE_TOKEN_ENCRYPTION_KEY Fernet (base64-urlsafe 32 bytes = 44 chars)")
         pg_match = re.search(r"POSTGRES_PASSWORD=(\S+)", env_content)
         ck(pg_match is not None and len(pg_match.group(1)) >= 16, "POSTGRES_PASSWORD ≥16 chars")
+        # P70-fix : STRIPE_ENABLED=false requis pour Docker local (sinon backend crash en prod sans keys)
+        stripe_en = re.search(r"REVPULSE_STRIPE_ENABLED=(\S+)", env_content)
+        ck(stripe_en is not None and stripe_en.group(1).lower() == "false",
+           "REVPULSE_STRIPE_ENABLED=false (Docker local mock mode, P70-fix)")
     else:
         # .env est gitigné (secrets) — absent en CI, généré par ./scripts/docker-up.sh en local.
         # SKIP (pas de failure) — les secrets sont validés via le .env.example + le script docker-up.sh.

@@ -174,8 +174,9 @@ async def stripe_webhook(request: Request, db: Session = Depends(get_db)):
     payload = raw.decode("utf-8", errors="replace")
     # P63 : en prod, les 2 secrets Stripe sont requis (config fail-fast + defense-in-depth ici).
     # Sans signature vérifiée, anyone peut POST un fake event upgrade (P0-S3 — anti free-plan-bypass).
-    if cfg.is_production and not (cfg.stripe_webhook_secret and cfg.stripe_secret_key):
-        raise HTTPException(401, "Stripe mal configuré en prod (STRIPE_SECRET_KEY + STRIPE_WEBHOOK_SECRET requis).") from None
+    # P70-fix : skip si stripe_enabled=False (Docker local / dev sans Stripe → mock mode).
+    if cfg.is_production and cfg.stripe_enabled and not (cfg.stripe_webhook_secret and cfg.stripe_secret_key):
+        raise HTTPException(401, "Stripe mal configuré en prod (STRIPE_SECRET_KEY + STRIPE_WEBHOOK_SECRET requis). Pour Docker local : REVPULSE_STRIPE_ENABLED=false.") from None
     # Vérif signature si secret configuré + stripe lib dispo
     if cfg.stripe_webhook_secret and cfg.stripe_secret_key:
         try:
