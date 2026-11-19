@@ -60,11 +60,12 @@ def login(request: Request, body: schemas.UserLogin, db: Session = Depends(get_d
     email = body.email.lower()
     user = db.query(models.User).filter_by(email=email).first()
     # P10.4 : réparation du compte démo + hint d'identifiants only hors production.
-    if not settings.is_production and not user and email == settings.demo_email.lower():
+    # P71-fix : en Docker local (env=production + demo_enabled=true), on auto-crée aussi le demo user.
+    if (not settings.is_production or settings.demo_enabled) and not user and email == settings.demo_email.lower():
         ensure_demo(db)
         user = db.query(models.User).filter_by(email=email).first()
     if not user or not security.verify_password(body.password, user.password_hash):
-        hint = "" if settings.is_production else t("auth.demo_hint", lang, email=settings.demo_email, password=settings.demo_password)
+        hint = "" if (settings.is_production and not settings.demo_enabled) else t("auth.demo_hint", lang, email=settings.demo_email, password=settings.demo_password)
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, t("auth.login_invalid", lang) + hint)
     # P62 — 2FA/TOTP : si l'utilisateur a 2FA activé, n'émet PAS le token de session complet.
     # Retourne 403 avec un temp_token (5 min) — le client doit POST /auth/login/2fa {temp_token, code}.
