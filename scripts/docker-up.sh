@@ -63,6 +63,15 @@ REVPULSE_LINKEDIN_REDIRECT_URI=http://localhost:8080/api/linkedin/callback
 REVPULSE_LINKEDIN_MOCK=true
 EOF
   echo "✓ .env créé (secrets générés localement — ne PAS committer)."
+  # P70-fix3 : si un volume pgdata existe déjà (d'un run précédent avec un ancien password),
+  # le wipe — sinon Postgres skip l'init ("Database directory appears to contain a database")
+  # et garde l'ANCIEN password → mismatch avec le nouveau .env → backend crash (auth fail).
+  if docker volume inspect revpulse_pgdata >/dev/null 2>&1; then
+    echo "→ Volume revpulse_pgdata existant détecté (ancien password Postgres possible)..."
+    echo "  Wipe pour forcer la réinitialisation de Postgres avec le nouveau password..."
+    docker compose down -v >/dev/null 2>&1 || true
+    echo "✓ Volumes wipeés (Postgres va se réinitialiser avec le nouveau password du .env)."
+  fi
 fi
 
 # ─── 1b. Pre-flight : valide les secrets du .env AVANT de lancer docker ────────
