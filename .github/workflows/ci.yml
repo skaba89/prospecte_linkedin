@@ -301,6 +301,8 @@ jobs:
           REVPULSE_ENV: test
           REVPULSE_TOKEN_ENCRYPTION_KEY: ZmDfcTF7_60GrrY167zsiPd67pEvs0aGOv2o1OMe4YI=
           REVPULSE_RATE_LIMIT_ENABLED: false
+      - name: P70 Docker stack static validation (compose + Dockerfiles + nginx + .env + scripts + runbook)
+        run: python tests/test_docker_stack_static.py
       - name: P69 GDPR G4 (backup purge Art.17.3 + rectification Art.16 + audit gdpr.export, TestClient)
         run: python tests/test_p69_gdpr_g4_purge.py
         env:
