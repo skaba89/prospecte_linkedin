@@ -2975,8 +2975,12 @@ if(location.protocol.startsWith('http')){
   const _mObj=m=>({id:m.id,tenant_id:m.tenant_id,email:m.email,name:m.name,role:m.role,status:m.status,token:m.token,invitedBy:m.invited_by,addedAt:m.added_at?new Date(m.added_at).getTime():Date.now(),isUser:!!_USER&&m.user_id===_USER.id});
 
   loadDB=()=>_DB; saveDB=db=>{_DB=db};
-  loadSess=()=>_SESS; saveSess=s=>{_SESS=s};
-  clearSess=()=>{_SESS={userId:null,activeTenantId:null};apiSetTok(null)};
+  // P75-fix/v2 : la couche API persiste aussi en localStorage (avant : mémoire seule → logout au reload).
+  // Sans cela, apiLoadTenantsAndEnter→saveSess(_SESS) ne persistait pas → revpulse_session vide →
+  // boot montrait l'écran de login malgré un JWT valide, OU gardait un stale activeTenantId.
+  loadSess=()=>{if(!_SESS.userId&&!_SESS.activeTenantId){try{_SESS=Object.assign({userId:null,activeTenantId:null},JSON.parse(localStorage.getItem('revpulse_session')||'{}'))}catch(e){}}return _SESS};
+  saveSess=s=>{_SESS=s||{userId:null,activeTenantId:null};try{localStorage.setItem('revpulse_session',JSON.stringify(_SESS))}catch(e){}};
+  clearSess=()=>{_SESS={userId:null,activeTenantId:null};apiSetTok(null);try{localStorage.removeItem('revpulse_session')}catch(e){}};
   seedDemo=()=>{}; ensureDemoSeed=()=>{};
   resetDemo=()=>{if(confirm('Réinitialiser ? Le compte démo côté serveur est recréé au prochain login.')){localStorage.clear();location.reload()}};
 
