@@ -127,7 +127,7 @@ def main():
     else:
         # .env est gitigné (secrets) — absent en CI, généré par ./scripts/docker-up.sh en local.
         # SKIP (pas de failure) — les secrets sont validés via le .env.example + le script docker-up.sh.
-        print("  ℹ .env absent (gitigné — généré par ./scripts/docker-up.sh en local). SKIP section F (non bloquant).")
+        print("  [SKIP] .env absent (gitigné — généré par ./scripts/docker-up.sh en local). Section F non bloquante.")
 
     # ═══ G. scripts docker-up + healthcheck ═══
     print("\n--- G. scripts helper ---")
