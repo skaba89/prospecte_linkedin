@@ -52,6 +52,9 @@ services:
       REVPULSE_STRIPE_SECRET_KEY: ${REVPULSE_STRIPE_SECRET_KEY:-}
       REVPULSE_STRIPE_WEBHOOK_SECRET: ${REVPULSE_STRIPE_WEBHOOK_SECRET:-}
       REVPULSE_STRIPE_PUBLISHABLE_KEY: ${REVPULSE_STRIPE_PUBLISHABLE_KEY:-}
+      # P71-fix : demo_enabled=true pour Docker local (login démo en 1 clic en env=production).
+      # ⚠️ En prod réelle : laisser false (défaut) — pas de login démo en prod (sécurité P10.4).
+      REVPULSE_DEMO_ENABLED: ${REVPULSE_DEMO_ENABLED:-false}
     depends_on:
       db:
         condition: service_healthy

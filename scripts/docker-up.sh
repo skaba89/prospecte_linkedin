@@ -54,6 +54,9 @@ REVPULSE_JWT_EXPIRY_HOURS=24
 REVPULSE_STRIPE_ENABLED=false
 REVPULSE_DEMO_EMAIL=demo@revpulse.io
 REVPULSE_DEMO_PASSWORD=demo1234
+# P71-fix : login démo activé pour Docker local (/api/auth/demo fonctionne en env=production).
+# ⚠️ En prod RÉELLE : laisser false (défaut) — pas de login démo en prod (sécurité P10.4).
+REVPULSE_DEMO_ENABLED=true
 REVPULSE_RATE_LIMIT_ENABLED=true
 REVPULSE_LOGIN_RATE_LIMIT=5/minute
 REVPULSE_SMTP_ENABLED=false

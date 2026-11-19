@@ -77,9 +77,9 @@ def login(request: Request, body: schemas.UserLogin, db: Session = Depends(get_d
 @router.post("/demo", response_model=schemas.Token)
 @limiter.limit(settings.login_rate_limit)
 def demo(request: Request, db: Session = Depends(get_db)):
-    """Accès démo en 1 clic (dev/CI). P10.4 : 404 en production."""
+    """Accès démo en 1 clic (dev/CI). P10.4 : 404 en production sauf si demo_enabled=True (P71-fix)."""
     lang = get_lang(request.headers.get("accept-language"))
-    if settings.is_production:
+    if settings.is_production and not settings.demo_enabled:
         raise HTTPException(status.HTTP_404_NOT_FOUND, t("auth.demo_unavailable", lang))
     ensure_demo(db)
     user = db.query(models.User).filter_by(email=settings.demo_email.lower()).first()
