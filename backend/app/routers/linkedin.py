@@ -61,8 +61,8 @@ LINKEDIN_CAPABILITY = {
 
 
 def _is_mock() -> bool:
-    """P10.4 : mock interdit en production. Autorisé en dev/CI si mock=true ou pas de creds."""
-    if settings.is_production:
+    """P10.4 : mock interdit en production RÉELLE. P73-fix : autorisé en Docker local si linkedin_mock=True explicite."""
+    if settings.is_production and not settings.linkedin_mock:
         return False
     return bool(settings.linkedin_mock) or not settings.linkedin_client_id
 
@@ -250,8 +250,9 @@ def linkedin_auth(tid: str, db: Session = Depends(get_db),
 
 @router.get("/tenants/{tid}/linkedin/mock-connect")
 def linkedin_mock_connect(tid: str, db: Session = Depends(get_db)):
-    """Mode mock (dev/CI) : crée une connexion LinkedIn factice. P10.4 : 403 en production."""
-    if settings.is_production:
+    """Mode mock (dev/CI/Docker local) : crée une connexion LinkedIn factice.
+    P10.4 : 403 en production RÉELLE. P73-fix : autorisé en Docker local si linkedin_mock=True explicite."""
+    if settings.is_production and not settings.linkedin_mock:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Mode mock interdit en production.")
     if not _is_mock():
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Mode mock désactivé (creds LinkedIn présentes).")
