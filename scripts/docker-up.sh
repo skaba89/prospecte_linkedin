@@ -22,9 +22,22 @@ cd "$(dirname "$0")/.."
 # ─── 1. .env ──────────────────────────────────────────────────────────────────
 if [ ! -f .env ]; then
   echo "→ .env absent — génération avec secrets aléatoires..."
-  JWT_SEC=$(python3 -c "import secrets; print(secrets.token_urlsafe(48))")
-  FERNET=$(python3 -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())" 2>/dev/null || echo "REPLACE_WITH_FERNET_KEY")
-  PG_PWD=$(python3 -c "import secrets; print(secrets.token_urlsafe(24))")
+  # P70-fix2 : génération en STDLIB only (os+base64+secrets) — aucun package 3rd-party requis
+  # sur l'hôte (cryptography n'est PAS installé sur le Python hôte Windows/MINGW64 par défaut).
+  # Fernet key = 32 bytes aléatoires, base64-urlsafe (= 44 chars avec padding '=').
+  # Fallback openssl si python3 absent.
+  if command -v python3 >/dev/null 2>&1; then
+    JWT_SEC=$(python3 -c "import secrets; print(secrets.token_urlsafe(48))")
+    FERNET=$(python3 -c "import os,base64; print(base64.urlsafe_b64encode(os.urandom(32)).decode())")
+    PG_PWD=$(python3 -c "import secrets; print(secrets.token_urlsafe(24))")
+  elif command -v openssl >/dev/null 2>&1; then
+    JWT_SEC=$(openssl rand -base64 48 | tr -d '\n')
+    FERNET=$(openssl rand 32 | base64 | tr '+/' '-_' | tr -d '\n')
+    PG_PWD=$(openssl rand -hex 24)
+  else
+    echo "✗ python3 OU openssl requis pour générer les secrets. Installe-en un des deux."
+    exit 1
+  fi
   cat > .env <<EOF
 REVPULSE_ENV=production
 REVPULSE_JWT_SECRET=$JWT_SEC
@@ -51,6 +64,29 @@ REVPULSE_LINKEDIN_MOCK=true
 EOF
   echo "✓ .env créé (secrets générés localement — ne PAS committer)."
 fi
+
+# ─── 1b. Pre-flight : valide les secrets du .env AVANT de lancer docker ────────
+# P70-fix2 : échec claire + tôt si un secret est invalide (ex: Fernet key = fallback
+# "REPLACE_WITH_FERNET_KEY" si la génération a raté sur un hôte sans cryptography).
+echo "→ Pre-flight : validation des secrets .env..."
+ENV_FILE=.env
+JWT_CHK=$(grep -E "^REVPULSE_JWT_SECRET=" "$ENV_FILE" | cut -d= -f2-)
+FERNET_CHK=$(grep -E "^REVPULSE_TOKEN_ENCRYPTION_KEY=" "$ENV_FILE" | cut -d= -f2-)
+PG_CHK=$(grep -E "^POSTGRES_PASSWORD=" "$ENV_FILE" | cut -d= -f2-)
+ERR=""
+[ ${#JWT_CHK} -ge 32 ] || ERR="$ERR\n  ✗ REVPULSE_JWT_SECRET < 32 chars (actuel: ${#JWT_CHK} chars)"
+[ "$JWT_CHK" != "change-me-in-production" ] || ERR="$ERR\n  ✗ REVPULSE_JWT_SECRET = défaut (change-me-in-production)"
+# Fernet key = 44 chars base64-urlsafe (43 chars + '=' final)
+echo "$FERNET_CHK" | grep -qE '^[A-Za-z0-9_-]{43}=$' || ERR="$ERR\n  ✗ REVPULSE_TOKEN_ENCRYPTION_KEY invalide (Fernet = 44 chars base64-urlsafe attendu). Valeur actuelle: '$FERNET_CHK'"
+[ "$FERNET_CHK" != "REPLACE_WITH_FERNET_KEY" ] || ERR="$ERR\n  ✗ REVPULSE_TOKEN_ENCRYPTION_KEY = fallback (la génération a raté — regénère le .env)"
+[ ${#PG_CHK} -ge 16 ] || ERR="$ERR\n  ✗ POSTGRES_PASSWORD < 16 chars"
+if [ -n "$ERR" ]; then
+  echo -e "✗ Secrets .env invalides :$ERR"
+  echo "  → Supprime .env + relance ./scripts/docker-up.sh (il le régénérera avec des secrets valides)."
+  echo "  → Ou corrige manuellement : voir .env.example pour le format."
+  exit 1
+fi
+echo "✓ Secrets .env valides (JWT ≥32 chars + Fernet 44 chars + PG password ≥16 chars)."
 
 # ─── 2. Docker dispo ? ────────────────────────────────────────────────────────
 if ! command -v docker >/dev/null 2>&1; then
