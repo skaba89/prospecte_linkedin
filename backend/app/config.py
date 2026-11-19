@@ -52,6 +52,11 @@ class Settings(BaseSettings):
     # Identifiants du compte démo (recréés idempotemment par le seed)
     demo_email: str = "demo@revpulse.io"
     demo_password: str = "demo1234"
+    # P71-fix : demo_enabled (défaut False) — opt-in explicite pour activer /api/auth/demo en production.
+    # En development : demo toujours OK (is_production=False → guard skip). En production réelle :
+    # défaut False → /demo retourne 404 (sécurité P10.4 : pas de login démo en prod).
+    # Pour Docker local (env=production) : REVPULSE_DEMO_ENABLED=true dans .env.
+    demo_enabled: bool = False
     # LinkedIn OAuth 2.0 — laisser vide pour le mode mock (CI/dev sans App LinkedIn).
     # Renseigner CLIENT_ID/SECRET/REDIRECT_URI depuis https://www.linkedin.com/developers/apps
     linkedin_client_id: str = ""
