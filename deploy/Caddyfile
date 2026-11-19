@@ -1,0 +1,50 @@
+# Caddyfile — RevPulse production reverse proxy avec HTTPS auto (Let's Encrypt)
+# Caddy obtient + renouvelle automatiquement les certificats pour {$DOMAIN}.
+# Le frontend nginx (port 8080 interne) sert le static + proxie déjà /api/* vers backend:8000.
+# Donc Caddy reverse_proxy TOUT vers frontend:8080.
+
+{
+    # email pour Let's Encrypt (notifications expiration + ACME account)
+    email {$ACME_EMAIL}
+    # active HTTP/3 (QUIC) — déjà mappé sur 443/udp dans docker-compose
+    servers {
+        protocols h1 h2 h3
+    }
+}
+
+{$DOMAIN} {
+    encode gzip zstd
+
+    # reverse proxy vers le frontend nginx (qui sert static + proxy /api)
+    reverse_proxy frontend:8080 {
+        header_up Host {host}
+        header_up X-Real-IP {remote_host}
+        header_up X-Forwarded-For {remote_host}
+        header_up X-Forwarded-Proto {scheme}
+    }
+
+    # headers de sécurité
+    header {
+        Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+        X-Content-Type-Options "nosniff"
+        X-Frame-Options "SAMEORIGIN"
+        Referrer-Policy "strict-origin-when-cross-origin"
+        Permissions-Policy "geolocation=(), microphone=(), camera=()"
+        # CSP : permissive pour Stripe + LinkedIn OAuth (ajuste selon besoins)
+        Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline' https://js.stripe.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self' https://api.stripe.com https://www.linkedin.com; frame-ancestors 'self'; base-uri 'self'; form-action 'self' https://www.linkedin.com https://js.stripe.com"
+    }
+
+    # compression + logs
+    log {
+        output file /data/caddy/access.log {
+            roll_size 100mb
+            roll_keep 5
+        }
+        format json
+    }
+
+    # healthcheck endpoint (optionnel)
+    handle /healthz {
+        reverse_proxy frontend:8080
+    }
+}

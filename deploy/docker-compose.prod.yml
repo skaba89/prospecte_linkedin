@@ -1,0 +1,106 @@
+# RevPulse — docker-compose PRODUCTION (VPS avec HTTPS auto)
+# Stack : Caddy (80/443 auto-SSL) → frontend nginx (8080) → backend uvicorn (8000) → Postgres (5432)
+# Le frontend nginx proxie déjà /api/* vers backend:8000 (voir frontend/nginx.conf).
+# Caddy sert le HTTPS public + reverse_proxy tout vers frontend:8080.
+#
+# Prérequis : .env configuré (cp .env.prod.template .env && éditer) + DNS du domaine pointant vers le VPS.
+# Lancer : docker compose -f docker-compose.prod.yml up -d --build
+
+services:
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"        # HTTP → redirect HTTPS (Caddy auto)
+      - "443:443"      # HTTPS (Let's Encrypt auto)
+      - "443:443/udp"  # HTTP/3 (Caddy auto)
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data           # certificats Let's Encrypt persistés
+      - caddy_config:/config
+    environment:
+      DOMAIN: "${DOMAIN:?DOMAIN requis (ex: revpulse.exemple.com)}"
+      ACME_EMAIL: "${ACME_EMAIL:?ACME_EMAIL requis (email pour Let's Encrypt)}"
+    depends_on:
+      - frontend
+    networks:
+      - revpulse-net
+
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-revpulse}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD requis}
+      POSTGRES_DB: ${POSTGRES_DB:-revpulse}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-revpulse} -d ${POSTGRES_DB:-revpulse}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - revpulse-net
+
+  backend:
+    build:
+      context: ./backend
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      REVPULSE_ENV: production
+      REVPULSE_DATABASE_URL: postgresql+psycopg2://${POSTGRES_USER:-revpulse}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-revpulse}
+      REVPULSE_JWT_SECRET: "${REVPULSE_JWT_SECRET:?REVPULSE_JWT_SECRET requis (≥32 chars)}"
+      REVPULSE_TOKEN_ENCRYPTION_KEY: "${REVPULSE_TOKEN_ENCRYPTION_KEY:?REVPULSE_TOKEN_ENCRYPTION_KEY requis (Fernet base64-urlsafe 32 bytes)}"
+      REVPULSE_LINKEDIN_CLIENT_ID: ${REVPULSE_LINKEDIN_CLIENT_ID:-}
+      REVPULSE_LINKEDIN_CLIENT_SECRET: ${REVPULSE_LINKEDIN_CLIENT_SECRET:-}
+      REVPULSE_LINKEDIN_REDIRECT_URI: ${REVPULSE_LINKEDIN_REDIRECT_URI:-https://${DOMAIN}/api/linkedin/callback}
+      REVPULSE_LINKEDIN_MOCK: ${REVPULSE_LINKEDIN_MOCK:-false}
+      REVPULSE_FRONTEND_DIR: /nonexistent
+      REVPULSE_CORS_ORIGINS: ${REVPULSE_CORS_ORIGINS:-https://${DOMAIN}}
+      REVPULSE_APP_BASE_URL: ${REVPULSE_APP_BASE_URL:-https://${DOMAIN}}
+      REVPULSE_SMTP_ENABLED: ${REVPULSE_SMTP_ENABLED:-false}
+      REVPULSE_SMTP_HOST: ${REVPULSE_SMTP_HOST:-}
+      REVPULSE_SMTP_PORT: ${REVPULSE_SMTP_PORT:-587}
+      REVPULSE_SMTP_USER: ${REVPULSE_SMTP_USER:-}
+      REVPULSE_SMTP_PASSWORD: ${REVPULSE_SMTP_PASSWORD:-}
+      REVPULSE_SMTP_FROM: ${REVPULSE_SMTP_FROM:-no-reply@${DOMAIN}}
+      REVPULSE_SMTP_USE_TLS: ${REVPULSE_SMTP_USE_TLS:-true}
+      REVPULSE_STRIPE_ENABLED: ${REVPULSE_STRIPE_ENABLED:-true}
+      REVPULSE_STRIPE_SECRET_KEY: ${REVPULSE_STRIPE_SECRET_KEY:-}
+      REVPULSE_STRIPE_WEBHOOK_SECRET: ${REVPULSE_STRIPE_WEBHOOK_SECRET:-}
+      REVPULSE_STRIPE_PUBLISHABLE_KEY: ${REVPULSE_STRIPE_PUBLISHABLE_KEY:-}
+      REVPULSE_DEMO_ENABLED: ${REVPULSE_DEMO_ENABLED:-false}
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import sys,urllib.request as u; sys.exit(0 if u.urlopen('http://127.0.0.1:8000/api/health',timeout=4).status==200 else 1)"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    networks:
+      - revpulse-net
+    # PAS de ports publics — le frontend nginx proxie /api vers backend:8000 via le réseau docker.
+
+  frontend:
+    build:
+      context: ./frontend
+    restart: unless-stopped
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks:
+      - revpulse-net
+    # PAS de port public — Caddy reverse_proxy vers frontend:8080.
+
+volumes:
+  pgdata:
+  caddy_data:
+  caddy_config:
+
+networks:
+  revpulse-net:
+    driver: bridge
