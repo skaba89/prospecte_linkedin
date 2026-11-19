@@ -2351,10 +2351,14 @@ const TITLES={
   settings:['Paramètres','Profil, conformité LinkedIn & régénération IA'],
 };
 function go(view){
+  // P74-fix : guard défensif — si view est undefined ou absente de TITLES (nav-item sans data-view,
+  // vue dynamique non prévue), on évite le TypeError "Cannot read properties of undefined (reading '0')".
+  const t=TITLES[view];
+  if(!t){console.warn('[go] view inconnue/indéfinie:',view);return}
   $$('.nav-item').forEach(n=>n.classList.toggle('active',n.dataset.view===view));
   $$('.view').forEach(v=>v.classList.toggle('active',v.id==='view-'+view));
-  $('#view-title').textContent=TITLES[view][0];
-  $('#view-sub').textContent=TITLES[view][1];
+  $('#view-title').textContent=t[0];
+  $('#view-sub').textContent=t[1];
   window.scrollTo(0,0);
 }
 
