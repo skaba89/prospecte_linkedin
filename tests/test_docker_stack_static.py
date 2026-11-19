@@ -125,7 +125,9 @@ def main():
         pg_match = re.search(r"POSTGRES_PASSWORD=(\S+)", env_content)
         ck(pg_match is not None and len(pg_match.group(1)) >= 16, "POSTGRES_PASSWORD ≥16 chars")
     else:
-        ck(False, ".env absent — généré par ./scripts/docker-up.sh (non bloquant pour CI)")
+        # .env est gitigné (secrets) — absent en CI, généré par ./scripts/docker-up.sh en local.
+        # SKIP (pas de failure) — les secrets sont validés via le .env.example + le script docker-up.sh.
+        print("  ℹ .env absent (gitigné — généré par ./scripts/docker-up.sh en local). SKIP section F (non bloquant).")
 
     # ═══ G. scripts docker-up + healthcheck ═══
     print("\n--- G. scripts helper ---")
