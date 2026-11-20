@@ -18,6 +18,8 @@ import csv
 import io
 import logging
 
+import openpyxl
+from openpyxl.styles import Font, PatternFill, Alignment
 from fastapi import APIRouter, Depends, Response
 from sqlalchemy import extract, func
 from sqlalchemy.orm import Session
@@ -248,15 +250,69 @@ def export_contacts(tid: str, db: Session = Depends(get_db), _t: models.Tenant =
                 .order_by(models.Contact.created_at.desc()).all())
     buf = io.StringIO()
     w = csv.writer(buf)
-    w.writerow(["id", "first_name", "last_name", "email", "phone", "title",
-                "status", "source", "score", "linkedin_url", "created_at"])
+    w.writerow(_EXPORT_COLS)
     for c in contacts:
-        w.writerow([c.id, c.first_name, c.last_name, c.email, c.phone, c.title,
-                    c.status, c.source, getattr(c, "score", 0) or 0,
-                    getattr(c, "linkedin_url", "") or "",
-                    c.created_at.isoformat() if c.created_at else ""])
+        w.writerow(_contact_row(c))
     csv_data = buf.getvalue()
     return Response(
         content=csv_data, media_type="text/csv",
         headers={"Content-Disposition": f'attachment; filename="contacts_{tid}.csv"',
                  "Content-Length": str(len(csv_data.encode("utf-8")))})
+
+# Colonnes partagées entre export CSV et XLSX (source unique de vérité).
+_EXPORT_COLS = ["id", "first_name", "last_name", "email", "phone", "title",
+                "status", "source", "score", "linkedin_url", "created_at"]
+
+
+def _contact_row(c):
+    """Ligne normalisée pour export (CSV + XLSX). Évite la duplication de logique."""
+    return [c.id, c.first_name, c.last_name, c.email, c.phone, c.title,
+            c.status, c.source, getattr(c, "score", 0) or 0,
+            getattr(c, "linkedin_url", "") or "",
+            c.created_at.isoformat() if c.created_at else ""]
+
+
+@router.get("/tenants/{tid}/analytics/export.xlsx")
+def export_contacts_xlsx(tid: str, db: Session = Depends(get_db),
+                         _t: models.Tenant = Depends(get_tenant),
+                         membership=Depends(require_permission("crm.manage"))):
+    """Export Excel (.xlsx) des contacts du tenant (P84). Même RBAC que le CSV
+    (crm.manage — données PII emails), mêmes colonnes, même tri (created_at desc).
+    Format : en-tête gras sur fond bleu, freeze top row, largeurs auto, filtre auto.
+    Utilise openpyxl (déjà en requirements)."""
+    contacts = (db.query(models.Contact).filter_by(tenant_id=tid)
+                .order_by(models.Contact.created_at.desc()).all())
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Contacts"
+    ws.append(_EXPORT_COLS)
+    # En-tête stylé : gras, fond bleu foncé, texte blanc, centré.
+    header_font = Font(bold=True, color="FFFFFF", size=11)
+    header_fill = PatternFill(start_color="1F4E78", end_color="1F4E78", fill_type="solid")
+    header_align = Alignment(horizontal="center", vertical="center")
+    for col_idx in range(1, len(_EXPORT_COLS) + 1):
+        cell = ws.cell(row=1, column=col_idx)
+        cell.font = header_font
+        cell.fill = header_fill
+        cell.alignment = header_align
+    for c in contacts:
+        ws.append(_contact_row(c))
+    # Freeze top row + autofilter + largeurs auto (basé sur l'en-tête).
+    ws.freeze_panes = "A2"
+    ws.auto_filter.ref = ws.dimensions
+    for col_idx, col_name in enumerate(_EXPORT_COLS, start=1):
+        # largeur = max(en-tête, ~12) ; openpyxl ne calcule pas auto basé sur contenu.
+        width = max(12, len(col_name) + 2)
+        if col_name in ("email", "linkedin_url", "created_at"):
+            width = max(width, 28)
+        elif col_name in ("first_name", "last_name", "title", "source"):
+            width = max(width, 18)
+        ws.column_dimensions[openpyxl.utils.get_column_letter(col_idx)].width = width
+    buf = io.BytesIO()
+    wb.save(buf)
+    xlsx_data = buf.getvalue()
+    return Response(
+        content=xlsx_data,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="contacts_{tid}.xlsx"',
+                 "Content-Length": str(len(xlsx_data))})

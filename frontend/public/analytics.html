@@ -115,6 +115,7 @@
       <tbody id="attribution-rows"></tbody></table>
   </div>
   <button class="btn" onclick="exportCSV()">⬇ Exporter les contacts (CSV)</button>
+  <button class="btn sec" onclick="exportXLSX()">📊 Exporter Excel (.xlsx)</button>
 </div>
 
 <div class="login" id="login" style="display:none">
@@ -311,6 +312,21 @@ async function exportCSV(){
     document.body.appendChild(a); a.click(); a.remove();
     URL.revokeObjectURL(url);
   } catch(e){ alert('Export échoué : ' + e.message); }
+}
+
+async function exportXLSX(){
+  if(!TID){ return; }
+  try {
+    const r = await fetch(API + '/tenants/' + TID + '/analytics/export.xlsx', {headers:{'Authorization':'Bearer '+TOK}});
+    if(!r.ok){ alert('Export Excel impossible (statut ' + r.status + ')'); return; }
+    const blob = await r.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = 'contacts_' + TID + '.xlsx';
+    document.body.appendChild(a); a.click(); a.remove();
+    URL.revokeObjectURL(url);
+    RP.toast('Export Excel généré (' + (blob.size/1024).toFixed(1) + ' Ko).','success');
+  } catch(e){ alert('Export Excel échoué : ' + e.message); }
 }
 
 init();
