@@ -425,12 +425,16 @@ ces vues entièrement responsive (scroll horizontal des tables au lieu d'overflo
 | **Prospecting** (`/tenants/{id}/prospecting/*`, 9 endpoints) | Listes de prospects, enrichment, scoring automatique | `test_p27_prospecting.py` |
 | **Sales Intelligence** (`/tenants/{id}/sales-intel/*`) | Signaux d'achat, firmographics, triggers de changement | `test_p28_sales_intel.py` |
 | **Enrichment v2** (P29) | Connecteurs enrichment multi-sources (email, téléphone, firme) | `test_p29_v2_enrichment.py` |
-| **Analytics v2** (`/tenants/{id}/analytics/*`, 8 endpoints) | 5 KPIs, tables pipeline/emails/sources/cohorts, export CSV contacts, funnel de conversion | `test_analytics.py`, `test_p43_analytics.py` |
+| **Analytics v2** (`/tenants/{id}/analytics/*`, 9 endpoints) | 5 KPIs, tables pipeline/emails/sources/cohorts, export CSV **+ Excel (.xlsx)** contacts (P84, en-tête stylé + freeze pane + autofilter), funnel de conversion | `test_analytics.py`, `test_p43_analytics.py`, `test_p84_xlsx_export.py` |
 
 L'analytics agrège les données CRM en tableaux de bord opérationnels : KPIs de
 conversion, cohortes rétention, sources d'acquisition, et funnel détaillé.
-L'export CSV permet d'extraire les contacts pour synchronisation vers outils
-externes (CRM tierce, emailing).
+L'export existe en deux formats — CSV (léger, machine) et Excel .xlsx (P84,
+formaté : en-tête gras sur fond bleu, freeze pane A2, autofilter, largeurs
+auto) — tous deux générés depuis les mêmes helpers `_EXPORT_COLS` +
+`_contact_row` (source unique de vérité, cohérence garantie). Le .xlsx est
+ouvrable directement dans Excel/LibreOffice/Google Sheets pour analyse
+commerciale ou synchronisation vers un CRM tierce.
 
 ### IA & Agents (P24-P25, P41-P42)
 

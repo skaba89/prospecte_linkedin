@@ -2,9 +2,9 @@
 """test_analytics.py — validation statique des analytics & reporting (P14, sans API live).
 
 Couvre (par lecture des sources + introspection, pas de serveur) :
-  - Router analytics.py : 5 endpoints (overview/pipeline/emails/sources/export), read-only,
-    RBAC crm.view sur export (données PII), get_tenant sur les 4 autres (agrégats), agrégations
-    SQLAlchemy (func.count/sum/avg + group_by), export CSV (module csv + Content-Disposition).
+  - Router analytics.py : 6 endpoints (overview/pipeline/emails/sources/export CSV + export.xlsx), read-only,
+    RBAC crm.manage sur les 2 exports (données PII), get_tenant sur les 4 autres (agrégats), agrégations
+    SQLAlchemy (func.count/sum/avg + group_by), export CSV (module csv) + XLSX (openpyxl, en-tête stylé).
   - Schemas : AnalyticsOverview, AnalyticsPipeline, AnalyticsEmails, AnalyticsSources,
     PipelineStageStat, EmailStat, SourceStat.
   - Intégration : router analytics enregistré dans main.py, test_analytics.py dans le CI.
@@ -31,13 +31,18 @@ def read(rel):
     return (ROOT / rel).read_text(encoding="utf-8")
 
 
-# ─── Router analytics.py (5 endpoints + RBAC + agrégations + CSV) ──────────────
-print("=== Router analytics.py (P14) ===")
+# ─── Router analytics.py (6 endpoints + RBAC + agrégations + CSV + XLSX) ─────────
+print("=== Router analytics.py (P14 + P84 XLSX) ===")
 rt = read("backend/app/routers/analytics.py")
 for path in ["/analytics/overview", "/analytics/pipeline", "/analytics/emails",
-             "/analytics/sources", "/analytics/export"]:
+             "/analytics/sources", "/analytics/export", "/analytics/export.xlsx"]:
     ck(path in rt, True, f"endpoint {path}")
 ck('require_permission("crm.manage")' in rt, True, "RBAC crm.manage sur export (PII contacts — cohérent avec crm.manage du P11/P13)")
+ck(rt.count('require_permission("crm.manage")') >= 2, True, "RBAC crm.manage sur les 2 exports (CSV + XLSX — même données PII)")
+ck("import openpyxl" in rt, True, "import openpyxl (P84 export XLSX)")
+ck("_EXPORT_COLS" in rt and "_contact_row" in rt, True, "helpers partagés _EXPORT_COLS + _contact_row (source unique de vérité CSV+XLSX)")
+ck("spreadsheetml" in rt, True, "media_type xlsx (application/vnd.openxmlformats-officedocument.spreadsheetml.sheet)")
+ck("freeze_panes" in rt, True, "freeze pane A2 + autofilter (XLSX formaté)")
 ck("get_tenant" in rt, True, "get_tenant sur les 4 endpoints agrégats (any member)")
 # Agrégations SQLAlchemy.
 for agg, label in [("func.count", "count"), ("func.sum", "sum (pipeline value)"),
@@ -96,7 +101,7 @@ else:
         routes = {r.path for r in a.router.routes}
         for p in ["/api/tenants/{tid}/analytics/overview", "/api/tenants/{tid}/analytics/pipeline",
                   "/api/tenants/{tid}/analytics/emails", "/api/tenants/{tid}/analytics/sources",
-                  "/api/tenants/{tid}/analytics/export"]:
+                  "/api/tenants/{tid}/analytics/export", "/api/tenants/{tid}/analytics/export.xlsx"]:
             ck(p in routes, True, f"route {p.split('/analytics/')[1]} enregistrée")
         # Schemas instanciables (valeurs par défaut).
         ov = schemas.AnalyticsOverview(contacts_total=5, opportunities_total=2, emails_total=3)
