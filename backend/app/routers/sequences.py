@@ -23,6 +23,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
 from .. import models, schemas
+from ..sequence_templates import list_templates, get_template
 from ..audit import log_audit
 from ..database import get_db
 from ..deps import get_tenant, require_permission
@@ -135,6 +136,80 @@ def list_sequences(tid: str, db: Session = Depends(get_db), _t: models.Tenant = 
         db.query(models.EmailSequence).filter_by(tenant_id=tid).order_by(models.EmailSequence.created_at.desc()).all()
     )
     return [_to_out(db, s) for s in seqs]
+
+
+# ─── P86 : templates de séquences réutilisables (bibliothèque curated) ────────
+@router.get("/tenants/{tid}/crm/sequences/templates", response_model=list[schemas.SequenceTemplateOut])
+def list_sequence_templates(tid: str, _t: models.Tenant = Depends(get_tenant)):
+    """Liste les templates de séquences curés (P86). Lecture seule, ouverte à tout membre
+    (get_tenant). Les templates sont du contenu produit commun à tous les tenants (static library
+    dans app/sequence_templates.py — pas de DB). Chaque template a un id (slug), un nom, une
+    description, une catégorie (prospection|onboarding|re-engagement|closing) + ses steps."""
+    return [schemas.SequenceTemplateOut(
+        id=t["id"], name=t["name"], description=t["description"], category=t["category"],
+        step_count=len(t["steps"]),
+        steps=[schemas.SequenceTemplateStepOut(template_id=s["template_id"], delay_days=s["delay_days"])
+               for s in t["steps"]],
+    ) for t in list_templates()]
+
+
+@router.post(
+    "/tenants/{tid}/crm/sequences/templates/{tpl_id}/clone",
+    response_model=schemas.SequenceOut,
+    status_code=status.HTTP_201_CREATED,
+)
+def clone_sequence_template(
+    tid: str,
+    tpl_id: str,
+    payload: schemas.SequenceTemplateCloneRequest | None = None,
+    db: Session = Depends(get_db),
+    _t: models.Tenant = Depends(get_tenant),
+    membership=Depends(require_permission("crm.manage")),
+):
+    """Clone un template en séquence réelle (P86). RBAC crm.manage. Crée une EmailSequence
+    (status=draft — l'utilisateur révise + active manuellement) + ses SequenceStep depuis les
+    steps du template. Audit crm.sequence_template_clone. name optionnel (défaut = nom template)."""
+    tpl = get_template(tpl_id)
+    if not tpl:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, f"Template introuvable : {tpl_id}.")
+    # Double-check défensif : les steps du template doivent tous avoir un template_id valide.
+    for s in tpl["steps"]:
+        if s["template_id"] not in _VALID_TEMPLATES:
+            raise HTTPException(
+                status.HTTP_500_INTERNAL_SERVER_ERROR,
+                f"Template '{tpl_id}' mal formé : step template_id '{s['template_id']}' invalide.",
+            )
+    seq_name = (payload.name if payload and payload.name else tpl["name"])
+    seq = models.EmailSequence(
+        tenant_id=tid,
+        name=seq_name,
+        description=tpl["description"],
+        status="draft",  # draft par défaut : l'utilisateur révise avant activation
+        created_by=membership.user_id,
+    )
+    db.add(seq)
+    db.flush()
+    for i, s in enumerate(tpl["steps"], 1):
+        db.add(
+            models.SequenceStep(
+                sequence_id=seq.id, step_order=i,
+                template_id=s["template_id"], delay_days=s["delay_days"],
+            )
+        )
+    db.commit()
+    db.refresh(seq)
+    log_audit(
+        db,
+        tenant_id=tid,
+        actor_user_id=membership.user_id,
+        actor_name=membership.name,
+        action="crm.sequence_template_clone",
+        target_type="sequence",
+        target_id=seq.id,
+        detail={"template_id": tpl["id"], "template_name": tpl["name"], "name": seq.name, "steps": len(tpl["steps"])},
+    )
+    db.commit()
+    return _to_out(db, seq)
 
 
 @router.get("/tenants/{tid}/crm/sequences/{sid}", response_model=schemas.SequenceOut)

@@ -2,9 +2,10 @@
 """test_sequences.py — validation statique des séquences & automatisation (P15, sans API live).
 
 Couvre (par lecture des sources + introspection, pas de serveur) :
-  - Router sequences.py : 8 endpoints (CRUD + enroll + enrollments + process + stats), RBAC
-    crm.manage sur writes / get_tenant sur reads, audit crm.sequence_*, step_order (évite le
-    mot-clé SQL réservé `order`), cascade delete (steps + enrollments), 409 si déjà enrollé.
+  - Router sequences.py : 10 endpoints (CRUD + enroll + enrollments + process + stats + P86 templates
+    library GET/clone), RBAC crm.manage sur writes / get_tenant sur reads, audit crm.sequence_*
+    (incl. crm.sequence_template_clone P86), step_order (évite le mot-clé SQL réservé `order`),
+    cascade delete (steps + enrollments), 409 si déjà enrollé.
   - Services sequences.py : process_due_enrollments (query due + send + advance), process_sequence
     (manual trigger, filtre sequence_id+tenant_id), start_scheduler (stdlib threading daemon,
     env SEQUENCE_SCHEDULER_INTERVAL_SECONDS défault 300, désactivé si <=0), lazy import
@@ -38,21 +39,23 @@ def read(rel):
     return (ROOT / rel).read_text(encoding="utf-8")
 
 
-# ─── Router sequences.py (8 endpoints + RBAC + audit + cascade) ────────────────
-print("=== Router sequences.py (P15) ===")
+# ─── Router sequences.py (10 endpoints + RBAC + audit + cascade + P86 templates) ─
+print("=== Router sequences.py (P15 + P86 templates) ===")
 rt = read("backend/app/routers/sequences.py")
 for path in ["/crm/sequences", "/crm/sequences/{sid}", "/crm/sequences/{sid}/enroll",
              "/crm/sequences/{sid}/enrollments", "/crm/sequences/{sid}/process",
-             "/crm/sequences/{sid}/stats"]:
+             "/crm/sequences/{sid}/stats", "/crm/sequences/templates",
+             "/crm/sequences/templates/{tpl_id}/clone"]:
     ck(path in rt, True, f"endpoint path {path}")
-# 8 endpoints (POST create + GET list sur /sequences ; GET/PATCH/DELETE sur /{sid} ; POST enroll ;
-# GET enrollments ; POST process ; GET stats).
-ck(rt.count("@router.post") + rt.count("@router.get") + rt.count("@router.patch") + rt.count("@router.delete") >= 9, True,
-   "≥9 endpoints P15 (3 POST + 4 GET + 1 PATCH + 1 DELETE — lenient pour stacked PR P16+)")
-ck(rt.count('require_permission("crm.manage")') >= 5, True, "≥5 writes RBAC crm.manage (create/update/delete/enroll/process — lenient P16+)")
-ck("get_tenant" in rt, True, "get_tenant sur reads (list/detail/enrollments/stats)")
+# 10 endpoints (POST create + GET list sur /sequences ; GET/PATCH/DELETE sur /{sid} ; POST enroll ;
+# GET enrollments ; POST process ; GET stats ; + P86 GET templates + POST clone).
+ck(rt.count("@router.post") + rt.count("@router.get") + rt.count("@router.patch") + rt.count("@router.delete") >= 11, True,
+   "≥11 endpoints P15+P86 (4 POST + 5 GET + 1 PATCH + 1 DELETE)")
+ck("from ..sequence_templates import" in rt, True, "import sequence_templates module (P86 static library)")
+ck('require_permission("crm.manage")' in rt and rt.count('require_permission("crm.manage")') >= 6, True, "≥6 writes RBAC crm.manage (create/update/delete/enroll/process/clone — P86)")
+ck("get_tenant" in rt, True, "get_tenant sur reads (list/detail/enrollments/stats/templates)")
 for action in ["crm.sequence_create", "crm.sequence_update", "crm.sequence_delete",
-               "crm.sequence_enroll", "crm.sequence_process"]:
+               "crm.sequence_enroll", "crm.sequence_process", "crm.sequence_template_clone"]:
     ck(action in rt, True, f"audit {action}")
 ck("step_order" in rt, True, "step_order (évite le mot-clé SQL réservé `order`)")
 ck("SequenceStep.step_order.asc" in rt, True, "steps triés par step_order asc")

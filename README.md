@@ -408,7 +408,7 @@ regroupés par domaine fonctionnel. L'API expose **243 endpoints** répartis sur
 | Module | Rôle | Tests |
 |---|---|---|
 | **CRM** (`/tenants/{id}/crm/*`, 39 endpoints) | Contacts, companies, deals, activities, pipeline kanban, segments dynamiques, scoring IA, export CSV **+ Excel (.xlsx)** (P85, 13 colonnes, en-tête stylé + freeze pane + autofilter) | `test_crm.py`, `test_scoring.py`, `test_segments_dyn.py`, `test_p85_crm_xlsx_export.py` |
-| **Séquences** (`/tenants/{id}/crm/sequences/*`, 10 endpoints) | Drip campaigns multi-étapes (template + délai jours), enrollment, pause/active, stats par séquence | `test_sequences.py` |
+| **Séquences** (`/tenants/{id}/crm/sequences/*`, 12 endpoints) | Drip campaigns multi-étapes (template + délai jours), enrollment, pause/active, stats par séquence, **bibliothèque de templates réutilisables** (P86 : 8 templates curés en 4 catégories, clone 1-clic en statut draft) | `test_sequences.py`, `test_p86_sequence_templates.py` |
 | **Tags** (`/tenants/{id}/tags/*`) | Tagging hiérarchique coloré sur contacts et deals | `test_tags.py` |
 | **Tasks** (`/tenants/{id}/tasks/*`) | Tâches assignées, due dates, priorités, follow-ups | `test_tasks.py` |
 | **P80 — CRM responsive** | Tables wrappées `.rp-table-wrap` (scroll horizontal mobile 375px), vue mobile adaptée | `test_p31_business_e2e.py` |
