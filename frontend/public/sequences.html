@@ -167,8 +167,8 @@ async function loadSequences(){
     <div class="card">
       <h3>${esc(s.name)} <span class="badge ${s.status}">${esc(s.status)}</span></h3>
       <div class="seq-meta"><b>${s.steps.length}</b> étapes · <b>${s.enrollments_count}</b> enrollments${s.description ? ' · ' + esc(s.description) : ''}</div>
-      <table><thead><tr><th>#</th><th>Template</th><th class="num">Délai (j)</th></tr></thead>
-        <tbody>${s.steps.map(st => `<tr><td>${st.step_order}</td><td>${esc(st.template_id)}</td><td class="num">${st.delay_days}</td></tr>`).join('')}</tbody></table>
+      <div class="rp-table-wrap"><table><thead><tr><th>#</th><th>Template</th><th class="num">Délai (j)</th></tr></thead>
+        <tbody>${s.steps.map(st => `<tr><td>${st.step_order}</td><td>${esc(st.template_id)}</td><td class="num">${st.delay_days}</td></tr>`).join('')}</tbody></table></div>
       <div style="margin-top:12px"><button class="btn sec" onclick="showDetail('${s.id}')">Détail</button>
         <button class="btn sec" onclick="toggleStatus('${s.id}','${s.status==='active'?'paused':'active'}')">${s.status==='active'?'⏸ Pause':'▶ Activer'}</button>
         <button class="btn danger" onclick="deleteSeq('${s.id}','${esc(s.name)}')">Supprimer</button></div>
