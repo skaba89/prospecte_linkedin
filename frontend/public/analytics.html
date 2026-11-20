@@ -26,7 +26,7 @@
   .kpi .lbl{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px}
   .kpi .val{font-size:26px;font-weight:700;margin-top:4px}
   .kpi .sub{font-size:11px;color:var(--muted);margin-top:2px}
-  .card{background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:18px;margin-bottom:20px}
+  .card{background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:18px;margin-bottom:20px;overflow-x:auto}
   .card h3{font-size:14px;margin-bottom:12px;display:flex;align-items:center;gap:8px}
   .card h3 .pill{font-size:11px;padding:2px 8px;border-radius:8px;background:var(--panel2);color:var(--muted)}
   .card h3 .pill.ok{background:rgba(16,185,129,.15);color:var(--ok)}
@@ -67,7 +67,6 @@
     .card{padding:14px}
     .funnel-row{grid-template-columns:1fr;gap:4px}
     .funnel-conv{text-align:left}
-    .table-scroll{overflow-x:auto;-webkit-overflow-scrolling:touch}
     table{min-width:480px}
     .sync-info{flex-direction:column;gap:6px}
   }
@@ -88,18 +87,18 @@
   <div class="kpis" id="kpis"></div>
   <div class="card">
     <h3>Pipeline <span class="pill" id="pipeline-winrate"></span></h3>
-    <table><thead><tr><th>Stage</th><th class="num">Count</th><th class="num">Valeur totale</th><th class="num">Proba moy.</th></tr></thead>
-      <tbody id="pipeline-rows"></tbody></table>
+    <div class="rp-table-wrap"><table><thead><tr><th>Stage</th><th class="num">Count</th><th class="num">Valeur totale</th><th class="num">Proba moy.</th></tr></thead>
+      <tbody id="pipeline-rows"></tbody></table></div>
   </div>
   <div class="card">
     <h3>E-mails de prospection <span class="pill" id="emails-success"></span></h3>
-    <table><thead><tr><th>Template</th><th class="num">Total</th><th>Statuts</th></tr></thead>
-      <tbody id="emails-rows"></tbody></table>
+    <div class="rp-table-wrap"><table><thead><tr><th>Template</th><th class="num">Total</th><th>Statuts</th></tr></thead>
+      <tbody id="emails-rows"></tbody></table></div>
   </div>
   <div class="card">
     <h3>Sources de contacts <span class="pill" id="sources-total"></span></h3>
-    <table><thead><tr><th>Source</th><th class="num">Contacts</th><th>Conversion</th></tr></thead>
-      <tbody id="sources-rows"></tbody></table>
+    <div class="rp-table-wrap"><table><thead><tr><th>Source</th><th class="num">Contacts</th><th>Conversion</th></tr></thead>
+      <tbody id="sources-rows"></tbody></table></div>
   </div>
   <div class="card">
     <h3>Funnel de conversion <span class="pill" id="funnel-overall"></span></h3>
@@ -107,8 +106,8 @@
   </div>
   <div class="card">
     <h3>Cohortes par mois d'acquisition <span class="pill" id="cohorts-avg"></span></h3>
-    <table><thead><tr><th>Mois</th><th class="num">Opps</th><th>Répartition stages</th><th class="num">Won</th><th class="num">Win rate</th><th class="num">Revenue</th><th class="num">Time-to-close</th></tr></thead>
-      <tbody id="cohorts-rows"></tbody></table>
+    <div class="rp-table-wrap"><table><thead><tr><th>Mois</th><th class="num">Opps</th><th>Répartition stages</th><th class="num">Won</th><th class="num">Win rate</th><th class="num">Revenue</th><th class="num">Time-to-close</th></tr></thead>
+      <tbody id="cohorts-rows"></tbody></table></div>
   </div>
   <div class="card">
     <h3>Attribution revenue par source <span class="pill" id="attribution-best"></span></h3>

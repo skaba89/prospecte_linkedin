@@ -68,6 +68,14 @@
   .ia-badge.unlimited{background:rgba(16,185,129,.12);color:var(--green)}
   @media (max-width:900px){.plans-grid{grid-template-columns:repeat(2,1fr)}}
   @media (max-width:560px){.plans-grid{grid-template-columns:1fr}}
+  /* P81-fix : sidebar off-canvas sur mobile (override l'inline .sidebar L21 qui casse la cascade app.css).
+     app.js auto-injecte .rp-menu-btn + .rp-backdrop dans .topbar ; app.css gère le toggle .open. */
+  @media (max-width:768px){
+    .sidebar{position:fixed;top:0;left:0;bottom:0;z-index:50;transform:translateX(-100%);transition:transform .25s ease;width:248px;max-width:85vw;flex-shrink:1}
+    .sidebar.open{transform:translateX(0);box-shadow:0 0 40px rgba(0,0,0,.3)}
+    .main{width:100%}
+    .content{padding:16px}
+  }
 </style>
 </head>
 <body>
