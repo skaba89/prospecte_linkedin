@@ -23,8 +23,8 @@
 .rp-backdrop.open { display: block; opacity: 1; }
 
 /* ─── Table wrap (anti-débordement horizontal largeurs mobile) ─── */
-.rp-table-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
-.rp-table-wrap table { min-width: 100%; }
+.rp-table-wrap, .table-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; -ms-overflow-style: -ms-autohiding-scrollbar; }
+.rp-table-wrap table, .table-scroll table { width: 100%; border-collapse: collapse; min-width: max-content; }
 
 /* ─── Toast (harmonisé avec Career) ─── */
 .rp-toast-host { position: fixed; bottom: 20px; right: 20px; z-index: 9999; display: flex; flex-direction: column; gap: 8px; }
