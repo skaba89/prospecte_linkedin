@@ -945,6 +945,31 @@ class SequenceStats(BaseModel):
     failed: int
 
 
+# ---- Sequence templates (P86 — bibliothèque réutilisable) ----
+class SequenceTemplateStepOut(BaseModel):
+    """Step d'un template de séquence (P86). template_id = template P13, delay_days = délai."""
+
+    template_id: str  # cold_outreach | follow_up | intro | re_engagement
+    delay_days: int = 0
+
+
+class SequenceTemplateOut(BaseModel):
+    """Template de séquence sérialisé (P86). Lecture seule — contenu produit commun à tous les tenants."""
+
+    id: str
+    name: str
+    description: str
+    category: str  # prospection | onboarding | re-engagement | closing
+    step_count: int
+    steps: list[SequenceTemplateStepOut] = []
+
+
+class SequenceTemplateCloneRequest(BaseModel):
+    """Clone d'un template en séquence réelle (P86). name optionnel (défaut = nom du template)."""
+
+    name: str | None = None  # surcharge du nom ; si None → nom du template
+
+
 # ---- Batch enrollment (P16 — ciblage segment → séquence) ----
 class EnrollBatchRequest(BaseModel):
     """Batch enrollment (P16) : segment_id (applique le criteria du segment) OU contact_ids explicites."""

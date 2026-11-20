@@ -89,6 +89,7 @@
   <div class="head">
     <h2>Séquences d'e-mails</h2>
     <button class="btn" onclick="showCreate()">+ Nouvelle séquence</button>
+    <button class="btn sec" onclick="showTemplates()">📋 Templates</button>
   </div>
   <div id="seq-list"></div>
 
@@ -104,6 +105,13 @@
     <div id="sf-steps"></div>
     <div style="margin-top:8px"><button class="btn sec" onclick="addStep()">+ Ajouter une étape</button></div>
     <div style="margin-top:14px"><button class="btn" onclick="createSequence()">Créer</button> <button class="btn sec" onclick="document.getElementById('create-form').style.display='none'">Annuler</button></div>
+  </div>
+
+  <div id="tpl-gallery" class="card" style="display:none">
+    <h3>📋 Bibliothèque de templates</h3>
+    <div class="seq-meta">Démarrez vite : clonez un template curé en 1 clic, puis personnalisez-le. La séquence clonée est créée en statut <b>draft</b> (à activer manuellement).</div>
+    <div id="tpl-list" style="margin-top:14px"></div>
+    <div style="margin-top:14px"><button class="btn sec" onclick="hideTemplates()">Fermer</button></div>
   </div>
 
   <div id="detail" style="display:none"></div>
@@ -176,6 +184,7 @@ async function loadSequences(){
 }
 
 function showCreate(){
+  document.getElementById('tpl-gallery').style.display = 'none';
   document.getElementById('create-form').style.display = 'block';
   _steps = [{template_id:'cold_outreach', delay_days:0}];
   renderSteps();
@@ -206,6 +215,45 @@ async function createSequence(){
   document.getElementById('sf-name').value = ''; document.getElementById('sf-desc').value = '';
   await loadSequences();
   showDetail(data.id);
+}
+
+// ─── P86 : templates de séquences réutilisables ──────────────────────────────
+const TPL_CAT_LABELS = {prospection:'Prospection', onboarding:'Onboarding', 're-engagement':'Re-engagement', closing:'Closing'};
+
+async function showTemplates(){
+  document.getElementById('create-form').style.display = 'none';
+  const el = document.getElementById('tpl-gallery');
+  el.style.display = 'block';
+  const list = document.getElementById('tpl-list');
+  list.innerHTML = '<div class="empty">Chargement des templates…</div>';
+  const {status, data} = await api('GET', '/tenants/' + TID + '/crm/sequences/templates');
+  if(status !== 200 || !Array.isArray(data)){ list.innerHTML = '<div class="empty">Erreur chargement templates (statut ' + status + ').</div>'; return; }
+  if(!data.length){ list.innerHTML = '<div class="empty">Aucun template disponible.</div>'; return; }
+  list.innerHTML = data.map(t => `
+    <div class="card" style="margin-bottom:12px">
+      <h3>${esc(t.name)} <span class="badge" style="background:#1F4E78;color:#fff">${esc(TPL_CAT_LABELS[t.category]||t.category)}</span></h3>
+      <div class="seq-meta"><b>${t.step_count}</b> étape${t.step_count>1?'s':''}</div>
+      <div style="margin:6px 0;color:#555">${esc(t.description)}</div>
+      <div class="rp-table-wrap"><table><thead><tr><th>#</th><th>Template</th><th class="num">Délai (j)</th></tr></thead>
+        <tbody>${t.steps.map((st,i) => `<tr><td>${i+1}</td><td>${esc(st.template_id)}</td><td class="num">${st.delay_days}</td></tr>`).join('')}</tbody></table></div>
+      <div style="margin-top:10px"><button class="btn" onclick="cloneTemplate('${t.id}','${esc(t.name)}')">⬇ Utiliser ce template</button></div>
+    </div>`).join('');
+}
+
+function hideTemplates(){
+  document.getElementById('tpl-gallery').style.display = 'none';
+}
+
+async function cloneTemplate(tplId, tplName){
+  const name = prompt('Nom de la séquence clonée :', tplName);
+  if(name === null){ return; }  // annulé
+  const body = name ? {name} : {};
+  const {status, data} = await api('POST', '/tenants/' + TID + '/crm/sequences/templates/' + tplId + '/clone', body);
+  if(status !== 201){ alert('Clonage échoué : ' + (data?.detail || status)); return; }
+  hideTemplates();
+  await loadSequences();
+  showDetail(data.id);
+  RP.toast('Séquence « ' + (data.name||tplName) + ' » créée depuis le template (statut draft).', 'success');
 }
 
 async function toggleStatus(sid, newStatus){
