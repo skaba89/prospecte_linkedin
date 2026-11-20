@@ -112,14 +112,17 @@ def main():
         page.goto(f"{URL}/crm.html", wait_until="networkidle")
         page.wait_for_selector(".topbar", timeout=8000)
         ck(page.locator(".topbar").count() >= 1, "crm.html : topbar rendu")
-        # crm.html auto-demo si pas de token : cliquer le bouton démo
-        demo_crm = page.locator("text=démo")
-        if demo_crm.count() > 0:
-            demo_crm.first.click()
+        # crm.html : si pas de token → overlay auth visible → cliquer le bouton démo.
+        # P76-fix/v2 (saveSess localStorage) : le token de l'étape 1 persiste → crm.html
+        # auto-charge le CRM (overlay caché) → pas de click nécessaire.
+        # Sélecteur button:has-text (pas text=) pour éviter de matcher le <p> "compte démo" (L76).
+        demo_btn = page.locator("button:has-text('démo')")
+        if demo_btn.count() > 0 and demo_btn.first.is_visible():
+            demo_btn.first.click()
             page.wait_for_timeout(2000)
-        # Après démo : le CRM devrait charger (tenant-name ou contenu)
+        # Après démo OU auto-load (token persisté) : le CRM devrait charger (tenant-name ou contenu)
         body_text = page.inner_text("body")
-        ck(len(body_text) > 50, f"crm.html : contenu rendu après démo ({len(body_text)} chars)")
+        ck(len(body_text) > 50, f"crm.html : contenu rendu après démo/auto-load ({len(body_text)} chars)")
 
         # ── 5. crm.html responsive : pas d'overflow horizontal mobile ────────
         print("\n--- 5. crm.html responsive (375px) ---")
