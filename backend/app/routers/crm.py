@@ -13,6 +13,8 @@ import csv
 import io
 from datetime import datetime, timedelta
 
+import openpyxl
+from openpyxl.styles import Font, PatternFill, Alignment
 from fastapi import APIRouter, Depends, File, HTTPException, Query, Response, UploadFile, status
 from sqlalchemy import exists, or_
 from sqlalchemy.orm import Session
@@ -555,53 +557,75 @@ def enrich_contact(
             "provider": "hunter.io"}
 
 
+# Colonnes partagées entre export CSV et XLSX (source unique de vérité — P85).
+_CRM_EXPORT_COLS = ["id", "first_name", "last_name", "email", "phone", "title",
+                    "status", "score", "linkedin_url", "company_id", "owner_id",
+                    "source", "created_at"]
+
+
+def _crm_contact_row(c):
+    """Ligne normalisée pour export CRM (CSV + XLSX). Évite la duplication de logique."""
+    return [c.id, c.first_name, c.last_name, c.email, c.phone, c.title,
+            c.status, c.score, c.linkedin_url,
+            c.company_id or "", c.owner_id or "", c.source,
+            c.created_at.isoformat() if c.created_at else ""]
+
+
 @router.get("/contacts/export")
 def export_contacts(tid: str, db: Session = Depends(get_db), _t: models.Tenant = Depends(get_tenant)):
     """Export CSV de tous les contacts du tenant (filtres optionnels via query string).
-    RGPD portabilité + export commercial."""
+    RGPD portabilité + export commercial. Lecture ouverte à tout membre actif (docstring module)."""
     q = db.query(models.Contact).filter_by(tenant_id=tid).order_by(models.Contact.created_at.desc())
     buf = io.StringIO()
     writer = csv.writer(buf)
-    writer.writerow(
-        [
-            "id",
-            "first_name",
-            "last_name",
-            "email",
-            "phone",
-            "title",
-            "status",
-            "score",
-            "linkedin_url",
-            "company_id",
-            "owner_id",
-            "source",
-            "created_at",
-        ]
-    )
+    writer.writerow(_CRM_EXPORT_COLS)
     for c in q.all():
-        writer.writerow(
-            [
-                c.id,
-                c.first_name,
-                c.last_name,
-                c.email,
-                c.phone,
-                c.title,
-                c.status,
-                c.score,
-                c.linkedin_url,
-                c.company_id or "",
-                c.owner_id or "",
-                c.source,
-                c.created_at.isoformat() if c.created_at else "",
-            ]
-        )
+        writer.writerow(_crm_contact_row(c))
     return Response(
         content=buf.getvalue(),
         media_type="text/csv",
         headers={"Content-Disposition": f"attachment; filename=revpulse_contacts_{tid}.csv"},
     )
+
+
+@router.get("/contacts/export.xlsx")
+def export_contacts_xlsx(tid: str, db: Session = Depends(get_db), _t: models.Tenant = Depends(get_tenant)):
+    """Export Excel (.xlsx) de tous les contacts du tenant (P85). Même RBAC que le CSV
+    (lecture ouverte à tout membre actif — docstring module), mêmes 13 colonnes, même tri.
+    Format : en-tête gras sur fond bleu, freeze top row, autofilter, largeurs auto.
+    Utilise openpyxl (déjà en requirements, déjà utilisé côté import _read_rows)."""
+    q = db.query(models.Contact).filter_by(tenant_id=tid).order_by(models.Contact.created_at.desc())
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Contacts"
+    ws.append(_CRM_EXPORT_COLS)
+    header_font = Font(bold=True, color="FFFFFF", size=11)
+    header_fill = PatternFill(start_color="1F4E78", end_color="1F4E78", fill_type="solid")
+    header_align = Alignment(horizontal="center", vertical="center")
+    for col_idx in range(1, len(_CRM_EXPORT_COLS) + 1):
+        cell = ws.cell(row=1, column=col_idx)
+        cell.font = header_font
+        cell.fill = header_fill
+        cell.alignment = header_align
+    for c in q.all():
+        ws.append(_crm_contact_row(c))
+    ws.freeze_panes = "A2"
+    ws.auto_filter.ref = ws.dimensions
+    for col_idx, col_name in enumerate(_CRM_EXPORT_COLS, start=1):
+        width = max(12, len(col_name) + 2)
+        if col_name in ("email", "linkedin_url", "created_at"):
+            width = max(width, 28)
+        elif col_name in ("first_name", "last_name", "title", "source", "company_id", "owner_id"):
+            width = max(width, 18)
+        ws.column_dimensions[openpyxl.utils.get_column_letter(col_idx)].width = width
+    buf = io.BytesIO()
+    wb.save(buf)
+    xlsx_data = buf.getvalue()
+    return Response(
+        content=xlsx_data,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="revpulse_contacts_{tid}.xlsx"',
+                 "Content-Length": str(len(xlsx_data))})
 
 
 # --- Import CSV/XLSX + dédup + suppression ---

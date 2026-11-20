@@ -108,6 +108,7 @@
           </select>
           <a href="tags.html" class="btn btn-sm" style="display:inline-block;text-decoration:none" title="Gérer les tags">🏷 Tags</a>
           <button class="btn btn-primary btn-sm" onclick="exportCsv()">Export CSV</button>
+          <button class="btn btn-sm" onclick="exportXlsx()" title="Exporter les contacts en Excel (.xlsx) — en-tête stylé, freeze pane, autofilter">📊 Export Excel</button>
           <button class="btn btn-sm" onclick="recomputeAllScores()" title="P17 : recalcule les scores (profil + engagement emails + decay récence)">↻ Recompute scores</button>
         </div>
         <div id="contacts-table"><div class="empty">Chargement…</div></div>
@@ -328,6 +329,16 @@ async function exportCsv(){
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a'); a.href=url; a.download=`contacts_${TID}.csv`; a.click();
   URL.revokeObjectURL(url);
+}
+
+async function exportXlsx(){
+  const r = await fetch(API + `/tenants/${TID}/crm/contacts/export.xlsx`, {headers:{'Authorization':'Bearer '+TOK}});
+  if(!r.ok){ alert('Export Excel impossible (statut ' + r.status + ')'); return; }
+  const blob = await r.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a'); a.href=url; a.download=`contacts_${TID}.xlsx`; a.click();
+  URL.revokeObjectURL(url);
+  RP.toast(`Export Excel généré (${(blob.size/1024).toFixed(1)} Ko).`,'success');
 }
 
 async function recomputeAllScores(){

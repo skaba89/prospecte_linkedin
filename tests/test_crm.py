@@ -109,7 +109,7 @@ ck('prefix="/api/tenants/{tid}/crm"' in crm, True, "router prefix /api/tenants/{
 ck(crm.count('require_permission("crm.manage")') >= 15,
    True, f"≥15 mutations protégées par crm.manage (count={crm.count('require_permission(\"crm.manage\")')})")
 # endpoints clés présents
-for ep in ['/companies"', '/contacts"', '/contacts/export"', '/contacts/import"',
+for ep in ['/companies"', '/contacts"', '/contacts/export"', '/contacts/export.xlsx"', '/contacts/import"',
            '/contacts/{ctid}"', '/contacts/{ctid}/score"', '/opportunities"',
            '/opportunities/pipeline"', '/opportunities/{oid}/stage"', '/tasks"', '/notes"',
            '/segments"', '/segments/{sid}/contacts"', '/suppression"']:
@@ -134,6 +134,12 @@ ck("source=\"import\"" in crm, True, "import : source=import")
 # export CSV
 ck('media_type="text/csv"' in crm, True, "export CSV (media_type text/csv)")
 ck("Content-Disposition" in crm, True, "export Content-Disposition (attachment)")
+# export XLSX (P85) — openpyxl + helpers partagés + format pro
+ck("import openpyxl" in crm, True, "import openpyxl (P85 export XLSX)")
+ck("_CRM_EXPORT_COLS" in crm and "_crm_contact_row" in crm, True, "helpers partagés _CRM_EXPORT_COLS + _crm_contact_row (source unique CSV+XLSX)")
+ck("spreadsheetml" in crm, True, "media_type xlsx (application/vnd.openxmlformats-officedocument.spreadsheetml.sheet)")
+ck("freeze_panes" in crm, True, "freeze pane A2 + autofilter (XLSX formaté)")
+ck(crm.count("export.xlsx") >= 1, True, "endpoint /contacts/export.xlsx déclaré")
 # pipeline : 6 stages canoniques
 ck("PIPELINE_STAGES" in crm, True, "PIPELINE_STAGES (6 stages)")
 ck(crm.count('("prospecting"') >= 1 and "closed_won" in crm and "closed_lost" in crm,
