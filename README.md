@@ -395,6 +395,201 @@ Makefile : `make audit-deps` (advisory) / `make audit-deps -- --strict` (gating)
 nginx a déjà les 6 headers de sécurité (X-Frame, X-Content-Type, Referrer-Policy,
 Permissions-Policy, CSP, HSTS) — couverts par `tests/test_frontend.py` (P6).
 
+## Modules fonctionnels (P10-P82)
+
+Le README documente ci-dessus le socle P1-P9 (sécurité, observabilité, audit,
+backups, AppSec). Cette section documente les modules livrés ensuite (P10-P82),
+regroupés par domaine fonctionnel. L'API expose **243 endpoints** répartis sur
+**25 routers**, servie par FastAPI et entièrement browseable sur **`/docs`**
+(OpenAPI/Swagger interactif). **11 pages frontend** + **~70 suites de tests**.
+
+### CRM & Séquences (P31, P80)
+
+| Module | Rôle | Tests |
+|---|---|---|
+| **CRM** (`/tenants/{id}/crm/*`, 38 endpoints) | Contacts, companies, deals, activities, pipeline kanban, segments dynamiques, scoring IA | `test_crm.py`, `test_scoring.py`, `test_segments_dyn.py` |
+| **Séquences** (`/tenants/{id}/crm/sequences/*`, 10 endpoints) | Drip campaigns multi-étapes (template + délai jours), enrollment, pause/active, stats par séquence | `test_sequences.py` |
+| **Tags** (`/tenants/{id}/tags/*`) | Tagging hiérarchique coloré sur contacts et deals | `test_tags.py` |
+| **Tasks** (`/tenants/{id}/tasks/*`) | Tâches assignées, due dates, priorités, follow-ups | `test_tasks.py` |
+| **P80 — CRM responsive** | Tables wrappées `.rp-table-wrap` (scroll horizontal mobile 375px), vue mobile adaptée | `test_p31_business_e2e.py` |
+
+Le CRM est le module cœur métier : il gère le pipeline commercial complet
+(contacts → deals → activities) avec scoring IA et segments dynamiques. Les
+séquences automatisent le drip outreach multi-étapes, et le module P80 a rendu
+ces vues entièrement responsive (scroll horizontal des tables au lieu d'overflow).
+
+### Analytics & Intelligence commerciale (P27-P29, P43)
+
+| Module | Rôle | Tests |
+|---|---|---|
+| **Prospecting** (`/tenants/{id}/prospecting/*`, 9 endpoints) | Listes de prospects, enrichment, scoring automatique | `test_p27_prospecting.py` |
+| **Sales Intelligence** (`/tenants/{id}/sales-intel/*`) | Signaux d'achat, firmographics, triggers de changement | `test_p28_sales_intel.py` |
+| **Enrichment v2** (P29) | Connecteurs enrichment multi-sources (email, téléphone, firme) | `test_p29_v2_enrichment.py` |
+| **Analytics v2** (`/tenants/{id}/analytics/*`, 8 endpoints) | 5 KPIs, tables pipeline/emails/sources/cohorts, export CSV contacts, funnel de conversion | `test_analytics.py`, `test_p43_analytics.py` |
+
+L'analytics agrège les données CRM en tableaux de bord opérationnels : KPIs de
+conversion, cohortes rétention, sources d'acquisition, et funnel détaillé.
+L'export CSV permet d'extraire les contacts pour synchronisation vers outils
+externes (CRM tierce, emailing).
+
+### IA & Agents (P24-P25, P41-P42)
+
+| Module | Rôle | Tests |
+|---|---|---|
+| **AI** (`/ai/*`, 9 endpoints) | Génération de contenu, scoring IA, résumés (LLM intégré) | `test_p24b_ai.py` |
+| **Agents** (`/agents/*`) | Agents autonomes multi-étapes (workflow IA orchestré) | `test_p25_agents.py` |
+| **Coach** (P41) | Coaching commercial contextuel (suggestions de next-best-action) | `test_p41_coach.py` |
+| **Agent runtime** (P42) | Orchestration et exécution d'agents avec état | `test_p42_agent.py` |
+
+L'IA est intégrée à plusieurs niveaux : scoring automatique des prospects,
+génération de contenu LinkedIn, résumés de deals, et coaching contextuel. Les
+agents autonomes orchestrent des workflows multi-étapes (ex : enrichir un
+prospect → scorer → rédiger un message → ajouter à une séquence).
+
+### Contenu & Content Studio (P26)
+
+| Module | Rôle | Tests |
+|---|---|---|
+| **Content** (`/content/*`) | Posts LinkedIn, templates réutilisables, calendrier éditorial | `test_p26_content.py` |
+| **Content Studio** (`/content-studio/*`, 17 endpoints) | Authoring UI riche : éditeur, preview, gestion d'assets, programmation | — |
+
+Le Content Studio est l'outil d'authoring pour la création de contenu LinkedIn :
+éditeur riche, preview temps réel, bibliothèque d'assets, et programmation de
+publication. Il s'appuie sur l'AI pour la génération et la variante A/B.
+
+### Career & Recrutement (P34-P38)
+
+Le module career est le plus volumineux (**54 endpoints**) : il transforme
+RevPulse en plateforme de recrutement outbound pour candidats, en complément
+du module CRM (qui reste orienté sales).
+
+| Module | Rôle | Tests |
+|---|---|---|
+| **Career** (`/career/*`, 54 endpoints) | CV, profils candidats, matching offre↔candidat, candidatures, tracking | `test_p34_career.py` |
+| **Job search** (P35) | Recherche multi-connecteurs (LinkedIn, Indeed, etc.) | `test_p35_job_search.py`, `test_p35_v2_connecteurs.py` |
+| **Matching** (P36) | Score de compatibilité offre↔candidat (algorithme pondéré) | `test_p36_matching.py` |
+| **CV adaptatif** (P37) | Génération de CV adapté à chaque offre (keywords matching) | `test_p37_cv_adaptatif.py` |
+| **Candidatures** (P38) | Tracking candidatures + envoi email via OAuth (Gmail/Outlook) + attachments | `test_p38_candidatures.py`, `test_p38_v2_email_oauth.py`, `test_p38_v3_outlook_attachments.py` |
+
+L'intégration email OAuth (P38v2) permet d'envoyer les candidatures
+directement depuis la boîte Gmail/Outlook du candidat, sans stockage de
+mot de passe — flux OAuth2 standard. Les attachments Outlook (P38v3)
+gèrent les pièces jointes (CV, lettre de motivation).
+
+### Billing & Stripe (P30, P44, P63)
+
+| Module | Rôle | Tests |
+|---|---|---|
+| **Billing** (`/tenants/{id}/billing/*`) | Plans (Free/Pro/Business/Enterprise), usage tracking, change currency (EUR/USD), checkout, blocage downgrade | `test_p30_billing.py` |
+| **P44 — Stripe réel** | Intégration Stripe Checkout (clés serveur), webhooks Stripe (payment succeeded/failed) | `test_p44_stripe_real.py` |
+| **P63 — Stripe P0 hardening** | Vérification signature webhook Stripe, idempotency des events, secret management (non commité) | `test_p63_stripe_p0_hardening.py` |
+
+Le billing gère 4 plans (Free/Pro/Business/Enterprise) avec change currency
+live (EUR/USD), checkout via Stripe (mode mock si clé serveur absente — utile
+pour la démo), et blocage automatique des features au downgrade. La page
+`billing.html` permet de tester le flow complet en démo.
+
+### SSO & Auth hardening (P45-P47, P62, P66-P68)
+
+| Module | Rôle | Tests |
+|---|---|---|
+| **SSO** (`/sso/*`) | SAML/OIDC enterprise, i18n FR/EN, admin CRUD providers, admin UI de gestion | `test_p45_sso_i18n.py`, `test_p46_admin_sso_crud.py`, `test_p47_admin_sso_ui.py` |
+| **P62 — 2FA TOTP** | Double authentification TOTP (RFC 6238), backup codes, recovery | `test_p62_2fa_totp.py` |
+| **P66 — Forgot/Reset/Backup** | Flux mot de passe oublié, reset par token, codes de secours | `test_p66_auth_p0_forgot_reset_backup.py` |
+| **P67 — Frontend auth API** | Frontend rebindé sur l'API auth réelle (login/register/me/logout) | `test_p67_frontend_auth_api.py` |
+| **P68 — SSO email verify** | Vérification email obligatoire + binding SSO | `test_p68_auth_p0_sso_email_verify.py` |
+
+Le SSO enterprise supporte SAML et OIDC, avec une admin UI pour configurer
+les providers (client ID, secret, metadata URL). La 2FA TOTP est disponible
+pour tous les utilisateurs (RFC 6238, compatible Google Authenticator/Authy).
+
+### Audit log & Compliance (P48, P52-P57)
+
+| Module | Rôle | Tests |
+|---|---|---|
+| **Audit log** (`/tenants/{id}/audit/*`, 9 endpoints) | Entries horodatées, filters (action/actor/since), pagination 25/page, export CSV, export PDF **signé HMAC-SHA256** (non-répudiation, compliance P53), retention purge automatique | `test_audit.py`, `test_p48_audit_log.py`, `test_p53_audit_compliance.py` |
+| **P52/P54 — Audit UI** | Page `audit.html` : table, filters, pagination, exports CSV/PDF | `test_p52_audit_log_ui.py`, `test_p54_audit_ui_p53.py` |
+| **P55 — Webhook alerts** | Évaluation d'alertes (seuils) + POST vers webhook configuré | `test_p55_audit_webhook_alerts.py` |
+| **P56 — Webhook config UI** | UI de config webhook (URL, secret Fernet, events filtrés) | `test_p56_webhook_config_ui.py` |
+| **P57 — Webhook Fernet + Helm cronjob** | Chiffrement Fernet du secret webhook + cronjob Helm pour retry queue | `test_p57_webhook_fernet_helm_cronjob.py`, `test_webhook_retry_cron.py` |
+
+L'audit log est le pilier compliance : chaque action sensible est horodatée,
+filtrable, exportable. L'export PDF est **signé HMAC-SHA256** (non-répudiation
+— prouve que le document n'a pas été altéré depuis sa génération). La retention
+purge automatiquement les entries > `retention_days` (configurable), et les
+alertes webhook notifient en temps réel sur événements critiques.
+
+### GDPR (P60, P61, P65, P69)
+
+| Module | Rôle | Tests |
+|---|---|---|
+| **GDPR export/erase** (`/tenants/{id}/gdpr/*`) | Export complet données personnelles (JSON), effacement droit à l'oubli | `test_p60_gdpr_export_erase.py` |
+| **P65 — GDPR P0 effective** | Vérifie que l'effacement est réel (cascade, hard delete — pas de soft delete résiduel) | `test_p65_gdpr_p0_effective.py` |
+| **P61 — GDPR UI consent** | Bannière de consentement + page de préférences | `test_p61_gdpr_ui_consent.py` |
+| **P69 — GDPR G4 purge** | Purge automatisée des données > retention (scheduler) | `test_p69_gdpr_g4_purge.py` |
+
+Le module GDPR couvre les 4 garanties : export (portabilité), erase (droit à
+l'oubli — vérifié réellement effectif en P65, pas un soft delete), consent
+(bannière + préférences), et purge automatisée (P69). Le consentement est
+tracker par utilisateur avec timestamp.
+
+### Sécurité P0 (P10, P24a, P32, P64)
+
+| Module | Rôle | Tests |
+|---|---|---|
+| **P10 — Security hardening** | Durcissement post-P9 (JWT strict, isolation tenant renforcée) | `test_p10_security.py` |
+| **P24a — Security** | Hardening pré-intégration IA | `test_p24a_security.py` |
+| **P32 — Security** | Vérifs cross-modules (isolation, IDOR, escalation) | `test_p32_security.py` |
+| **P64 — SSRF/CORS P0** | Protection SSRF (webhooks outbound, connecteurs), CORS strict (origines allowlist) | `test_p64_security_p0_ssrf_cors.py` |
+
+La sécurité P0 couvre les vecteurs les plus critiques : SSRF (un attaquant ne
+peut pas forcer le serveur à appeler des IPs internes via les webhooks/imports),
+CORS strict (pas de `*` en prod), isolation tenant absolue (pas de fuite
+cross-tenant via IDOR), et JWT strict (fail-fast si secret < 32 chars).
+
+### Notifications (P40)
+
+| Module | Rôle | Tests |
+|---|---|---|
+| **Notifications** (`/tenants/{id}/notifications/*`) | In-app notifications, badge count, marquer lu, types (approval, mention, alert) | `test_notifications.py`, `test_p40_notifications.py` |
+
+### Inbound webhooks
+
+| Module | Rôle | Tests |
+|---|---|---|
+| **Inbound webhooks** (`/inbound/*`) | Réception webhooks externes (Stripe, LinkedIn callbacks) avec vérification de signature | `test_inbound_webhooks.py` |
+
+### Déploiement VPS (P79)
+
+Kit de déploiement production sur VPS Docker :
+
+- `deploy/deploy.sh` — script idempotent (pull image, migrate, restart, healthcheck post-deploy, rollback si échec)
+- `deploy/docker-compose.prod.yml` — stack production (backend + Postgres + nginx + job backups)
+- `deploy/.env.example` — template config production (secrets à remplir)
+- `deploy/README.md` — guide pas-à-pas (pré-requis VPS, DNS, TLS, premier déploiement)
+- Healthcheck post-deploy automatique + rollback sur échec
+
+Le script `deploy.sh` est idempotent : il peut être relancé sans risque
+(re-détection de l'état, skip des migrations déjà appliquées, restart
+uniquement si l'image a changé). Le rollback restaure l'image précédente
+si le healthcheck échoue après déploiement.
+
+### Tests E2E & Responsive (P31, P80-P82)
+
+| Suite | Coverage | Assertions |
+|---|---|---|
+| `test_p31_business_e2e.py` | `index.html` (démo + dashboard SPA) + `crm.html` (API réelle) | 14 ✅ |
+| `test_p82_e2e_extended.py` | `sequences` (CRUD create) + `analytics` (KPIs/tables) + `billing` (currency USD/checkout) + `audit` (filters/pagination) | 22 ✅ |
+| `test_p31_frontend.py` | Structure HTML + 6 headers sécurité + assets + liens | 109 ✅ |
+| **P81 — Audit responsive** | 24 pages scannées à 375px (0 overflow horizontal) | 24/24 ✅ |
+
+Les tests E2E valident non seulement le load statique mais aussi les
+**interactions CRUD** (création de séquence, changement de devise, application
+de filtres audit) — ce qui a permis de détecter un bug responsive réel (P82 :
+table steps `sequences.html` non wrappée, invisible au load statique car
+`#seq-list` était vide ; révélée uniquement après création d'une séquence).
+L'audit responsive P81 couvre les 24 pages à 375px (viewport mobile portrait).
+
 ## API
 
 | Méthode | Route | Rôle | Description |
